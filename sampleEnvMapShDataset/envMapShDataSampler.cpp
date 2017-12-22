@@ -153,8 +153,8 @@ bool EnvMapShDataSampler::sample(
       }
 
       // Rotate the sh coefficients
-      //std::unique_ptr<sh::Rotation> shRot = sh::Rotation::Create( _shOrder, quat );
-      //shRot->Apply( shCoeffs, &shCoeffs );
+      std::unique_ptr<sh::Rotation> shRot = sh::Rotation::Create( _shOrder, quat );
+      shRot->Apply( shCoeffs, &shCoeffs );
 
       // Proto : create a map with the spherical harmonics
       cvShImage img( sz.x, sz.y );

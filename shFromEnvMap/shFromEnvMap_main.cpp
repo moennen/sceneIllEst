@@ -65,8 +65,7 @@ bool computeSphericalHarmonics( Mat& img, vector<dvec3>& shCoeff )
    for ( size_t y = 0; y < img.rows; y++ )
    {
       const float* row_data = img.ptr<float>( y );
-      const double theta = sh::ImageYToTheta(y, img.rows);
-      //( y / ( img.rows - 1 ) - 0.5 ) * M_PI;
+      const double theta = ( ( y + 0.5 ) / img.rows - 0.5 ) * M_PI;
       const double stheta = sin( theta );
       const double ctheta = cos( theta );
       const double weight = pixel_area * sin( theta );
@@ -74,8 +73,7 @@ bool computeSphericalHarmonics( Mat& img, vector<dvec3>& shCoeff )
 
       for ( size_t x = 0; x < img.cols; x++ )
       {
-         const double phi = sh::ImageXToPhi(x,img.cols);
-         //( 2.0 * x / ( img.cols - 1 ) - 1.0 ) * M_PI;
+         const double phi = ( 2.0 * ( x + 0.5 ) / img.cols - 1.0 ) * M_PI;
          Vector3d dir;
          dir << ctheta * sin( phi ), -stheta, ctheta * cos( phi );
          // NB : opencv images use to be stored in BGR
