@@ -43,7 +43,7 @@ template <TextureFormat fmt>
 struct Texture final
 {
    Texture() : id( -1 ), sz( 0u, 0u ) {}
-   Texture(const glm::uvec2 size) : id( -1 ), sz( 0u, 0u ) { create(size); }
+   Texture( const glm::uvec2 size ) : id( -1 ), sz( 0u, 0u ) { create( size ); }
    ~Texture() { reset(); }
 
    bool create( const glm::uvec2 size );
@@ -54,9 +54,7 @@ struct Texture final
 };
 
 template <TextureFormat fmt>
-bool uploadToTexture(
-    Texture<fmt>&,
-    const unsigned char* );
+bool uploadToTexture( Texture<fmt>&, const unsigned char* );
 
 template <TextureFormat fmt>
 bool uploadToTexture(
@@ -66,11 +64,9 @@ bool uploadToTexture(
     const glm::uvec2 pos = glm::uvec2( 0u, 0u ) );
 
 template <TextureFormat fmt>
-bool readbackTexture(
-    const Texture<fmt>&,
-    unsigned char* );
+bool readbackTexture( const Texture<fmt>&, unsigned char* );
 
-/*struct trianglesMeshBuffer final
+/*struct TrianglesMeshBuffer final
 {
    trianglesMeshBuffer();
    ~trianglesMeshBuffer() { reset(); }
@@ -82,8 +78,16 @@ bool readbackTexture(
    void reset();
 
    GLuint id;
-};
+};*/
 
+bool loadTriangleMesh(
+    const char* filename,
+    std::vector<size_t>& idx,
+    std::vector<glm::vec3>& vtx,
+    std::vector<glm::vec2>& uvs,
+    std::vector<glm::vec3> normals );
+
+/*
 struct renderProgram final
 {
    program() : id( -1 ) {}
@@ -121,7 +125,6 @@ struct renderProgram final
 
    GLuint quadIds[2];
 };*/
-
 }
 
 #endif  // _UTILS_GL_UTILS_H

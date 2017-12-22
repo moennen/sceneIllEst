@@ -20,7 +20,7 @@ SET(M_LIBS ${MOENNEN_LOCAL}/lib)
 SET(M_LIBS64 ${MOENNEN_LOCAL}/lib64)
 SET(CUDA /usr/local/cuda-8.0)
 
-SET(PROJROOT ../../.)
+SET(PROJROOT ../.)
 SET(UTILS ${PROJROOT}/utils/)
 SET(EXTERNALS ${PROJROOT}/externals)
 SET(SPH ${EXTERNALS}/sh)
@@ -43,7 +43,6 @@ LINK_DIRECTORIES(
 )
 
 ADD_EXECUTABLE( shFromEnvMap shFromEnvMap_main.cpp 
-                ${UTILS}/gl_utils.C 
                 ${SPH}/spherical_harmonics.cc)
 
 TARGET_LINK_LIBRARIES( shFromEnvMap

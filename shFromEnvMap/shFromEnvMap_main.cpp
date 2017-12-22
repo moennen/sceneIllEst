@@ -7,18 +7,16 @@
 
 #include "utils/imgFileLst.h"
 #include "utils/perf.h"
+#include "utils/cv_utils.h"
 
 #include "sh/spherical_harmonics.h"
+
+#include <Eigen/Dense>
 
 #include <glm/glm.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 using namespace glm;
-
-// opencv
-#include "opencv2/imgcodecs.hpp"
-#include "opencv2/highgui.hpp"
-#include "opencv2/imgproc.hpp"
 
 #include <iostream>
 #include <omp.h>
@@ -30,6 +28,7 @@ using namespace glm;
 
 using namespace std;
 using namespace cv;
+using namespace Eigen;
 using namespace glm;
 
 const string keys =
@@ -39,7 +38,6 @@ const string keys =
 
 namespace
 {
-
 template <int shOrder = 4>
 bool computeSphericalHarmonics( Mat& img, vector<dvec3>& shCoeff )
 {
@@ -67,13 +65,19 @@ bool computeSphericalHarmonics( Mat& img, vector<dvec3>& shCoeff )
    for ( size_t y = 0; y < img.rows; y++ )
    {
       const float* row_data = img.ptr<float>( y );
-      const double theta = sh::ImageYToTheta( y, img.rows );
+      const double theta = sh::ImageYToTheta(y, img.rows);
+      //( y / ( img.rows - 1 ) - 0.5 ) * M_PI;
+      const double stheta = sin( theta );
+      const double ctheta = cos( theta );
       const double weight = pixel_area * sin( theta );
       vector<dvec3>& row_coeffs = img_coeffs[y];
 
       for ( size_t x = 0; x < img.cols; x++ )
       {
-         const double phi = sh::ImageXToPhi( x, img.cols );
+         const double phi = sh::ImageXToPhi(x,img.cols);
+         //( 2.0 * x / ( img.cols - 1 ) - 1.0 ) * M_PI;
+         Vector3d dir;
+         dir << ctheta * sin( phi ), -stheta, ctheta * cos( phi );
          // NB : opencv images use to be stored in BGR
          const dvec3 rgb( row_data[x * 3 + 2], row_data[x * 3 + 1], row_data[x * 3] );
 
@@ -136,22 +140,12 @@ int main( int argc, char* argv[] )
          const string& imgPath = lst.get( lst_i );
 
          // read the image
-         cv::Mat img = cv::imread( imgPath, IMREAD_UNCHANGED );
-         if ( !img.data || (img.channels() < 3) || (img.channels() > 4) )
-         {
-            cerr << "Bad image " << imgPath << endl;
-            continue;
-         }
-         if ( img.channels() == 4 ) cv::cvtColor( img, img, cv::COLOR_RGBA2RGB );
-         if ( img.type() != CV_32F )
-         {
-            img.convertTo( img, CV_32F );
-            img /= 255.0;
-         }
+         cv::Mat img = cv_utils::imread32FC3( imgPath );
+         if ( !img.data ) continue;
 
          // compute the sh coefficients
          vector<dvec3> shCoeff;
-         if ( !computeSphericalHarmonics( img, shCoeff ) )
+         if ( !computeSphericalHarmonics<4>( img, shCoeff ) )
          {
             cerr << "Cannot compute SH for " << imgPath << endl;
             continue;
@@ -160,7 +154,7 @@ int main( int argc, char* argv[] )
          // write the result to the database
          dbPtr->Put(
              dbWriteOpts,
-             boost::filesystem::basename( imgPath ),
+             imgPath,
              leveldb::Slice(
                  reinterpret_cast<const char*>( value_ptr( shCoeff[0] ) ),
                  sizeof( dvec3 ) * shCoeff.size() ) );
@@ -169,13 +163,6 @@ int main( int argc, char* argv[] )
       profiler.stop();
       cout << "Sh computation time -> " << profiler.getMs() << endl;
    }
-
-   // test database
-   /*std::unique_ptr<leveldb::Iterator> dbIt( dbPtr->NewIterator( leveldb::ReadOptions() ) );
-   for ( dbIt->SeekToFirst(); dbIt->Valid(); dbIt->Next() )
-   {
-      cout << dbIt->key().ToString() << " : " << dbIt->value().ToString() << endl;
-   }*/
 
    return ( 0 );
 }
