@@ -42,12 +42,15 @@ int main( int argc, char* argv[] )
          cerr << dbStatus.ToString() << endl;
          return -1;
       }
-      shSampler.reset( new EnvMapShDataSampler( 4, db, std::time( 0 ) ) );
+      shSampler.reset( new EnvMapShDataSampler( 8, db, std::time( 0 ) ) );
    }
 
    // sample
-   glm::uvec3 sz( 512, 512, 100 );
-   shSampler->sample( nullptr, sz, nullptr, nullptr );
+   glm::uvec3 sz( 128, 128, 2 );
+   vector<float> imgData(sz.x*sz.y*sz.y*3);
+   vector<float> camData(sz.z*shSampler->nbCameraParams());
+   vector<float> shData(sz.z*shSampler->nbShCoeffs()*3);
+   shSampler->sample(&imgData[0], sz, &shData[0], &camData[0]);
 
    return ( 0 );
 }

@@ -57,6 +57,9 @@ public :
     const glm::uvec3 sz,
     float* /*shData*/,
     float* /*camData*/ );
+
+   int nbShCoeffs() const {return _nbShCoeffs;}
+   static int nbCameraParams() {return 4;} // 3 rotations + fov 
 };
 
 #endif // _SAMPLEENVMAPSHDATASET_ENVMAPSHDATASAMPLER_H

@@ -80,6 +80,35 @@ bool sampleImageFromEnvMap( Mat& envMap, Mat& sample, float fov, const Matrix3d&
    }
 }
 
+bool renderEnvMapFromCoeff( Mat& envMap,  const int shOrder, const vector<Array3f>& shs)
+{
+// sample
+
+//#pragma omp parallel for
+   for ( size_t y = 0; y < envMap.rows; y++ )
+   {
+      //const double theta = ( ( y + 0.5 ) / envMap.rows - 0.5 ) * M_PI;
+      const double theta = sh::ImageYToTheta(y, envMap.rows);
+      const double stheta = sin( theta );
+      const double ctheta = cos( theta );
+      float* row_data = envMap.ptr<float>( y );
+      
+      for ( size_t x = 0; x < envMap.cols; x++ )
+      {
+	 //const double phi = ( 2.0 * ( x + 0.5 ) / envMap.cols - 1.0 ) * M_PI;
+         const double phi = sh::ImageXToPhi(x, envMap.cols);
+         Vector3d dir;
+         dir << sin( phi ), -stheta * cos( phi ), ctheta * cos( phi );
+         dir.normalize();
+         Array3f irradiance = sh::EvalSHSum(shOrder, shs, phi, theta); //sh::RenderDiffuseIrradiance(shs, dir);
+
+	 row_data[x*3+2] = irradiance(0);
+	 row_data[x*3+1] = irradiance(1);
+	 row_data[x*3+0] = irradiance(2);
+      }
+   }
+}
+
 }
 
 //-----------------------------------------------------------------------------
@@ -109,15 +138,17 @@ EnvMapShDataSampler::EnvMapShDataSampler( int shOrder, leveldb::DB* db, int seed
 EnvMapShDataSampler::~EnvMapShDataSampler(){};
 
 bool EnvMapShDataSampler::sample(
-    float* /*imgData*/,
-    const glm::uvec3 sz,
-    float* /*shData*/,
-    float* /*camData*/ )
+    float* imgData,
+    const uvec3 sz,
+    float* shData,
+    float* camData )
 {
 
    // tests
 
    std::unique_ptr<leveldb::Iterator> itPtr( _dbPtr->NewIterator( _dbOpts ) );
+
+   const size_t imgSize = sz.x*sz.y*3;
 
    for ( size_t s = 0; s < sz.z; ++s )
    {
@@ -125,28 +156,42 @@ bool EnvMapShDataSampler::sample(
       const int keyId = _keyGen( _rng );
       // sample the point on a sphere
       const std::vector<float> camLookAt = _sphereGen();
-      const float roll = _rollGen( _rng );
+      const double camRoll = M_PI*_rollGen( _rng )/180.0;
       // extract the pitch/yaw
       Vector3d rotAxis;
       rotAxis << camLookAt[0], camLookAt[1], camLookAt[2];
       rotAxis.normalize();
-      Matrix3d rot = AngleAxisd( asin(clamp(rotAxis[1],-1.0,1.0) ),Vector3d::UnitX()).toRotationMatrix() *
-                     AngleAxisd( atan2(rotAxis[0], rotAxis[2]), Vector3d::UnitY() ).toRotationMatrix() * 
-                     AngleAxisd( M_PI*roll/180.0, Vector3d::UnitZ() ).toRotationMatrix();
+      const double camPitch =  asin(clamp(rotAxis[1],-1.0,1.0) );
+      const double camYaw   =  atan2(rotAxis[0], rotAxis[2]);
+      
+      Matrix3d rot = AngleAxisd(camPitch,Vector3d::UnitX()).toRotationMatrix();// *
+                     //AngleAxisd( camYaw , Vector3d::UnitY() ).toRotationMatrix();// * 
+                     //AngleAxisd( camRoll, Vector3d::UnitZ() ).toRotationMatrix();
       Quaterniond quat( rot );
 
       // sample the fov in radians
-      const float camFoV = _fovGen( _rng ) * M_PI / 180.0;
+      const float camFoV = 120.0 * M_PI / 180.0; //_fovGen( _rng ) * M_PI / 180.0;
       cout << camFoV * 180.0 / M_PI << endl;
+
+      float* camDataPtr = camData + s*nbCameraParams();
+      camDataPtr[0] = camFoV;
+      camDataPtr[1] = camPitch;	
+      camDataPtr[2] = camYaw;	
+      camDataPtr[3] = camRoll;	
 
       // Retrieve the sh coefficients
       itPtr->Seek( _keyHash[keyId] );
       if ( !itPtr->Valid() || itPtr->value().size() < sizeof( double ) * 3 * _nbShCoeffs )
          return false;
-      std::vector<Array3f> shCoeffs( _nbShCoeffs );
+      vector<Array3f> shCoeffs( _nbShCoeffs );
       const double* value = reinterpret_cast<const double*>( itPtr->value().data() );
+      float* shDataPtr = shData + s*3*_nbShCoeffs;
       for ( int shi = 0; shi < _nbShCoeffs; ++shi )
       {
+	 shDataPtr[shi*3] = value[shi*3];
+	 shDataPtr[shi*3+1] = value[shi*3+1];
+	 shDataPtr[shi*3+2] = value[shi*3+2];
+
          Array3f sh;
          sh << value[shi * 3], value[shi * 3 + 1], value[shi * 3 + 2];
          shCoeffs[shi] = sh;
@@ -157,19 +202,24 @@ bool EnvMapShDataSampler::sample(
       shRot->Apply( shCoeffs, &shCoeffs );
 
       // Proto : create a map with the spherical harmonics
-      cvShImage img( sz.x, sz.y );
-      sh::RenderDiffuseIrradianceMap( shCoeffs, &img );
-
+      //cvShImage img( sz.x, sz.y );
+      //sh::RenderDiffuseIrradianceMap( shCoeffs, &img );
+       
+      cvShImage img( sz.y, 2*sz.y );
+      renderEnvMapFromCoeff( img.cv(), _shOrder, shCoeffs );
+      
       // Open the image
 
       Matrix3d rotMat =  rot;
       Mat oimg = cv_utils::imread32FC3( _keyHash[keyId] );
+      threshold(oimg,oimg,1.0,1.0,THRESH_TRUNC);
       cout << _keyHash[keyId] <<endl;
       if ( oimg.data )
       {
-         Mat small( sz.x, sz.y, CV_32FC3 );
-         Mat crop( sz.x, sz.y, CV_32FC3 );
+         Mat small( sz.y, 2*sz.y, CV_32FC3 );
+         Mat crop( sz.y, sz.x, CV_32FC3 );
          sampleImageFromEnvMap( oimg, crop, camFoV, rotMat );
+	 memcpy(imgData+s*imgSize,crop.ptr<float>(),sizeof(float)*imgSize);
          resize(oimg,small,small.size());
          imshow( "original", small );
          imshow( "crop", crop );
@@ -178,6 +228,6 @@ bool EnvMapShDataSampler::sample(
       minMaxLoc( img.cv(), &minVal, &maxVal );
       img.cv() = ( img.cv() - minVal ) / ( maxVal - minVal );
       imshow( "irradianceMap", img.cv() );
-      waitKey();
+      //waitKey();
    }
 }
