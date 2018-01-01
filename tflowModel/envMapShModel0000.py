@@ -19,12 +19,10 @@ from sampleEnvMapShDataset import *
 from tensorflow.contrib.data import Dataset, Iterator
 
 # Parameters
-learningRate = 0.001
 numSteps = 5
 batchSz = 6
 shOrder = 4
 imgSz = [192,108]
-dropout = 0.25 # Dropout, probability to drop a unit
 
 def conv_layer(x, filter_size, step):
     layer_w = tf.Variable(tf.random_normal(filter_size))
@@ -65,51 +63,87 @@ def envMapShModel000(imgs, outputSz, dropout, training):
 
 	return outputLayer
 
-class EnvMapShDatasetIterator(object):
+class EnvMapShDatasetTF(object):
 
 	def __init__(self,dbPath):
 
 	   self.__envMapDb = EnvMapShDataset(dbPath, shOrder)
            self.__dims = [batchSz,imgSz[0], imgSz[1]] 		
+	   self.data = Dataset.from_generator(self.genEnvMapSh, (tf.float32, tf.float32))
 		
 	def genEnvMapSh(self):
 	   for i in itertools.count(1):
 	      imgs, coeffs, cparams = self.__envMapDb.sampleData(self.__dims)
 	      yield (coeffs,imgs)
 	
-	def getIterator(self):
-	   self.__data = Dataset.from_generator(self.genEnvMapSh, (tf.float32, tf.float32))
-	   self.__it =   Iterator.from_structure(self.__data.output_types, self.__data.output_shapes)
-           self.__elem = self.__it.get_next()
-           self.__initIt = self.__it.make_initializer(self.__data)
-	   return self.__elem, self.__initIt
-
-
+	def getNbShCoeffs(self):
+	   return self.__envMapDb.nbShCoeffs*3
+       
+	
 def trainEnvMapShModel(modelPath, trainPath, testPath):
 	
-   trDbIt = EnvMapShDatasetIterator(trainPath)
-   tr_elem, tr_initIt = trDbIt.getIterator()
+   trDs = EnvMapShDatasetTF(trainPath)
+   tsDs = EnvMapShDatasetTF(testPath)
+   
+   nbShCoeffs = trDs.getNbShCoeffs()
+   inputShape = [batchSz, imgSz[0], imgSz[1], 3]
+   outputShape = [batchSz, nbShCoeffs]
+   
+   dsIt =  Iterator.from_structure(trDs.data.output_types, trDs.data.output_shapes)
+   dsView = dsIt.get_next()
 
-   tsDbIt = EnvMapShDatasetIterator(testPath)
-   ts_elem, ts_initIt = tsDbIt.getIterator()
+   trInit = dsIt.make_initializer(trDs)
+   tsInit = dsIt.make_initializer(tsDs)
+
+   # Input
+   inputView = tf.placeholder(tf.float32, shape=inputShape, name="input_view")
+   outputSh  = tf.placeholder(tf.float32, shape=outputShape, name="output_sh") 
+   dropoutProb = tf.placeholder(tf.float32)  # dropout (keep probability)
+   training = tf.placeholder(tf.bool)
+   
+   # Graph
+   computedSh = envMapShModel0000(input_view,nbShCoeffs,dropoutProb,training)	
+
+   # Optimizer
+   cost = tf.reduce_mean(tf.square(tf.substract(computedSh,outputSh)))
+   learningRate = tf.placeholder(tf.float32, shape=[])
+   optimizer = tf.train.AdamOptimizer(learning_rate=learningRate).minimize(cost)
+
+   # Accuracy	
+   accuracy = tf.reduce_mean(tf.square(tf.substract(model, pred)))
+
+   # Params Initializer
+   varInit = tf.contrib.layers.xavier_initializer()
+
+   # Persistency
+   persistency = tf.train.Saver()
 
    with tf.Session() as sess:
 
+       # initialize params	
+       sess.run(varInit)
+
        # initialize the iterator on the training data
-       sess.run(tr_initIt)
+       sess.run(trInit)
+
+       # Restore model if needed
+       persistency.restore(sess, modelPath)
 
        # get each element of the training dataset until the end is reached
-       for i in range(numSteps):
+       for step in range(numSteps):
           
-          try:
-             elem = sess.run(tr_elem)
-             print elem[0].shape
-             print elem[1].shape
+          # Get the next training batch
+          coeffs, imgs = sess.run(dsView)
 
-          except tf.errors.OutOfRangeError:
-             print("End of training dataset.")
-             break
+          # Run optimization op (backprop)
+          sess.run(optimizer, feed_dict={learningRate: 0.001,
+                                         dropoutProb: dropout,
+                                         inputView: imgs,
+                                         outputSh: coeffs})
 
+	  if step % logStep == 0:
+	     
+             persistency.save(sess, modelPath)  	
 
 
 if __name__== "__main__":
