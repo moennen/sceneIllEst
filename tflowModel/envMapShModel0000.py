@@ -85,6 +85,8 @@ class EnvMapShDatasetTF(object):
        
 	
 def trainEnvMapShModel(modelPath, trainPath, testPath):
+
+   modelFilename = modelPath + "/tfData"
 	
    trDs = EnvMapShDatasetTF(trainPath)
    tsDs = EnvMapShDatasetTF(testPath)
@@ -118,7 +120,8 @@ def trainEnvMapShModel(modelPath, trainPath, testPath):
    varInit = tf.global_variables_initializer()
 
    # Persistency
-   persistency = tf.train.Saver(pad_step_number=True, filename=modelPath)
+   persistency = tf.train.Saver(pad_step_number=True, keep_checkpoint_every_n_hours=3, 
+                                filename=modelFilename)
 
    with tf.Session() as sess:
 
@@ -127,7 +130,7 @@ def trainEnvMapShModel(modelPath, trainPath, testPath):
         
        # Restore model if needed
        try:
-          persistency.restore(sess, modelPath)
+          persistency.restore(sess, tf.train.latest_checkpoint(modelPath))
        except:
           print "Cannot load model:", sys.exc_info()[0]
        
@@ -160,7 +163,7 @@ def trainEnvMapShModel(modelPath, trainPath, testPath):
                    + "{:.5f}".format(trAccuracy))
 
              # step  
-             persistency.save(sess, modelPath, global_step=step)
+             persistency.save(sess, modelFilename, global_step=step)
 	     
                	
 
