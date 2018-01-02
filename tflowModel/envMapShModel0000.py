@@ -19,25 +19,29 @@ from sampleEnvMapShDataset import *
 from tensorflow.contrib.data import Dataset, Iterator
 
 # Parameters
-numSteps = 5
-batchSz = 6
+numSteps = 1000
+logStep = 25
+batchSz = 32
 shOrder = 4
 imgSz = [192,108]
 
+def printVarTF(sess):
+   tvars = tf.trainable_variables()
+   for var in tvars:
+      print var.name
+      print var.eval(sess)
+
 def conv_layer(x, filter_size, step):
     layer_w = tf.Variable(tf.random_normal(filter_size))
-    layer_b = tf.Variable(tf.random_normal(filter_size[3]))
+    layer_b = tf.Variable(tf.random_normal([filter_size[3]]))
     layer = tf.nn.conv2d(x, layer_w, strides=[1, step, step, 1], padding='VALID')
     layer = tf.nn.bias_add(layer, layer_b)
     layer = tf.nn.relu(layer)
     return layer
 
-def envMapShModel000(imgs, outputSz, dropout, training):
+def envMapShModel0000(imgs, outputSz, dropout, training):
 
-    with tf.variable_scope('EnvMapShModel0000', reuse=reuse):
-
-        # TF Estimator input is a dict, in case of multiple inputs
-        x = x_dict['images']
+    with tf.variable_scope('EnvMapShModel0000'):
 
 	# ----> 192x108x3	
         layer0=imgs
@@ -56,7 +60,7 @@ def envMapShModel000(imgs, outputSz, dropout, training):
 
 	#
 	layer6f= tf.contrib.layers.flatten(layer6)
-	layer7 = tf.layers.dense(layer6f, 1024)
+	layer7 = tf.layers.dense(layer6f, 1024, activation=tf.nn.relu)
         layer7d= tf.layers.dropout(layer7, rate=dropout, training=training)
 
         outputLayer = tf.layers.dense(layer7d, outputSz)
@@ -92,8 +96,8 @@ def trainEnvMapShModel(modelPath, trainPath, testPath):
    dsIt =  Iterator.from_structure(trDs.data.output_types, trDs.data.output_shapes)
    dsView = dsIt.get_next()
 
-   trInit = dsIt.make_initializer(trDs)
-   tsInit = dsIt.make_initializer(tsDs)
+   trInit = dsIt.make_initializer(trDs.data)
+   tsInit = dsIt.make_initializer(tsDs.data)
 
    # Input
    inputView = tf.placeholder(tf.float32, shape=inputShape, name="input_view")
@@ -102,48 +106,63 @@ def trainEnvMapShModel(modelPath, trainPath, testPath):
    training = tf.placeholder(tf.bool)
    
    # Graph
-   computedSh = envMapShModel0000(input_view,nbShCoeffs,dropoutProb,training)	
+   computedSh = envMapShModel0000(inputView,nbShCoeffs,dropoutProb,training)	
 
    # Optimizer
-   cost = tf.reduce_mean(tf.square(tf.substract(computedSh,outputSh)))
+   cost = tf.reduce_mean(tf.square(tf.subtract(computedSh,outputSh)))
+   accuracy = tf.sqrt(cost)
    learningRate = tf.placeholder(tf.float32, shape=[])
    optimizer = tf.train.AdamOptimizer(learning_rate=learningRate).minimize(cost)
 
-   # Accuracy	
-   accuracy = tf.reduce_mean(tf.square(tf.substract(model, pred)))
-
    # Params Initializer
-   varInit = tf.contrib.layers.xavier_initializer()
+   varInit = tf.global_variables_initializer()
 
    # Persistency
-   persistency = tf.train.Saver()
+   persistency = tf.train.Saver(pad_step_number=True, filename=modelPath)
 
    with tf.Session() as sess:
 
        # initialize params	
        sess.run(varInit)
-
-       # initialize the iterator on the training data
-       sess.run(trInit)
-
+        
        # Restore model if needed
-       persistency.restore(sess, modelPath)
-
+       try:
+          persistency.restore(sess, modelPath)
+       except:
+          print "Cannot load model:", sys.exc_info()[0]
+       
        # get each element of the training dataset until the end is reached
        for step in range(numSteps):
-          
+
+	  # initialize the iterator on the training data
+          sess.run(trInit)
+   
           # Get the next training batch
           coeffs, imgs = sess.run(dsView)
 
           # Run optimization op (backprop)
           sess.run(optimizer, feed_dict={learningRate: 0.001,
-                                         dropoutProb: dropout,
+                                         dropoutProb: 0.15,
                                          inputView: imgs,
-                                         outputSh: coeffs})
+                                         outputSh: coeffs,
+                                         training: True})
 
 	  if step % logStep == 0:
+	   
+	     # Sample train accuracy
+             coeffs, imgs = sess.run(dsView)
+	     trAccuracy = sess.run(accuracy, feed_dict={dropoutProb: 0.0,
+                                                        inputView: imgs,
+                                                        outputSh:  coeffs,
+                                                        training: False})  
+            
+             print("Log Train Accurarcy Sample" + str(step * batchSz) + " " 
+                   + "{:.5f}".format(trAccuracy))
+
+             # step  
+             persistency.save(sess, modelPath, global_step=step)
 	     
-             persistency.save(sess, modelPath)  	
+               	
 
 
 if __name__== "__main__":

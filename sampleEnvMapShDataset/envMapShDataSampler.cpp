@@ -84,7 +84,7 @@ bool renderEnvMapFromCoeff( Mat& envMap,  const int shOrder, const vector<Array3
 {
 // sample
 
-//#pragma omp parallel for
+#pragma omp parallel for
    for ( size_t y = 0; y < envMap.rows; y++ )
    {
       //const double theta = ( ( y + 0.5 ) / envMap.rows - 0.5 ) * M_PI;
@@ -164,14 +164,14 @@ bool EnvMapShDataSampler::sample(
       const double camPitch =  asin(clamp(rotAxis[1],-1.0,1.0) );
       const double camYaw   =  atan2(rotAxis[0], rotAxis[2]);
       
-      Matrix3d rot = AngleAxisd(camPitch,Vector3d::UnitX()).toRotationMatrix();// *
-                     //AngleAxisd( camYaw , Vector3d::UnitY() ).toRotationMatrix();// * 
-                     //AngleAxisd( camRoll, Vector3d::UnitZ() ).toRotationMatrix();
+      Matrix3d rot = AngleAxisd(camPitch,Vector3d::UnitX()).toRotationMatrix() *
+                     AngleAxisd( camYaw , Vector3d::UnitY() ).toRotationMatrix() * 
+                     AngleAxisd( camRoll, Vector3d::UnitZ() ).toRotationMatrix();
       Quaterniond quat( rot );
 
       // sample the fov in radians
       const float camFoV = 120.0 * M_PI / 180.0; //_fovGen( _rng ) * M_PI / 180.0;
-      cout << camFoV * 180.0 / M_PI << endl;
+      //cout << camFoV * 180.0 / M_PI << endl;
 
       float* camDataPtr = camData + s*nbCameraParams();
       camDataPtr[0] = camFoV;
@@ -213,21 +213,20 @@ bool EnvMapShDataSampler::sample(
       Matrix3d rotMat =  rot;
       Mat oimg = cv_utils::imread32FC3( _keyHash[keyId] );
       threshold(oimg,oimg,1.0,1.0,THRESH_TRUNC);
-      cout << _keyHash[keyId] <<endl;
       if ( oimg.data )
       {
-         Mat small( sz.y, 2*sz.y, CV_32FC3 );
+         //Mat small( sz.y, 2*sz.y, CV_32FC3 );
          Mat crop( sz.y, sz.x, CV_32FC3 );
          sampleImageFromEnvMap( oimg, crop, camFoV, rotMat );
 	 memcpy(imgData+s*imgSize,crop.ptr<float>(),sizeof(float)*imgSize);
-         resize(oimg,small,small.size());
-         imshow( "original", small );
-         imshow( "crop", crop );
+         //resize(oimg,small,small.size());
+         //imshow( "original", small );
+         //imshow( "crop", crop );
       }
-      double minVal, maxVal;
-      minMaxLoc( img.cv(), &minVal, &maxVal );
-      img.cv() = ( img.cv() - minVal ) / ( maxVal - minVal );
-      imshow( "irradianceMap", img.cv() );
+      //double minVal, maxVal;
+      //minMaxLoc( img.cv(), &minVal, &maxVal );
+      //img.cv() = ( img.cv() - minVal ) / ( maxVal - minVal );
+      //imshow( "irradianceMap", img.cv() );
       //waitKey();
    }
 }
