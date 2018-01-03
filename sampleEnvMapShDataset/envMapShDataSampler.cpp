@@ -212,6 +212,7 @@ bool EnvMapShDataSampler::sample(
 
       Matrix3d rotMat =  rot;
       Mat oimg = cv_utils::imread32FC3( _keyHash[keyId] );
+      std::cout << "Sampling image : " <<  _keyHash[keyId] << std::endl; 
       threshold(oimg,oimg,1.0,1.0,THRESH_TRUNC);
       if ( oimg.data )
       {

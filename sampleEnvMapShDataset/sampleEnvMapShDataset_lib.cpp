@@ -14,15 +14,16 @@
 
 #include <ctime>
 #include <iostream>
+#include <map>
 
 using namespace std;
 using namespace cv;
 
-static std::unique_ptr<EnvMapShDataSampler> g_shSampler;
+static map<int,  unique_ptr<EnvMapShDataSampler> > g_shSampler;
 
-extern "C" int initEnvMapShDataSampler(const char* datasetName, const int shOrder)
+extern "C" int initEnvMapShDataSampler(const int idx, const char* datasetName, const int shOrder)
 {
-   g_shSampler.reset();	
+   g_shSampler[idx].reset();	
    {
       const string dbName(datasetName);
       leveldb::DB* db;
@@ -30,19 +31,24 @@ extern "C" int initEnvMapShDataSampler(const char* datasetName, const int shOrde
       leveldb::Status dbStatus = leveldb::DB::Open( dbOpts, dbName, &db );
       if ( !dbStatus.ok() )
       {
+         g_shSampler.erase(idx);	
          cerr << dbStatus.ToString() << endl;
          return SHS_ERROR_BAD_DB;
       }
-      g_shSampler.reset( new EnvMapShDataSampler( shOrder, db, time( 0 ) ) );
+      g_shSampler[idx].reset(
+         new EnvMapShDataSampler( shOrder, db, time( 0 ) ) );
    }
 
    return SHS_SUCCESS;
 }
 
-extern "C" int getEnvMapShNbCamParams() { return (g_shSampler.get()?g_shSampler->nbCameraParams():0); }
-extern "C" int getEnvMapShNbCoeffs() { return (g_shSampler.get()?g_shSampler->nbShCoeffs():0); }
+extern "C" int getEnvMapShNbCamParams(const int idx) { 
+   return (g_shSampler[idx].get()?g_shSampler[idx]->nbCameraParams():0); }
+extern "C" int getEnvMapShNbCoeffs(const int idx) { 
+   return (g_shSampler[idx].get()?g_shSampler[idx]->nbShCoeffs():0); }
 
 extern "C" int getEnvMapShDataSample(
+   const int idx,
    const int nbSamples,  
    float* shCoeffs, 
    float* camParams, 
@@ -50,11 +56,11 @@ extern "C" int getEnvMapShDataSample(
    const int h, 
    float* generatedViews)
 {
-   if (!g_shSampler.get()) return SHS_ERROR_UNINIT;
+   if (!g_shSampler[idx].get()) return SHS_ERROR_UNINIT;
 
    // sample
    glm::uvec3 sz( w, h, nbSamples ); 
-   if (!g_shSampler->sample( generatedViews, sz, shCoeffs, camParams ))
+   if (!g_shSampler[idx]->sample( generatedViews, sz, shCoeffs, camParams ))
    {
       return SHS_ERROR_GENERIC;
    }

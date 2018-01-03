@@ -21,6 +21,8 @@ from tensorflow.contrib.data import Dataset, Iterator
 # Parameters
 numSteps = 1000
 logStep = 25
+logTrSteps = 3
+logTsSteps = 10
 batchSz = 32
 shOrder = 4
 imgSz = [192,108]
@@ -70,7 +72,6 @@ def envMapShModel0000(imgs, outputSz, dropout, training):
 class EnvMapShDatasetTF(object):
 
 	def __init__(self,dbPath):
-
 	   self.__envMapDb = EnvMapShDataset(dbPath, shOrder)
            self.__dims = [batchSz,imgSz[0], imgSz[1]] 		
 	   self.data = Dataset.from_generator(self.genEnvMapSh, (tf.float32, tf.float32))
@@ -133,12 +134,13 @@ def trainEnvMapShModel(modelPath, trainPath, testPath):
           persistency.restore(sess, tf.train.latest_checkpoint(modelPath))
        except:
           print "Cannot load model:", sys.exc_info()[0]
-       
+
+       sess.run(trInit)
+ 
        # get each element of the training dataset until the end is reached
        for step in range(numSteps):
 
 	  # initialize the iterator on the training data
-          sess.run(trInit)
    
           # Get the next training batch
           coeffs, imgs = sess.run(dsView)
@@ -150,22 +152,41 @@ def trainEnvMapShModel(modelPath, trainPath, testPath):
                                          outputSh: coeffs,
                                          training: True})
 
+	  # Log 
 	  if step % logStep == 0:
 	   
 	     # Sample train accuracy
-             coeffs, imgs = sess.run(dsView)
-	     trAccuracy = sess.run(accuracy, feed_dict={dropoutProb: 0.0,
-                                                        inputView: imgs,
-                                                        outputSh:  coeffs,
-                                                        training: False})  
+             sess.run(trInit)
+             trAccuracy = 0
+             for logTrStep in range(logTrSteps):
+                coeffs, imgs = sess.run(dsView)
+	        trAccuracy += sess.run(accuracy, feed_dict={dropoutProb: 0.0,
+                                                            inputView: imgs,
+                                                            outputSh:  coeffs,
+                                                            training: False})  
             
              print("Log Train Accurarcy Sample" + str(step * batchSz) + " " 
-                   + "{:.5f}".format(trAccuracy))
+                   + "{:.5f}".format(trAccuracy/logTrSteps))
 
+	     # Sample test accuracy
+             sess.run(tsInit)
+             tsAccuracy = 0
+             for logTsStep in range(logTsSteps):
+                coeffs, imgs = sess.run(dsView)
+	        tsAccuracy += sess.run(accuracy, feed_dict={dropoutProb: 0.0,
+                                                            inputView: imgs,
+                                                            outputSh:  coeffs,
+                                                            training: False})  
+            
+             print("Log Test Accurarcy Sample" + str(step * batchSz) + " " 
+                   + "{:.5f}".format(tsAccuracy/logTsSteps))
+
+	
              # step  
              persistency.save(sess, modelFilename, global_step=step)
-	     
                	
+             # reset the training iterator
+             sess.run(trInit)
 
 
 if __name__== "__main__":
