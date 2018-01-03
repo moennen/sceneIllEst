@@ -61,7 +61,7 @@ bool computeSphericalHarmonics( Mat& img, vector<dvec3>& shCoeff )
    const double pixel_area = ( 2.0 * M_PI / img.cols ) * ( M_PI / img.rows );
    shCoeff.resize( nbShCoeffs, dvec3( 0.0 ) );
    vector<vector<dvec3> > img_coeffs( img.rows, shCoeff );
-//#pragma omp parallel for
+#pragma omp parallel for
    for ( size_t y = 0; y < img.rows; y++ )
    {
       const float* row_data = img.ptr<float>( y );
