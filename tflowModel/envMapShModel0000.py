@@ -156,6 +156,8 @@ def trainEnvMapShModel(modelPath, trainPath, testPath):
     for grad, var in grads:
         tf.summary.histogram(var.name + '/gradient', grad)
     merged_summary_op = tf.summary.merge_all()
+    tf.summary.scalar("test_loss", cost)
+    test_summary_op = tf.summary.merge_all()
     summary_writer = tf.summary.FileWriter(tbLogsPath,
                                            graph=tf.get_default_graph())
 
@@ -218,6 +220,11 @@ def trainEnvMapShModel(modelPath, trainPath, testPath):
                     tsAccuracy += sess.run(accuracy, feed_dict={dropoutProb: 0.0,
                                                                 inputView: imgs,
                                                                 outputSh:  coeffs})
+                # summary
+                summary = sess.run(test_summary_op, feed_dict={dropoutProb: 0.0,
+                                                               inputView: imgs,
+                                                               outputSh: coeffs})
+                summary_writer.add_summary(summary, globalStep.eval(sess))
 
                 print("{:08d}".format(globalStep.eval(sess)) +
                       " | lr = " + "{:.8f}".format(learningRate.eval()) +
