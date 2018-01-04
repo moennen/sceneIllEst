@@ -220,13 +220,13 @@ bool EnvMapShDataSampler::sample( float* imgData, const uvec3 sz, float* shData,
          memcpy( imgData + s * imgSize, crop.ptr<float>(), sizeof( float ) * imgSize );
          // resize(oimg,small,small.size());
          // imshow( "original", small );
-         // imshow( "crop", crop );
+         //imshow( "crop", crop );
       }
       // double minVal, maxVal;
       // minMaxLoc( img.cv(), &minVal, &maxVal );
       // img.cv() = ( img.cv() - minVal ) / ( maxVal - minVal );
       // imshow( "irradianceMap", img.cv() );
-      // waitKey();
+      //waitKey();
    }
 
    //profiler.stop();
