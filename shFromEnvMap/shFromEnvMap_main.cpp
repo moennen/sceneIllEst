@@ -38,36 +38,27 @@ const string keys =
 
 namespace
 {
-
 bool testEnvMapDir( Mat& img )
 {
-   cout << "test --------- " << endl;
 #pragma omp parallel for
    for ( size_t y = 0; y < img.rows; y++ )
    {
       float* row_data = img.ptr<float>( y );
       const double theta = ( 0.5 - ( y + 0.5 ) / img.rows ) * M_PI;
-      //const double theta = sh::ImageYToTheta( y, img.rows );
       const double stheta = sin( theta );
       const double ctheta = cos( theta );
 
       for ( size_t x = 0; x < img.cols; x++ )
       {
          const double phi = ( 2.0 * ( x + 0.5 ) / img.cols - 1.0 ) * M_PI;
-         //const double phi = sh::ImageXToPhi( x, img.cols );
          Vector3d dir;
-         //dir << sin( phi ), -stheta * cos( phi ), ctheta * cos( phi );
          dir << ctheta * sin( phi ), stheta, ctheta * cos( phi );
-         //dir << stheta*cos(phi), stheta*sin(phi), cos(theta);
          // NB : opencv images use to be stored in BGR
          row_data[x * 3 + 2] = dir[0];
-         row_data[x * 3 + 1] = 0;//std::abs(dir[1]);
-         row_data[x * 3 + 0] = 0;//dir[2];
-         
+         row_data[x * 3 + 1] = dir[1];
+         row_data[x * 3 + 0] = dir[2];
       }
    }
-
-   cout << "tend --------- " << endl;
    return true;
 }
 
@@ -98,28 +89,21 @@ bool computeSphericalHarmonics( Mat& img, vector<dvec3>& shCoeff )
    for ( size_t y = 0; y < img.rows; y++ )
    {
       const float* row_data = img.ptr<float>( y );
-      const double theta = ( ( y + 0.5 ) / img.rows - 0.5 ) * M_PI;
-      //const double theta = sh::ImageYToTheta( y, img.rows );
+      const double theta = ( 0.5 - ( y + 0.5 ) / img.rows ) * M_PI;
       const double stheta = sin( theta );
       const double ctheta = cos( theta );
-      const double weight = pixel_area * stheta;
+      const double weight = pixel_area * ctheta;
       vector<dvec3>& row_coeffs = img_coeffs[y];
-
       for ( size_t x = 0; x < img.cols; x++ )
       {
          const double phi = ( 2.0 * ( x + 0.5 ) / img.cols - 1.0 ) * M_PI;
-         // const double phi = sh::ImageXToPhi( x, img.cols );
          Vector3d dir;
-         //dir << sin( phi ), -stheta * cos( phi ), ctheta * cos( phi );
-         dir << sin( phi ), -stheta * cos( phi ), ctheta * cos( phi );
-         dir.normalize();
+         dir << ctheta * sin( phi ), stheta, ctheta * cos( phi );
          // NB : opencv images use to be stored in BGR
          const dvec3 rgb( row_data[x * 3 + 2], row_data[x * 3 + 1], row_data[x * 3] );
-
          for ( int shi = 0; shi < nbShCoeffs; ++shi )
          {
-            row_coeffs[shi] +=
-                weight * rgb * sh::EvalSH( shLM[shi].x, shLM[shi].y, dir );
+            row_coeffs[shi] += weight * rgb * sh::EvalSH( shLM[shi].x, shLM[shi].y, dir );
          }
       }
    }
@@ -164,8 +148,6 @@ int main( int argc, char* argv[] )
       dbPtr.reset( db );
    }
 
-   omp_set_num_threads(40);
-
    // iterate over the list of files
    {
       Perf profiler;
@@ -180,13 +162,6 @@ int main( int argc, char* argv[] )
          // read the image
          cv::Mat img = cv_utils::imread32FC3( imgPath );
          if ( !img.data ) continue;
-
-         imshow("envMap",img);
-         if (testEnvMapDir(img))
-         {
-            imshow("envMapDir",img);
-            waitKey();
-         }
 
          // compute the sh coefficients
          vector<dvec3> shCoeff;
