@@ -81,6 +81,70 @@ bool sampleImageFromEnvMap( Mat& envMap, Mat& sample, float fov, const Matrix3d&
    }
 }
 
+// integrate over an image to estimate the spherical harmonics of a scene
+// TODO : change the assumption that the unseen scene part is black
+bool estimateSphericalHarmonics( Mat& sample, float fov, vector<double> shCoeffs, int shOrder = 4 )
+{
+   const int nbShCoeffs = sh::GetCoefficientCount( shOrder );
+
+   // construct the sh degree/order indices
+   static vector<ivec2> shLM;
+   if ( shLM.size() != nbShCoeffs )
+   {
+      shLM.resize( nbShCoeffs );
+      for ( int l = 0; l <= shOrder; ++l )
+      {
+         for ( int m = -l; m <= l; ++m )
+         {
+            shLM[sh::GetIndex( l, m )] = ivec2( l, m );
+         }
+      }
+   }
+
+   // integrate over the image
+   const double pixel_area = ( fov / sample.rows ) * ( fov / sample.rows );
+   shCoeff.resize( nbShCoeffs, dvec3( 0.0 ) );
+   vector<vector<dvec3> > img_coeffs( sample.rows, shCoeff );
+
+   const double z = 0.5 * sample.rows / std::tan( 0.5 * fov );
+
+   // sample
+#pragma omp parallel for
+   for ( size_t y = 0; y < sample.rows; y++ )
+   {
+      const float* row_data = sample.ptr<float>( y );
+      vector<dvec3>& row_coeffs = img_coeffs[y];
+      for ( size_t x = 0; x < sample.cols; x++ )
+      {
+         Vector3d dir( (double)x - 0.5 * sample.cols, (double)y - 0.5 * sample.rows, z );
+         dir.normalize();
+
+         // compute sin(theta)
+         // NB dir = (sin(theta)*cos(phi),sin(theta)*sin(phi),cos(theta))
+         const double stheta = std::sqrt( dir[0] * dir[0] + dir[1] * dir[1] );
+         const double weight = pixel_area * stheta;
+
+         const dvec3 rgb( row_data[x * 3 + 2], row_data[x * 3 + 1], row_data[x * 3] );
+         for ( int shi = 0; shi < nbShCoeffs; ++shi )
+         {
+            row_coeffs[shi] += weight * rgb * sh::EvalSH( shLM[shi].x, shLM[shi].y, dir );
+         }
+      }
+   }
+
+   // set the output
+   for ( size_t y = 0; y < sample.rows; y++ )
+   {
+      const vector<dvec3>& row_coeffs = img_coeffs[y];
+      for ( int shi = 0; shi < nbShCoeffs; ++shi )
+      {
+         shCoeff[shi] += row_coeffs[shi];
+      }
+   }
+
+   return true;
+}
+
 bool renderEnvMapFromCoeff( Mat& envMap, const int shOrder, const vector<Array3f>& shs )
 {
    // sample
@@ -88,21 +152,20 @@ bool renderEnvMapFromCoeff( Mat& envMap, const int shOrder, const vector<Array3f
 #pragma omp parallel for
    for ( size_t y = 0; y < envMap.rows; y++ )
    {
-      // const double theta = ( ( y + 0.5 ) / envMap.rows - 0.5 ) * M_PI;
-      const double theta = sh::ImageYToTheta( y, envMap.rows );
+      const double theta = ( ( y + 0.5 ) / envMap.rows - 0.5 ) * M_PI;
+      //const double theta = sh::ImageYToTheta( y, envMap.rows );
       const double stheta = sin( theta );
       const double ctheta = cos( theta );
       float* row_data = envMap.ptr<float>( y );
 
       for ( size_t x = 0; x < envMap.cols; x++ )
       {
-         // const double phi = ( 2.0 * ( x + 0.5 ) / envMap.cols - 1.0 ) * M_PI;
-         const double phi = sh::ImageXToPhi( x, envMap.cols );
+         const double phi = ( 2.0 * ( x + 0.5 ) / envMap.cols - 1.0 ) * M_PI;
+         //const double phi = sh::ImageXToPhi( x, envMap.cols );
          Vector3d dir;
-         dir << sin( phi ), -stheta * cos( phi ), ctheta * cos( phi );
+         //dir << sin( phi ), -stheta * cos( phi ), ctheta * cos( phi );
          dir.normalize();
-         Array3f irradiance =
-             sh::EvalSHSum( shOrder, shs, phi, theta );  // sh::RenderDiffuseIrradiance(shs, dir);
+         Array3f irradiance = sh::EvalSHSum( shOrder, shs, dir );
 
          row_data[x * 3 + 2] = irradiance( 0 );
          row_data[x * 3 + 1] = irradiance( 1 );
@@ -140,8 +203,8 @@ EnvMapShDataSampler::~EnvMapShDataSampler(){};
 
 bool EnvMapShDataSampler::sample( float* imgData, const uvec3 sz, float* shData, float* camData )
 {
-   //Perf profiler;
-   //profiler.start();
+   // Perf profiler;
+   // profiler.start();
 
    // tests
    std::unique_ptr<leveldb::Iterator> itPtr( _dbPtr->NewIterator( _dbOpts ) );
@@ -154,13 +217,13 @@ bool EnvMapShDataSampler::sample( float* imgData, const uvec3 sz, float* shData,
       const int keyId = _keyGen( _rng );
       // sample the point on a sphere
       const std::vector<float> camLookAt = _sphereGen();
-      const double camRoll = 0.0; //M_PI * _rollGen( _rng ) / 180.0;
+      const double camRoll = 0.0;  // M_PI * _rollGen( _rng ) / 180.0;
       // extract the pitch/yaw
       Vector3d rotAxis;
       rotAxis << camLookAt[0], camLookAt[1], camLookAt[2];
       rotAxis.normalize();
-      const double camPitch = 0.0;//asin( clamp( rotAxis[1], -1.0, 1.0 ) );
-      const double camYaw = 0.0;//atan2( rotAxis[0], rotAxis[2] );
+      const double camPitch = 0.0;  // asin( clamp( rotAxis[1], -1.0, 1.0 ) );
+      const double camYaw = 0.0;    // atan2( rotAxis[0], rotAxis[2] );
 
       Matrix3d rot = AngleAxisd( camPitch, Vector3d::UnitX() ).toRotationMatrix() *
                      AngleAxisd( camYaw, Vector3d::UnitY() ).toRotationMatrix() *
@@ -210,7 +273,7 @@ bool EnvMapShDataSampler::sample( float* imgData, const uvec3 sz, float* shData,
 
       Matrix3d rotMat = rot;
       Mat oimg = cv_utils::imread32FC3( _keyHash[keyId] );
-      //std::cout << "Sampling image : " <<  _keyHash[keyId] << std::endl;
+      // std::cout << "Sampling image : " <<  _keyHash[keyId] << std::endl;
       threshold( oimg, oimg, 1.0, 1.0, THRESH_TRUNC );
       if ( oimg.data )
       {
@@ -220,16 +283,15 @@ bool EnvMapShDataSampler::sample( float* imgData, const uvec3 sz, float* shData,
          memcpy( imgData + s * imgSize, crop.ptr<float>(), sizeof( float ) * imgSize );
          // resize(oimg,small,small.size());
          // imshow( "original", small );
-         //imshow( "crop", crop );
+         // imshow( "crop", crop );
       }
       // double minVal, maxVal;
       // minMaxLoc( img.cv(), &minVal, &maxVal );
       // img.cv() = ( img.cv() - minVal ) / ( maxVal - minVal );
       // imshow( "irradianceMap", img.cv() );
-      //waitKey();
+      // waitKey();
    }
 
-   //profiler.stop();
-   //cout << "SampleSh computation time -> " << profiler.getMs() << endl;
-     
+   // profiler.stop();
+   // cout << "SampleSh computation time -> " << profiler.getMs() << endl;
 }
