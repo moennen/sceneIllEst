@@ -165,7 +165,7 @@ int main( int argc, char* argv[] )
 
          // compute the sh coefficients
          vector<dvec3> shCoeff;
-         if ( !computeSphericalHarmonics<8>( img, shCoeff ) )
+         if ( !computeSphericalHarmonics<32>( img, shCoeff ) )
          {
             cerr << "Cannot compute SH for " << imgPath << endl;
             continue;

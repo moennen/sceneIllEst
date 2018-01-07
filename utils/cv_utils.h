@@ -18,6 +18,9 @@
 #include <opencv2/highgui.hpp>
 #include <opencv2/imgproc.hpp>
 
+#include <Eigen/Dense>
+#include <opencv2/core/eigen.hpp>
+
 #include <glm/glm.hpp>
 
 namespace cv_utils

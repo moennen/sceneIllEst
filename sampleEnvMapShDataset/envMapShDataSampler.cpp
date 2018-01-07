@@ -182,10 +182,10 @@ EnvMapShDataSampler::EnvMapShDataSampler( int shOrder, leveldb::DB* db, int seed
       _nbShCoeffs( sh::GetCoefficientCount( shOrder ) ),
       _dbPtr( db ),
       _rng( seed ),
-      _unifSphere( 3 ),
-      _sphereGen( _rng, _unifSphere ),
-      _fovGen( 20.0, 140.0 ),
-      _rollGen( -75.0, 75.0 )
+      _fovGen( _rng, boost::normal_distribution<>(40.0, 20.0) ),
+      _rollGen( _rng, boost::normal_distribution<>( 0.0, 15.0  ) ),
+      _pitchGen( _rng, boost::normal_distribution<>( 0.0, 15.0  ) ),
+      _yawGen( -180.0, 180.0 )
 {
    // create the hash for sampling the keys
    std::unique_ptr<leveldb::Iterator> itPtr( _dbPtr->NewIterator( _dbOpts ) );
@@ -214,23 +214,28 @@ bool EnvMapShDataSampler::sample( float* imgData, const uvec3 sz, float* shData,
       // sample the key
       const int keyId = _keyGen( _rng );
       // sample the point on a sphere
-      const std::vector<float> camLookAt = _sphereGen();
-      const double camRoll = 0.0;  // M_PI * _rollGen( _rng ) / 180.0;
-      // extract the pitch/yaw
-      Vector3d rotAxis;
-      rotAxis << camLookAt[0], camLookAt[1], camLookAt[2];
-      rotAxis.normalize();
-      const double camPitch = asin( clamp( rotAxis[1], -1.0, 1.0 ) );
-      const double camYaw = atan2( rotAxis[0], rotAxis[2] );
+	
+      double camRoll = _rollGen() ; 
+      while ( (camRoll < -90.0) || (camRoll > 90.0) ) 
+         camRoll = _rollGen();
+      camRoll *= M_PI / 180.0; 
+      double camPitch = _pitchGen();
+      while ( (camPitch < -90.0) || (camPitch > 90.0) ) 
+         camPitch = _pitchGen();
+      camPitch *= M_PI / 180.0; 
+      const double camYaw = M_PI * _yawGen( _rng ) / 180.0;
 
-      Matrix3d rot = /*AngleAxisd( camRoll, Vector3d::UnitZ() ).toRotationMatrix() **/
-                     AngleAxisd( camPitch, Vector3d::UnitX() ).toRotationMatrix() ;
-                     //AngleAxisd( camYaw, Vector3d::UnitY() ).toRotationMatrix();
+      Matrix3d rot = AngleAxisd( camYaw, Vector3d::UnitY() ).toRotationMatrix();
+      rot = AngleAxisd( camPitch, rot*Vector3d::UnitX() ).toRotationMatrix()*rot;
+      rot = AngleAxisd( camRoll, rot*Vector3d::UnitZ() ).toRotationMatrix()*rot;
       Quaterniond quat( rot );
 
       // sample the fov in radians
-      const float camFoV = 120.0 /*_fovGen( _rng )*/ * M_PI / 180.0;
-      
+      float camFoV = _fovGen();
+      while ( (camFoV < 20.0) || (camFoV > 120.0) ) 
+         camFoV = _fovGen();
+      camFoV *= M_PI / 180.0; 
+  
       float* camDataPtr = camData + s * nbCameraParams();
       camDataPtr[0] = camFoV;
       camDataPtr[1] = camPitch;
@@ -270,23 +275,23 @@ bool EnvMapShDataSampler::sample( float* imgData, const uvec3 sz, float* shData,
 
       Matrix3d rotMat = rot;
       Mat oimg = cv_utils::imread32FC3( _keyHash[keyId] );
-      std::cout << "Sampling image : " <<  _keyHash[keyId] << std::endl;
-      threshold( oimg, oimg, 1.0, 1.0, THRESH_TRUNC );
+      //std::cout << "Sampling image : " <<  _keyHash[keyId] << std::endl;
+      //threshold( oimg, oimg, 1.0, 1.0, THRESH_TRUNC );
       if ( oimg.data )
       {
-         Mat small( sz.y, 2*sz.y, CV_32FC3 );
+         //Mat small( sz.y, 2*sz.y, CV_32FC3 );
          Mat crop( sz.y, sz.x, CV_32FC3 );
          sampleImageFromEnvMap( oimg, crop, camFoV, rotMat );
          memcpy( imgData + s * imgSize, crop.ptr<float>(), sizeof( float ) * imgSize );
-         resize(oimg,small,small.size());
-         imshow( "original", small );
-         imshow( "crop", crop );
+         //resize(oimg,small,small.size());
+         //imshow( "original", small );
+         //imshow( "crop", crop );
       }
-      double minVal, maxVal;
-      minMaxLoc( img.cv(), &minVal, &maxVal );
-      img.cv() = ( img.cv() - minVal ) / ( maxVal - minVal );
-      imshow( "irradianceMap", img.cv() );
-      waitKey();
+      //double minVal, maxVal;
+      //minMaxLoc( img.cv(), &minVal, &maxVal );
+      //img.cv() = ( img.cv() - minVal ) / ( maxVal - minVal );
+      //imshow( "irradianceMap", img.cv() );
+      //waitKey();
    }
 
    // profiler.stop();

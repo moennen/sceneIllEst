@@ -46,7 +46,7 @@ int main( int argc, char* argv[] )
    }
 
    // sample
-   glm::uvec3 sz( 128, 128, 10 );
+   glm::uvec3 sz( 256, 128, 25 );
    vector<float> imgData(sz.x*sz.y*sz.y*3);
    vector<float> camData(sz.z*shSampler->nbCameraParams());
    vector<float> shData(sz.z*shSampler->nbShCoeffs()*3);

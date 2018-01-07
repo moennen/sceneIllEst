@@ -21,6 +21,7 @@
 #include <boost/random/uniform_on_sphere.hpp>
 #include <boost/random/variate_generator.hpp>
 #include <boost/random/uniform_real_distribution.hpp>
+#include <boost/random/normal_distribution.hpp>
 
 #include <glm/glm.hpp>
 
@@ -43,10 +44,10 @@ class EnvMapShDataSampler
    // random samplers
    boost::random::mt19937 _rng;
    boost::random::uniform_int_distribution<> _keyGen;
-   boost::uniform_on_sphere<float> _unifSphere;
-   boost::variate_generator<boost::random::mt19937&, boost::uniform_on_sphere<float> > _sphereGen;
-   boost::random::uniform_real_distribution<> _fovGen;
-   boost::random::uniform_real_distribution<> _rollGen;
+   boost::variate_generator<boost::random::mt19937&, boost::random::normal_distribution<> > _fovGen;
+   boost::variate_generator<boost::random::mt19937&, boost::random::normal_distribution<> > _pitchGen;
+   boost::variate_generator<boost::random::mt19937&, boost::random::normal_distribution<> > _rollGen;
+   boost::random::uniform_real_distribution<> _yawGen;
 
 public :
    EnvMapShDataSampler( int shOrder, leveldb::DB* db, int seed );

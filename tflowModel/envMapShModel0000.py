@@ -25,7 +25,7 @@ logStep = 100
 logTrSteps = 1
 logTsSteps = 3
 batchSz = 128
-shOrder = 4
+shOrder = 8
 imgSz = [192, 108]
 
 tf.logging.set_verbosity(tf.logging.INFO)
