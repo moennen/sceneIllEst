@@ -210,7 +210,7 @@ EnvMapShDataSampler::EnvMapShDataSampler( int shOrder, leveldb::DB* db, int seed
    for ( itPtr->SeekToFirst(); itPtr->Valid(); itPtr->Next() )
    {
       _keyHash.push_back( itPtr->key().ToString() );
-      //if ( _keyHash.size() == 100 ) break;
+      //if ( _keyHash.size() == 10 ) break;
    }
    //cout << "WARNING : DS SIZE == " << _keyHash.size() << endl;
    _keyGen = boost::random::uniform_int_distribution<>( 0, _keyHash.size() - 1 );
@@ -279,7 +279,7 @@ bool EnvMapShDataSampler::sample( float* imgData, const uvec3 sz, float* shData,
       Quaterniond quat( rot );
 
       // sample the fov in radians
-      float camFoV = _fovGen();
+      float camFoV = 80.0; //_fovGen();
       while ( ( camFoV < 20.0 ) || ( camFoV > 120.0 ) ) camFoV = _fovGen();
       camFoV *= M_PI / 180.0;
 
@@ -299,11 +299,11 @@ bool EnvMapShDataSampler::sample( float* imgData, const uvec3 sz, float* shData,
           Map<VectorXd>(
               reinterpret_cast<double*>( const_cast<char*>( itPtr->value().data() ) ), 3 * _nbShCoeffs );
       
-      shSampleCoeffs = (shSampleCoeffs - _shMeanCoeffs);
+      /*shSampleCoeffs = (shSampleCoeffs - _shMeanCoeffs);
       for ( int shi = 0; shi < 3 * _nbShCoeffs; ++shi )
       {
          shSampleCoeffs[shi] = shSampleCoeffs[shi] / sqrt(_shCovCoeffs(shi,shi));
-      }
+      }*/
 
       float* shDataPtr = shData + s * 3 * _nbShCoeffs;
       for ( int shi = 0; shi < _nbShCoeffs; ++shi )
