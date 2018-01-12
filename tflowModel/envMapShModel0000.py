@@ -13,6 +13,7 @@ import sys
 import tensorflow as tf
 import itertools
 from matplotlib import pyplot as plt
+from scipy.misc import toimage
 # sys.path.append(os.path.abspath('/home/moennen/sceneIllEst/sampleEnvMapShDataset'))
 sys.path.append(os.path.abspath(
     '/mnt/p4/avila/moennen_wkspce/sceneIllEst/sampleEnvMapShDataset'))
@@ -20,15 +21,46 @@ from sampleEnvMapShDataset import *
 from tensorflow.contrib.data import Dataset, Iterator
 
 # Parameters
-numSteps = 100000
+numSteps = 150000
 logStep = 100
 logTrSteps = 1
-logTsSteps = 3
+logTsSteps = 1
 batchSz = 128
-shOrder = 8
-imgSz = [192, 108]
+shOrder = 4
+imgSz = [108, 192]
 
 tf.logging.set_verbosity(tf.logging.INFO)
+
+
+def showImgs(batch, img_depths):
+
+    n_imgs = len(img_depths)
+
+    if np.sum(img_depths) != batch.shape[3]:
+        raise ValueError()
+
+    batch_im = np.zeros(
+        (batch.shape[0] * batch.shape[1], n_imgs * batch.shape[2], 3))
+
+    for b in range(batch.shape[0]):
+
+        n_offset = 0
+        for n in range(n_imgs):
+
+            im_d = img_depths[n]
+            im = batch[b, :, :, n_offset:n_offset + im_d]
+
+            if im_d > 3:
+                gray = np.mean(im, axis=2)
+                im = np.stack([gray, gray, gray], 2)
+
+            batch_im[b * batch.shape[1]:(b + 1) * batch.shape[1],
+                     n * batch.shape[2]:(n + 1) * batch.shape[2], 0:im_d] = im
+
+            n_offset += im_d
+
+    plt.imshow(batch_im)
+    plt.show()
 
 
 def printVarTF(sess):
@@ -38,46 +70,63 @@ def printVarTF(sess):
         print var.eval(sess)
 
 
-def conv_layer(x, filter_size, step):
+def conv_layer(x, filter_size, step, scope, padding='VALID'):
     # tf.random_normal(filter_size))
     initializer = tf.contrib.layers.xavier_initializer()
     layer_w = tf.Variable(initializer(filter_size))
     layer_b = tf.Variable(initializer([filter_size[3]]))
     layer = tf.nn.conv2d(x, layer_w, strides=[
-                         1, step, step, 1], padding='VALID')
+                         1, step, step, 1], padding=padding)
     layer = tf.nn.bias_add(layer, layer_b)
-    layer = tf.nn.relu(layer)
+    layer = tf.nn.relu(layer, name=scope)
     return layer
 
 
 def envMapShModel0000(imgs, outputSz, dropout):
 
-    with tf.variable_scope('EnvMapShModel0000'):
+    with tf.variable_scope('EnvMapShModel00001'):
 
         # ----> 192x108x3
         layer0 = imgs
         # ----> 90x48x32
-        layer1 = conv_layer(layer0, [7, 7, 3, 32], 2)
+        with tf.name_scope('layer1_1') as scope:
+            layer1 = conv_layer(layer0, [7, 7, 3, 32], 2, scope)
         # ----> 41x20x64
-        layer2 = conv_layer(layer1, [5, 5, 32, 64], 2)
+        with tf.name_scope('layer2_1') as scope:
+            layer2 = conv_layer(layer1, [5, 5, 32, 64], 2, scope)
+        with tf.name_scope('layer2_2') as scope:
+            layer2 = conv_layer(layer2, [5, 5, 64, 96], 1, scope, 'SAME')
+        # with tf.name_scope('layer2_2') as scope:
+        #    layer2 = conv_layer(layer2, [5, 5, 64, 96], 1, scope)
         # ----> 18x8x128
-        layer3 = conv_layer(layer2, [3, 3, 64, 128], 2)
+        with tf.name_scope('layer3_1') as scope:
+            layer3 = conv_layer(layer2, [3, 3, 96, 128], 2, scope)
+        with tf.name_scope('layer3_2') as scope:
+            layer3 = conv_layer(layer3, [3, 3, 128, 256], 1, scope, 'SAME')
         # ----> 18x8x128
-        layer4 = conv_layer(layer3, [3, 3, 128, 128], 1)
+        with tf.name_scope('layer4_1') as scope:
+            layer4 = conv_layer(layer3, [3, 3, 256, 256], 1, scope)
         # ----> 7x2x256
-        layer5 = conv_layer(layer4, [3, 3, 128, 256], 2)
+        with tf.name_scope('layer5_1') as scope:
+            layer5 = conv_layer(layer4, [3, 3, 256, 512], 2, scope)
         # ----> 1x1x512
-        layer6 = conv_layer(layer5, [3, 3, 256, 512], 2)
+        with tf.name_scope('layer6_1') as scope:
+            layer6 = conv_layer(layer5, [3, 3, 512, 1024], 2, scope)
 
         #
-        # layer6f = tf.contrib.layers.flatten(layer6)
+        layer6f = tf.contrib.layers.flatten(layer6)
         initializer = tf.contrib.layers.xavier_initializer()
-        layer7 = tf.layers.dense(layer6, 1024, activation=tf.nn.relu, kernel_initializer=initializer,
-                                 bias_initializer=initializer)
-        layer7d = tf.layers.dropout(layer7, rate=dropout)
-
-        outputLayer = tf.layers.dense(layer7d, outputSz, kernel_initializer=initializer,
-                                      bias_initializer=initializer)
+        with tf.name_scope('layer7_1') as scope:
+            layer7 = tf.layers.dense(layer6f, 2048, activation=tf.nn.relu, kernel_initializer=initializer,
+                                     bias_initializer=initializer, name=scope)
+            layer7d = tf.layers.dropout(layer7, rate=dropout)
+        with tf.name_scope('layer7_2') as scope:
+            layer7 = tf.layers.dense(layer7d, 1024, activation=tf.nn.relu, kernel_initializer=initializer,
+                                     bias_initializer=initializer, name=scope)
+            layer7d = tf.layers.dropout(layer7, rate=dropout)
+        with tf.name_scope('layer8_1') as scope:
+            outputLayer = tf.layers.dense(layer7d, outputSz, kernel_initializer=initializer,
+                                          bias_initializer=initializer, name=scope)
 
         return outputLayer
 
@@ -125,22 +174,24 @@ def trainEnvMapShModel(modelPath, trainPath, testPath):
     training = tf.placeholder(tf.bool)
 
     # Test
-    outputSh2 = tf.placeholder(
-        tf.float32, shape=outputShape, name="output_sh2")
-    outStd = tf.sqrt(tf.reduce_mean(
-        tf.square(tf.subtract(outputSh2, outputSh))))
+    # outputSh2 = tf.placeholder(
+    #    tf.float32, shape=outputShape, name="output_sh2")
+    # outStd = tf.sqrt(tf.reduce_mean(
+    #    tf.square(tf.subtract(outputSh2, outputSh))))
 
     # Graph
     computedSh = envMapShModel0000(inputView, nbShCoeffs, dropoutProb)
 
     # Optimizer
-    cost = tf.reduce_mean(tf.square(tf.subtract(computedSh, outputSh)))
-    accuracy = tf.sqrt(cost)
+    costAll = tf.reduce_mean(
+        tf.square(tf.subtract(computedSh, outputSh)), 0)
+    accuracyAll = tf.sqrt(costAll)
+    cost = tf.reduce_mean(costAll)
+    accuracy = tf.reduce_mean(accuracyAll)
     globalStep = tf.Variable(0, trainable=False)
-    learningRate = tf.train.polynomial_decay(0.001, globalStep, numSteps, 0.00000001,
+    learningRate = tf.train.polynomial_decay(0.001, globalStep, numSteps, 0.0,
                                              power=0.5)
-    optEngine = tf.train.AdamOptimizer(
-        learning_rate=learningRate, epsilon=0.01)
+    optEngine = tf.train.AdamOptimizer(learning_rate=learningRate)
     optimizer = optEngine.minimize(cost, global_step=globalStep)
 
     # Persistency
@@ -161,6 +212,19 @@ def trainEnvMapShModel(modelPath, trainPath, testPath):
     summary_writer = tf.summary.FileWriter(tbLogsPath,
                                            graph=tf.get_default_graph())
 
+    # Metrics : Mean
+    meanOutputSh, meanOutputShUpdateOp = tf.contrib.metrics.streaming_mean_tensor(
+        outputSh)
+
+    currentMeanOutputSh = tf.placeholder(
+        tf.float32, shape=outputShape, name="output_sh")
+    outStdAll = tf.reshape(tf.reduce_mean(
+        currentMeanOutputSh, 0), [1, nbShCoeffs])
+    outStdAll = tf.tile(outStdAll, [batchSz, 1])
+    outStdAll = tf.sqrt(tf.reduce_mean(
+        tf.square(tf.subtract(outStdAll, outputSh)), 0))
+    outStd = tf.reduce_mean(outStdAll)
+
     # Params Initializer
     varInit = tf.global_variables_initializer()
 
@@ -168,6 +232,7 @@ def trainEnvMapShModel(modelPath, trainPath, testPath):
 
         # initialize params
         sess.run(varInit)
+        sess.run(tf.local_variables_initializer())
 
         # Restore model if needed
         try:
@@ -186,10 +251,10 @@ def trainEnvMapShModel(modelPath, trainPath, testPath):
             coeffs, imgs = sess.run(dsView)
 
             # Run optimization op (backprop)
-            sess.run(optimizer, feed_dict={dropoutProb: 0.33,
-                                           inputView: imgs,
-                                           outputSh: coeffs,
-                                           training: True})
+            _, currMean = sess.run([optimizer, meanOutputShUpdateOp], feed_dict={dropoutProb: 0.2,
+                                                                                 inputView: imgs,
+                                                                                 outputSh: coeffs,
+                                                                                 training: True})
             # Log
             if step % logStep == 0:
 
@@ -205,21 +270,38 @@ def trainEnvMapShModel(modelPath, trainPath, testPath):
                 trStd = 0
                 for logTrStep in range(logTrSteps):
                     coeffs, imgs = sess.run(dsView)
-                    trAccuracy += sess.run(accuracy, feed_dict={dropoutProb: 0.0,
-                                                                inputView: imgs,
-                                                                outputSh:  coeffs})
-                    coeffs2, imgs2 = sess.run(dsView)
-                    trStd += sess.run(outStd, feed_dict={outputSh:  coeffs,
-                                                         outputSh2: coeffs2})
+                    trAcc = sess.run(accuracy, feed_dict={dropoutProb: 0.0,
+                                                          inputView: imgs,
+                                                          outputSh:  coeffs})
+                    trAccuracy += trAcc
+                    #trAccuracyAll += trAccAll
+                    # coeffs2, imgs2 = sess.run(dsView)
+                    # trStd += sess.run(outStd, feed_dict={outputSh:  coeffs,
+                    #                                     outputSh2: coeffs2})
 
-                # Sample test accuracy
+                # print "------------------------------------------"
+                # print imgs
+                # print "------------------------------------------"
+                # print coeffs
+                # print "------------------------------------------"
+                # print computedSh.eval(feed_dict={dropoutProb: 0.0,
+                #                                 inputView: imgs,
+                #                                 outputSh:  coeffs})
+                # print "------------------------------------------"
+
+            # Sample test accuracy
                 sess.run(tsInit)
                 tsAccuracy = 0
+                stdAccuracy = 0
                 for logTsStep in range(logTsSteps):
                     coeffs, imgs = sess.run(dsView)
-                    tsAccuracy += sess.run(accuracy, feed_dict={dropoutProb: 0.0,
-                                                                inputView: imgs,
-                                                                outputSh:  coeffs})
+                    tsAcc, stdAcc = sess.run([accuracy, outStd], feed_dict={dropoutProb: 0.0,
+                                                                            inputView: imgs,
+                                                                            outputSh:  coeffs,
+                                                                            currentMeanOutputSh: currMean})
+                    tsAccuracy += tsAcc
+                    stdAccuracy += stdAcc
+
                 # summary
                 summary = sess.run(test_summary_op, feed_dict={dropoutProb: 0.0,
                                                                inputView: imgs,
@@ -230,7 +312,9 @@ def trainEnvMapShModel(modelPath, trainPath, testPath):
                       " | lr = " + "{:.8f}".format(learningRate.eval()) +
                       " | trAcc  = " + "{:.5f}".format(trAccuracy/logTrSteps) +
                       " | tsAcc  = " + "{:.5f}".format(tsAccuracy/logTsSteps) +
-                      " | trStd  = " + "{:.5f}".format(trStd/logTrSteps))
+                      " | stdAcc  = " + "{:.5f}".format(stdAccuracy/logTsSteps))
+                #print(" trAcc :")
+                # print trAccAll
 
                 # step
                 persistency.save(sess, modelFilename, global_step=globalStep)

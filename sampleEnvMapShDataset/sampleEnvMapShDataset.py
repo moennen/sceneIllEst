@@ -46,6 +46,6 @@ class EnvMapShDataset(object):
         camData = np.zeros(dims[0]*self.nbCameraParams, np.float32)
         shCoeffsData = np.zeros(dims[0]*self.nbShCoeffs*3, np.float32)
         err = EnvMapShDataset.__sampleData(self.__idx, dims[0], shCoeffsData.ctypes.data_as(POINTER(c_float)), camData.ctypes.data_as(
-            POINTER(c_float)), dims[1], dims[2], imgData.ctypes.data_as(POINTER(c_float)))
+            POINTER(c_float)), dims[2], dims[1], imgData.ctypes.data_as(POINTER(c_float)))
 
         return [np.reshape(imgData, (dims[0], dims[1], dims[2], 3)), np.reshape(shCoeffsData, (dims[0], self.nbShCoeffs*3)), np.reshape(camData, (dims[0], self.nbCameraParams))]

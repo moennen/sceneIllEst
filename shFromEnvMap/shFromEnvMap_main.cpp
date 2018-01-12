@@ -33,8 +33,10 @@ using namespace glm;
 
 const string keys =
     "{help h usage ? |            | print this message   }"
-    "{@imgLst        |            | lst of image to extract the sh }"
-    "{@db            |/tmp/out.db | sh coefficients file }";
+    "{@db            |/tmp/shCoeffs.db | sh coefficients file }"
+    "{mode           |0           | 0=compute coeffs, 1=estimate coeffs statistics  }"
+    "{shOrder        |8           | sh order }"
+    "{imgLst         |            | lst of image to extract the sh }";
 
 namespace
 {
@@ -62,8 +64,7 @@ bool testEnvMapDir( Mat& img )
    return true;
 }
 
-template <int shOrder = 4>
-bool computeSphericalHarmonics( Mat& img, vector<dvec3>& shCoeff )
+bool computeSphericalHarmonics( Mat& img, vector<dvec3>& shCoeff, const int shOrder )
 {
    const int nbShCoeffs = sh::GetCoefficientCount( shOrder );
 
@@ -130,8 +131,11 @@ int main( int argc, char* argv[] )
       parser.printMessage();
       return ( 0 );
    }
-   string inputFilenameA = parser.get<string>( "@imgLst" );
-   string outputFilename = parser.get<string>( "@db" );
+
+   string imgLstFilename = parser.get<string>( "imgLst" );
+   string dbFilename = parser.get<string>( "@db" );
+   const int mode = parser.get<int>( "mode" );
+   const int shOrder = parser.get<int>( "shOrder" );
 
    // create/open the database
    std::unique_ptr<leveldb::DB> dbPtr;
@@ -139,7 +143,7 @@ int main( int argc, char* argv[] )
       leveldb::DB* db;
       leveldb::Options dbOpts;
       dbOpts.create_if_missing = true;
-      leveldb::Status dbStatus = leveldb::DB::Open( dbOpts, outputFilename, &db );
+      leveldb::Status dbStatus = leveldb::DB::Open( dbOpts, dbFilename, &db );
       if ( !dbStatus.ok() )
       {
          cerr << dbStatus.ToString() << endl;
@@ -149,11 +153,12 @@ int main( int argc, char* argv[] )
    }
 
    // iterate over the list of files
+   if ( mode == 0 )
    {
       Perf profiler;
       profiler.start();
 
-      ImgFileLst lst( inputFilenameA.c_str() );
+      ImgFileLst lst( imgLstFilename.c_str() );
       leveldb::WriteOptions dbWriteOpts;
       for ( size_t lst_i = 0; lst_i < lst.size(); ++lst_i )
       {
@@ -165,7 +170,7 @@ int main( int argc, char* argv[] )
 
          // compute the sh coefficients
          vector<dvec3> shCoeff;
-         if ( !computeSphericalHarmonics<32>( img, shCoeff ) )
+         if ( !computeSphericalHarmonics( img, shCoeff, shOrder ) )
          {
             cerr << "Cannot compute SH for " << imgPath << endl;
             continue;
@@ -182,6 +187,57 @@ int main( int argc, char* argv[] )
 
       profiler.stop();
       cout << "Sh computation time -> " << profiler.getMs() << endl;
+   }
+
+   // iterate over the db
+   if ( mode == 1 )
+   {
+      leveldb::ReadOptions dbReadOpts;
+      std::unique_ptr<leveldb::Iterator> itPtr( dbPtr->NewIterator( dbReadOpts ) );
+      const int dim = 3 * sh::GetCoefficientCount( shOrder );
+
+      // compute the mean
+      VectorXd shMeanCoeffs = VectorXd::Zero( dim );
+      double z = 0.0;
+      for ( itPtr->SeekToFirst(); itPtr->Valid(); itPtr->Next() )
+      {
+         if ( itPtr->value().size() < sizeof( double ) * dim )
+            return false;
+         else
+         {
+            z += 1.0;
+            shMeanCoeffs += Map<VectorXd>(
+                reinterpret_cast<double*>( const_cast<char*>( itPtr->value().data() ) ), dim );
+         }
+      }
+      std::cout << z << endl;
+      if ( z > 0.0 ) 
+      {
+         z = 1.0 / z;
+         shMeanCoeffs *= z;
+      }
+
+      // compute the variance
+      MatrixXd shCovCoeffs = MatrixXd::Zero( dim, dim );
+      int test = 0;
+      for ( itPtr->SeekToFirst(); itPtr->Valid(); itPtr->Next() )
+      {
+         if ( itPtr->value().size() < sizeof( double ) * dim )
+            return false;
+         else
+         {
+            test++;
+            VectorXd shSampleCoeffs =
+                Map<VectorXd>(
+                    reinterpret_cast<double*>( const_cast<char*>( itPtr->value().data() ) ), dim ) -
+                shMeanCoeffs;
+            shCovCoeffs += shSampleCoeffs * shSampleCoeffs.adjoint() ;
+         }
+      }
+      shCovCoeffs *= z;
+      std::cout << test << endl;
+      std::cout << shMeanCoeffs << endl;
+      std::cout << shCovCoeffs << endl;
    }
 
    return ( 0 );

@@ -19,7 +19,6 @@
 #include "sh/spherical_harmonics.h"
 
 #include <iostream>
-#include <Eigen/Dense>
 
 using namespace std;
 using namespace cv;
@@ -145,7 +144,7 @@ bool estimateSphericalHarmonics( Mat& sample, float fov, vector<dvec3> shCoeff, 
    return true;
 }
 
-bool renderEnvMapFromCoeff( Mat& envMap, const int shOrder, const vector<Array3f>& shs )
+void renderEnvMapFromCoeff( Mat& envMap, const int shOrder, const vector<Array3f>& shs )
 {
    // sample
 
@@ -162,7 +161,7 @@ bool renderEnvMapFromCoeff( Mat& envMap, const int shOrder, const vector<Array3f
          const double phi = ( 2.0 * ( x + 0.5 ) / envMap.cols - 1.0 ) * M_PI;
          Vector3d dir;
          dir << ctheta * sin( phi ), stheta, ctheta * cos( phi );
-         
+
          Array3f irradiance = sh::EvalSHSum( shOrder, shs, dir );
 
          row_data[x * 3 + 2] = irradiance( 0 );
@@ -171,6 +170,24 @@ bool renderEnvMapFromCoeff( Mat& envMap, const int shOrder, const vector<Array3f
       }
    }
 }
+
+void copyToPlanarBuffer(float *buff, const Mat& img)
+{
+   const size_t imgSz = img.rows * img.cols;
+   vector<Mat> img_split(img.channels());
+   split( img, &img_split[0] );   
+   for(size_t c=0;c<img.channels();++c)
+   {
+      memcpy( buff + c * imgSz, img_split[c].ptr<float>(), sizeof( float ) * imgSz );
+   }
+}
+
+void copyToInterleavedBuffer(float *buff, const Mat& img)
+{
+   const size_t imgSz = img.rows * img.cols * img.channels();
+   memcpy( buff, img.ptr<float>(), sizeof( float ) * imgSz );
+}
+
 }
 
 //-----------------------------------------------------------------------------
@@ -182,9 +199,9 @@ EnvMapShDataSampler::EnvMapShDataSampler( int shOrder, leveldb::DB* db, int seed
       _nbShCoeffs( sh::GetCoefficientCount( shOrder ) ),
       _dbPtr( db ),
       _rng( seed ),
-      _fovGen( _rng, boost::normal_distribution<>(40.0, 20.0) ),
-      _rollGen( _rng, boost::normal_distribution<>( 0.0, 15.0  ) ),
-      _pitchGen( _rng, boost::normal_distribution<>( 0.0, 15.0  ) ),
+      _fovGen( _rng, boost::normal_distribution<>( 40.0, 20.0 ) ),
+      _rollGen( _rng, boost::normal_distribution<>( 0.0, 15.0 ) ),
+      _pitchGen( _rng, boost::normal_distribution<>( 0.0, 15.0 ) ),
       _yawGen( -180.0, 180.0 )
 {
    // create the hash for sampling the keys
@@ -193,8 +210,41 @@ EnvMapShDataSampler::EnvMapShDataSampler( int shOrder, leveldb::DB* db, int seed
    for ( itPtr->SeekToFirst(); itPtr->Valid(); itPtr->Next() )
    {
       _keyHash.push_back( itPtr->key().ToString() );
+      //if ( _keyHash.size() == 100 ) break;
    }
+   //cout << "WARNING : DS SIZE == " << _keyHash.size() << endl;
    _keyGen = boost::random::uniform_int_distribution<>( 0, _keyHash.size() - 1 );
+
+   // compute mean / cov
+   const int dim = 3 * _nbShCoeffs;
+
+   // --> the mean
+   _shMeanCoeffs = VectorXd::Zero( dim );
+   double zMean = 0.0;
+   for ( itPtr->SeekToFirst(); itPtr->Valid(); itPtr->Next() )
+   {
+      if ( itPtr->value().size() < sizeof( double ) * dim ) continue;
+      zMean += 1.0;
+      _shMeanCoeffs += Map<VectorXd>(
+          reinterpret_cast<double*>( const_cast<char*>( itPtr->value().data() ) ), dim );
+   }
+   if ( zMean > 0.0 ) _shMeanCoeffs *= ( 1.0 / zMean );
+
+   // compute the variance
+   _shCovCoeffs = MatrixXd::Zero( dim, dim );
+   double zCov = 0.0;
+   for ( itPtr->SeekToFirst(); itPtr->Valid(); itPtr->Next() )
+   {
+      if ( itPtr->value().size() < sizeof( double ) * dim ) continue;
+
+      zCov += 1.0;
+      VectorXd shSampleCoeffs =
+          Map<VectorXd>(
+              reinterpret_cast<double*>( const_cast<char*>( itPtr->value().data() ) ), dim ) -
+          _shMeanCoeffs;
+      _shCovCoeffs += shSampleCoeffs * shSampleCoeffs.adjoint();
+   }
+   if ( zCov > 1.0 ) _shCovCoeffs *= ( 1.0 / (zCov-1.0) );
 }
 
 EnvMapShDataSampler::~EnvMapShDataSampler(){};
@@ -214,28 +264,25 @@ bool EnvMapShDataSampler::sample( float* imgData, const uvec3 sz, float* shData,
       // sample the key
       const int keyId = _keyGen( _rng );
       // sample the point on a sphere
-	
-      double camRoll = _rollGen() ; 
-      while ( (camRoll < -90.0) || (camRoll > 90.0) ) 
-         camRoll = _rollGen();
-      camRoll *= M_PI / 180.0; 
-      double camPitch = _pitchGen();
-      while ( (camPitch < -90.0) || (camPitch > 90.0) ) 
-         camPitch = _pitchGen();
-      camPitch *= M_PI / 180.0; 
-      const double camYaw = M_PI * _yawGen( _rng ) / 180.0;
+
+      double camRoll = 0.0; //_rollGen() ;
+      while ( ( camRoll < -90.0 ) || ( camRoll > 90.0 ) ) camRoll = _rollGen();
+      camRoll *= M_PI / 180.0;
+      double camPitch = 0.0; //_pitchGen();
+      while ( ( camPitch < -90.0 ) || ( camPitch > 90.0 ) ) camPitch = _pitchGen();
+      camPitch *= M_PI / 180.0;
+      const double camYaw = 0.0; //M_PI * _yawGen( _rng ) / 180.0;
 
       Matrix3d rot = AngleAxisd( camYaw, Vector3d::UnitY() ).toRotationMatrix();
-      rot = AngleAxisd( camPitch, rot*Vector3d::UnitX() ).toRotationMatrix()*rot;
-      rot = AngleAxisd( camRoll, rot*Vector3d::UnitZ() ).toRotationMatrix()*rot;
+      rot = AngleAxisd( camPitch, rot * Vector3d::UnitX() ).toRotationMatrix() * rot;
+      rot = AngleAxisd( camRoll, rot * Vector3d::UnitZ() ).toRotationMatrix() * rot;
       Quaterniond quat( rot );
 
       // sample the fov in radians
       float camFoV = _fovGen();
-      while ( (camFoV < 20.0) || (camFoV > 120.0) ) 
-         camFoV = _fovGen();
-      camFoV *= M_PI / 180.0; 
-  
+      while ( ( camFoV < 20.0 ) || ( camFoV > 120.0 ) ) camFoV = _fovGen();
+      camFoV *= M_PI / 180.0;
+
       float* camDataPtr = camData + s * nbCameraParams();
       camDataPtr[0] = camFoV;
       camDataPtr[1] = camPitch;
@@ -247,17 +294,25 @@ bool EnvMapShDataSampler::sample( float* imgData, const uvec3 sz, float* shData,
       if ( !itPtr->Valid() || itPtr->value().size() < sizeof( double ) * 3 * _nbShCoeffs )
          return false;
       vector<Array3f> shCoeffs( _nbShCoeffs );
-      const double* value = reinterpret_cast<const double*>( itPtr->value().data() );
+
+      VectorXd shSampleCoeffs =
+          Map<VectorXd>(
+              reinterpret_cast<double*>( const_cast<char*>( itPtr->value().data() ) ), 3 * _nbShCoeffs );
+      
+      shSampleCoeffs = (shSampleCoeffs - _shMeanCoeffs);
+      for ( int shi = 0; shi < 3 * _nbShCoeffs; ++shi )
+      {
+         shSampleCoeffs[shi] = shSampleCoeffs[shi] / sqrt(_shCovCoeffs(shi,shi));
+      }
+
       float* shDataPtr = shData + s * 3 * _nbShCoeffs;
       for ( int shi = 0; shi < _nbShCoeffs; ++shi )
       {
-         shDataPtr[shi * 3] = value[shi * 3];
-         shDataPtr[shi * 3 + 1] = value[shi * 3 + 1];
-         shDataPtr[shi * 3 + 2] = value[shi * 3 + 2];
+         shDataPtr[shi * 3] = shSampleCoeffs[shi * 3];
+         shDataPtr[shi * 3 + 1] = shSampleCoeffs[shi * 3 + 1];
+         shDataPtr[shi * 3 + 2] = shSampleCoeffs[shi * 3 + 2];
 
-         Array3f sh;
-         sh << value[shi * 3], value[shi * 3 + 1], value[shi * 3 + 2];
-         shCoeffs[shi] = sh;
+         shCoeffs[shi] << shDataPtr[shi * 3], shDataPtr[shi * 3 + 1], shDataPtr[shi * 3 + 2];
       }
 
       // Rotate the sh coefficients
@@ -268,29 +323,30 @@ bool EnvMapShDataSampler::sample( float* imgData, const uvec3 sz, float* shData,
       // cvShImage img( sz.x, sz.y );
       // sh::RenderDiffuseIrradianceMap( shCoeffs, &img );
 
-      cvShImage img( sz.y, 2 * sz.y );
-      renderEnvMapFromCoeff( img.cv(), _shOrder, shCoeffs );
+      // cvShImage img( sz.y, 2 * sz.y );
+      // renderEnvMapFromCoeff( img.cv(), _shOrder, shCoeffs );
 
       // Open the image
 
       Matrix3d rotMat = rot;
       Mat oimg = cv_utils::imread32FC3( _keyHash[keyId] );
-      //std::cout << "Sampling image : " <<  _keyHash[keyId] << std::endl;
-      //threshold( oimg, oimg, 1.0, 1.0, THRESH_TRUNC );
+      // std::cout << "Sampling image : " <<  _keyHash[keyId] << std::endl;
+      // threshold( oimg, oimg, 1.0, 1.0, THRESH_TRUNC );
       if ( oimg.data )
       {
          //Mat small( sz.y, 2*sz.y, CV_32FC3 );
          Mat crop( sz.y, sz.x, CV_32FC3 );
          sampleImageFromEnvMap( oimg, crop, camFoV, rotMat );
-         memcpy( imgData + s * imgSize, crop.ptr<float>(), sizeof( float ) * imgSize );
          //resize(oimg,small,small.size());
          //imshow( "original", small );
          //imshow( "crop", crop );
+         cvtColor( crop, crop, COLOR_BGR2RGB );
+         copyToInterleavedBuffer(imgData + s * imgSize, crop);
       }
-      //double minVal, maxVal;
-      //minMaxLoc( img.cv(), &minVal, &maxVal );
-      //img.cv() = ( img.cv() - minVal ) / ( maxVal - minVal );
-      //imshow( "irradianceMap", img.cv() );
+      // double minVal, maxVal;
+      // minMaxLoc( img.cv(), &minVal, &maxVal );
+      // img.cv() = ( img.cv() - minVal ) / ( maxVal - minVal );
+      // imshow( "irradianceMap", img.cv() );
       //waitKey();
    }
 

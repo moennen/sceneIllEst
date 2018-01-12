@@ -24,6 +24,7 @@
 #include <boost/random/normal_distribution.hpp>
 
 #include <glm/glm.hpp>
+#include <Eigen/Dense>
 
 #include <memory>
 #include <string>
@@ -48,6 +49,9 @@ class EnvMapShDataSampler
    boost::variate_generator<boost::random::mt19937&, boost::random::normal_distribution<> > _pitchGen;
    boost::variate_generator<boost::random::mt19937&, boost::random::normal_distribution<> > _rollGen;
    boost::random::uniform_real_distribution<> _yawGen;
+
+   Eigen::VectorXd _shMeanCoeffs;
+   Eigen::MatrixXd _shCovCoeffs;
 
 public :
    EnvMapShDataSampler( int shOrder, leveldb::DB* db, int seed );
