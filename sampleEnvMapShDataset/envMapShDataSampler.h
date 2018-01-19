@@ -4,11 +4,11 @@
 //
 // Copyright (c) 2017 Autodesk, Inc.
 // All rights reserved.
-// 
-// This computer source code and related instructions and comments are the 
+//
+// This computer source code and related instructions and comments are the
 // unpublished confidential and proprietary information of Autodesk, Inc.
 // and are protected under applicable copyright and trade secret law.
-// They may not be disclosed to, copied or used by any third party without 
+// They may not be disclosed to, copied or used by any third party without
 // the prior written consent of Autodesk, Inc.
 //*****************************************************************************/
 #ifndef _SAMPLEENVMAPSHDATASET_ENVMAPSHDATASAMPLER_H
@@ -29,7 +29,7 @@
 #include <memory>
 #include <string>
 
-class EnvMapShDataSampler 
+class EnvMapShDataSampler
 {
    // sh order
    const int _shOrder;
@@ -46,25 +46,35 @@ class EnvMapShDataSampler
    boost::random::mt19937 _rng;
    boost::random::uniform_int_distribution<> _keyGen;
    boost::variate_generator<boost::random::mt19937&, boost::random::normal_distribution<> > _fovGen;
-   boost::variate_generator<boost::random::mt19937&, boost::random::normal_distribution<> > _pitchGen;
-   boost::variate_generator<boost::random::mt19937&, boost::random::normal_distribution<> > _rollGen;
+   boost::variate_generator<boost::random::mt19937&, boost::random::normal_distribution<> >
+       _pitchGen;
+   boost::variate_generator<boost::random::mt19937&, boost::random::normal_distribution<> >
+       _rollGen;
    boost::random::uniform_real_distribution<> _yawGen;
 
    Eigen::VectorXd _shMeanCoeffs;
    Eigen::MatrixXd _shCovCoeffs;
 
-public :
+  public:
    EnvMapShDataSampler( int shOrder, leveldb::DB* db, int seed );
    virtual ~EnvMapShDataSampler();
 
-   bool sample(
-    float* /*imgData*/,
-    const glm::uvec3 sz,
-    float* /*shData*/,
-    float* /*camData*/ );
+   bool sample( float* /*imgData*/, const glm::uvec3 sz, float* /*shData*/, float* /*camData*/ );
 
-   int nbShCoeffs() const {return _nbShCoeffs;}
-   static int nbCameraParams() {return 4;} // 3 rotations + fov 
+   int nbShCoeffs() const { return _nbShCoeffs; }
+   static int nbCameraParams() { return 4; }  // 3 rotations + fov
+
+  public:
+
+   static int nbShCoeffs( const int shOrder );
+   static bool
+   loadSampleImg( const char* fileName, float* /*imgBuff*/, const size_t w, const size_t h );
+   static bool generateEnvMapFromShCoeffs(
+       const int shOrder,
+       const float* shCoeffs,
+       float* envMap,
+       const int w,
+       const int h );
 };
 
-#endif // _SAMPLEENVMAPSHDATASET_ENVMAPSHDATASAMPLER_H
+#endif  // _SAMPLEENVMAPSHDATASET_ENVMAPSHDATASAMPLER_H

@@ -19,48 +19,80 @@
 using namespace std;
 using namespace cv;
 
-static map<int,  unique_ptr<EnvMapShDataSampler> > g_shSampler;
+static map<int, unique_ptr<EnvMapShDataSampler> > g_shSampler;
 
-extern "C" int initEnvMapShDataSampler(const int idx, const char* datasetName, const int shOrder)
+extern "C" int
+initEnvMapShDataSampler( const int idx, const char* datasetName, const int shOrder, const int seed )
 {
-   g_shSampler[idx].reset();	
+   g_shSampler[idx].reset();
    {
-      const string dbName(datasetName);
+      const string dbName( datasetName );
       leveldb::DB* db;
       leveldb::Options dbOpts;
       leveldb::Status dbStatus = leveldb::DB::Open( dbOpts, dbName, &db );
       if ( !dbStatus.ok() )
       {
-         g_shSampler.erase(idx);	
+         g_shSampler.erase( idx );
          cerr << dbStatus.ToString() << endl;
          return SHS_ERROR_BAD_DB;
       }
-      g_shSampler[idx].reset(
-         new EnvMapShDataSampler( shOrder, db, time( 0 ) ) );
+      g_shSampler[idx].reset( new EnvMapShDataSampler( shOrder, db, seed ) );
    }
 
    return SHS_SUCCESS;
 }
 
-extern "C" int getEnvMapShNbCamParams(const int idx) { 
-   return (g_shSampler[idx].get()?g_shSampler[idx]->nbCameraParams():0); }
-extern "C" int getEnvMapShNbCoeffs(const int idx) { 
-   return (g_shSampler[idx].get()?g_shSampler[idx]->nbShCoeffs():0); }
+extern "C" int getEnvMapShNbCamParams( const int idx )
+{
+   return ( g_shSampler[idx].get() ? g_shSampler[idx]->nbCameraParams() : 0 );
+}
+extern "C" int getEnvMapShNbCoeffs( const int idx )
+{
+   return ( g_shSampler[idx].get() ? g_shSampler[idx]->nbShCoeffs() : 0 );
+}
 
 extern "C" int getEnvMapShDataSample(
-   const int idx,
-   const int nbSamples,  
-   float* shCoeffs, 
-   float* camParams, 
-   const int w, 
-   const int h, 
-   float* generatedViews)
+    const int idx,
+    const int nbSamples,
+    float* shCoeffs,
+    float* camParams,
+    const int w,
+    const int h,
+    float* generatedViews )
 {
-   if (!g_shSampler[idx].get()) return SHS_ERROR_UNINIT;
+   if ( !g_shSampler[idx].get() ) return SHS_ERROR_UNINIT;
 
    // sample
-   glm::uvec3 sz( w, h, nbSamples ); 
-   if (!g_shSampler[idx]->sample( generatedViews, sz, shCoeffs, camParams ))
+   glm::uvec3 sz( w, h, nbSamples );
+   if ( !g_shSampler[idx]->sample( generatedViews, sz, shCoeffs, camParams ) )
+   {
+      return SHS_ERROR_GENERIC;
+   }
+
+   return SHS_SUCCESS;
+}
+
+extern "C" int
+getNbShCoeffs( const int shOrder )
+{
+   return EnvMapShDataSampler::nbShCoeffs(shOrder);
+}
+
+extern "C" int
+getImgFromFile( const char* fileName, float* img, const int w, const int h )
+{
+   if ( !EnvMapShDataSampler::loadSampleImg( fileName, img, w, h ) )
+   {
+      return SHS_ERROR_GENERIC;
+   }
+
+   return SHS_SUCCESS;
+}
+
+extern "C" int
+getEnvMapFromCoeffs( const int shOrder, const float* shCoeffs, float* envMap, const int w, const int h )
+{
+   if ( !EnvMapShDataSampler::generateEnvMapFromShCoeffs( shOrder, shCoeffs, envMap, w, h ) )
    {
       return SHS_ERROR_GENERIC;
    }

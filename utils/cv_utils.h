@@ -23,6 +23,8 @@
 
 #include <glm/glm.hpp>
 
+#include <iostream>
+
 namespace cv_utils
 {
 inline cv::Mat imread32FC3( const std::string& imgPath )
@@ -30,6 +32,7 @@ inline cv::Mat imread32FC3( const std::string& imgPath )
    cv::Mat img = cv::imread( imgPath, cv::IMREAD_UNCHANGED );
    if ( !img.data || ( img.channels() < 3 ) || ( img.channels() > 4 ) )
    {
+      std::cerr << "ERROR loading image : " << imgPath << std::endl;
       return cv::Mat();
    }
    if ( img.channels() == 4 ) cv::cvtColor( img, img, cv::COLOR_RGBA2RGB );
@@ -59,9 +62,7 @@ inline cv::Vec3f imsample32FC3( const cv::Mat& img, glm::vec2 in_pt )
 
    // linear interpolation
    const glm::vec3 bgr = glm::mix(
-       glm::mix( ul, ur, pt.x - ul_pt.x ),
-       glm::mix( bl, br, pt.x - ul_pt.x ),
-       pt.y - ul_pt.y );
+       glm::mix( ul, ur, pt.x - ul_pt.x ), glm::mix( bl, br, pt.x - ul_pt.x ), pt.y - ul_pt.y );
 
    return cv::Vec3f( bgr.x, bgr.y, bgr.z );
 }

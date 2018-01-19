@@ -19,7 +19,9 @@ using namespace cv;
 
 const string keys =
     "{help h usage ? |         | print this message   }"
-    "{@db            |         | leveldb database     }";
+    "{@db            |         | leveldb database     }"
+    "{@imgName       |         | test image name      }"
+    "{order          |8        | sh order             }";
 
 int main( int argc, char* argv[] )
 {
@@ -29,28 +31,43 @@ int main( int argc, char* argv[] )
       parser.printMessage();
       return ( 0 );
    }
-   string outputFilename = parser.get<string>( "@db" );
+   const string& dbFilename = parser.get<string>( "@db" );
+   const string& imgFilename = parser.get<string>( "@imgName" );
+   const int shOrder = parser.get<int>("order");
 
    // open the database
    std::unique_ptr<EnvMapShDataSampler> shSampler;
    {
       leveldb::DB* db;
       leveldb::Options dbOpts;
-      leveldb::Status dbStatus = leveldb::DB::Open( dbOpts, outputFilename, &db );
+      leveldb::Status dbStatus = leveldb::DB::Open( dbOpts, dbFilename, &db );
       if ( !dbStatus.ok() )
       {
          cerr << dbStatus.ToString() << endl;
          return -1;
       }
-      shSampler.reset( new EnvMapShDataSampler( 8, db, std::time( 0 ) ) );
+      shSampler.reset( new EnvMapShDataSampler( shOrder, db, std::time( 0 ) ) );
    }
 
    // sample
-   glm::uvec3 sz( 256, 128, 25 );
-   vector<float> imgData(sz.x*sz.y*sz.y*3);
+   glm::uvec3 sz( 256, 128, 1 );
+   vector<float> imgData(sz.x*sz.y*sz.y*3, 1.0);
+   Mat img(sz.y, sz.x, CV_32FC3, &imgData[0], Mat::AUTO_STEP  );
    vector<float> camData(sz.z*shSampler->nbCameraParams());
    vector<float> shData(sz.z*shSampler->nbShCoeffs()*3);
-   shSampler->sample(&imgData[0], sz, &shData[0], &camData[0]);
+   bool success = shSampler->sample(&imgData[0], sz, &shData[0], &camData[0]);
+   if ( !success ) { cerr << "EnvMapShDataSampler::sample" << endl; return(-1); }
+   imshow( "Sample", img );
+
+   // generate envMap
+   success =  EnvMapShDataSampler::nbShCoeffs(shOrder ) == shSampler->nbShCoeffs();
+   if ( !success ) { cerr << "EnvMapShDataSampler::nbShCoeffs"  << endl ; return(-1); }
+   success = EnvMapShDataSampler::loadSampleImg(imgFilename.c_str(),&imgData[0],sz.x, sz.y);
+   if ( !success ) { cerr << "EnvMapShDataSampler::loadSampleImg"  << endl; return(-1); }
+   success =  EnvMapShDataSampler::generateEnvMapFromShCoeffs(shOrder, &shData[0], &imgData[0], sz.x, sz.y) ;
+   if ( !success ) { cerr << "EnvMapShDataSampler::generateEnvMapFromShCoeffs"  << endl; return(-1); }
+   imshow( "EnvMap", img );
+   waitKey(0);
 
    return ( 0 );
 }
