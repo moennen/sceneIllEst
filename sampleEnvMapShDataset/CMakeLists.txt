@@ -31,8 +31,6 @@ SET(SPH ${EXTERNALS}/sh)
 INCLUDE_DIRECTORIES(
 	${MOENNEN_WKSPCE}
 	${M_INC}
-	${M_INC}/GL
-	${M_INC}/GLFW
 	${M_INC}/eigen3
 	${CUDA}/include
 	${PROJROOT}
@@ -42,7 +40,6 @@ INCLUDE_DIRECTORIES(
 LINK_DIRECTORIES(
 	${M_LIBS}
 	${M_LIBS64}
-	${CUDA}/lib64
 )
 
 ADD_EXECUTABLE(testSampleEnvMapShDataset sampleEnvMapShDataset_main.cpp 

@@ -27,14 +27,14 @@ class ImgFileLst {
 
 public :
    inline ImgFileLst() {;} 
-   inline ImgFileLst(const char *lstFName) 
+   inline ImgFileLst(const char *lstFName, const bool check=true) 
    {
-      (void)open(lstFName);
+      (void)open(lstFName,check);
    }
    inline ~ImgFileLst() {};
 
    /// open a new image file list
-   inline bool open(const char *lstFName)
+   inline bool open(const char *lstFName, const bool check)
    {
       std::ifstream ifs(lstFName);
       if (ifs.is_open())
@@ -44,10 +44,12 @@ public :
          {
             std::string line;
             getline (ifs,line);
-            std::ifstream testfs(line.c_str());
-            if (testfs.is_open()) {
-               lines.push_back(line);
+            if (check)
+            {
+               std::ifstream testfs(line.c_str());
+               if (testfs.is_open()) lines.push_back(line);
             }
+            else lines.push_back(line);
          }
          _imgFileNames.resize(lines.size());
          std::copy(lines.begin(),lines.end(),_imgFileNames.begin());
