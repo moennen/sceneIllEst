@@ -247,6 +247,7 @@ int main( int argc, char* argv[] )
       leveldb::WriteOptions dbWriteOpts;
       for ( size_t lst_i = 0; lst_i < lst.size(); ++lst_i )
       {
+         cout << "Processing #" << lst_i << " / " << lst.size() << endl;
          const string& imgPath = lst.get( lst_i );
 
          // read the image
@@ -264,13 +265,13 @@ int main( int argc, char* argv[] )
          // testing
          if (mode == 3 )
          {
-            Mat envMap32f( img.rows, img.cols, CV_32FC3 );
+            Mat envMap32f( 128/*img.rows*/, 256/*img.cols*/, CV_32FC3 );
             renderEnvMapFromCoeff( envMap32f, shCoeff, shOrder );
-            Mat envMap( img.rows, img.cols, CV_8UC3 );
+            Mat envMap( envMap32f.rows, envMap32f.cols, CV_8UC3 );
             envMap32f.convertTo( envMap, CV_8U, 255.0 );
             printShCoeffs(shCoeff);
             imshow( "envMap", envMap );
-            waitKey( 1 );
+            waitKey();
          }
 
          // write the result to the database

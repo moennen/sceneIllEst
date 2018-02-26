@@ -280,10 +280,10 @@ bool EnvMapShDataSampler::sample( float* imgData, const uvec3 sz, float* shData,
       const int keyId = _keyGen( _rng );
       // sample the point on a sphere
 
-      double camRoll = _rollGen();
+      double camRoll = 0.0; //_rollGen();
       while ( ( camRoll < -90.0 ) || ( camRoll > 90.0 ) ) camRoll = _rollGen();
       camRoll *= M_PI / 180.0;
-      double camPitch = _pitchGen();
+      double camPitch = 0.0; //_pitchGen();
       while ( ( camPitch < -90.0 ) || ( camPitch > 90.0 ) ) camPitch = _pitchGen();
       camPitch *= M_PI / 180.0;
       const double camYaw = M_PI * _yawGen( _rng ) / 180.0;
@@ -294,7 +294,7 @@ bool EnvMapShDataSampler::sample( float* imgData, const uvec3 sz, float* shData,
       Quaterniond quat( rot );
 
       // sample the fov in radians
-      float camFoV = _fovGen();
+      float camFoV = 90.0; //_fovGen();
       while ( ( camFoV < 20.0 ) || ( camFoV > 120.0 ) ) camFoV = _fovGen();
       camFoV *= M_PI / 180.0;
 
@@ -352,6 +352,8 @@ bool EnvMapShDataSampler::sample( float* imgData, const uvec3 sz, float* shData,
          // Mat small( sz.y, 2*sz.y, CV_32FC3 );
          Mat crop( sz.y, sz.x, CV_32FC3 );
          sampleImageFromEnvMap( oimg, crop, camFoV, rotMat );
+         // DEBUG !!!!!!!!!!!!!!
+         //resize(oimg,crop,crop.size());
          // resize(oimg,small,small.size());
          // imshow( "original", small );
          // imshow( "crop", crop );
