@@ -2,14 +2,6 @@
 //
 // Filename envMapShDataSampler.C
 //
-// Copyright (c) 2017 Autodesk, Inc.
-// All rights reserved.
-//
-// This computer source code and related instructions and comments are the
-// unpublished confidential and proprietary information of Autodesk, Inc.
-// and are protected under applicable copyright and trade secret law.
-// They may not be disclosed to, copied or used by any third party without
-// the prior written consent of Autodesk, Inc.
 //*****************************************************************************/
 
 #include <sampleEnvMapShDataset/envMapShDataSampler.h>
@@ -280,10 +272,10 @@ bool EnvMapShDataSampler::sample( float* imgData, const uvec3 sz, float* shData,
       const int keyId = _keyGen( _rng );
       // sample the point on a sphere
 
-      double camRoll = 0.0; //_rollGen();
+      double camRoll = _rollGen();
       while ( ( camRoll < -90.0 ) || ( camRoll > 90.0 ) ) camRoll = _rollGen();
       camRoll *= M_PI / 180.0;
-      double camPitch = 0.0; //_pitchGen();
+      double camPitch = _pitchGen();
       while ( ( camPitch < -90.0 ) || ( camPitch > 90.0 ) ) camPitch = _pitchGen();
       camPitch *= M_PI / 180.0;
       const double camYaw = M_PI * _yawGen( _rng ) / 180.0;
@@ -291,7 +283,7 @@ bool EnvMapShDataSampler::sample( float* imgData, const uvec3 sz, float* shData,
       Matrix3d rot = AngleAxisd( camYaw, Vector3d::UnitY() ).toRotationMatrix();
       rot = AngleAxisd( camPitch, rot * Vector3d::UnitX() ).toRotationMatrix() * rot;
       rot = AngleAxisd( camRoll, rot * Vector3d::UnitZ() ).toRotationMatrix() * rot;
-      Quaterniond quat( rot );
+      Quaterniond quat( rot.transpose() );
 
       // sample the fov in radians
       float camFoV = 90.0; //_fovGen();
@@ -308,8 +300,7 @@ bool EnvMapShDataSampler::sample( float* imgData, const uvec3 sz, float* shData,
       itPtr->Seek( _keyHash[keyId] );
       if ( !itPtr->Valid() || itPtr->value().size() < sizeof( double ) * 3 * _nbShCoeffs )
          return false;
-      vector<Array3f> shCoeffs( _nbShCoeffs );
-
+      
       VectorXd shSampleCoeffs = Map<VectorXd>(
           reinterpret_cast<double*>( const_cast<char*>( itPtr->value().data() ) ),
           3 * _nbShCoeffs );
@@ -320,26 +311,39 @@ bool EnvMapShDataSampler::sample( float* imgData, const uvec3 sz, float* shData,
          shSampleCoeffs[shi] = shSampleCoeffs[shi] / sqrt(_shCovCoeffs(shi,shi));
       }*/
 
-      float* shDataPtr = shData + s * 3 * _nbShCoeffs;
+      vector<Array3f> shCoeffs( _nbShCoeffs );
       for ( int shi = 0; shi < _nbShCoeffs; ++shi )
       {
-         shDataPtr[shi * 3] = shSampleCoeffs[shi * 3];
-         shDataPtr[shi * 3 + 1] = shSampleCoeffs[shi * 3 + 1];
-         shDataPtr[shi * 3 + 2] = shSampleCoeffs[shi * 3 + 2];
-
-         shCoeffs[shi] << shDataPtr[shi * 3], shDataPtr[shi * 3 + 1], shDataPtr[shi * 3 + 2];
+         shCoeffs[shi] << shSampleCoeffs[shi * 3], shSampleCoeffs[shi * 3 + 1], shSampleCoeffs[shi * 3 + 2];
       }
 
       // Rotate the sh coefficients
       std::unique_ptr<sh::Rotation> shRot = sh::Rotation::Create( _shOrder, quat );
       shRot->Apply( shCoeffs, &shCoeffs );
 
+      // Copy the rotated coefficient to the output buffer
+      float* shDataPtr = shData + s * 3 * _nbShCoeffs;
+      for ( int shi = 0; shi < _nbShCoeffs; ++shi )
+      {
+         shDataPtr[shi * 3] = shCoeffs[shi](0,0);
+         shDataPtr[shi * 3 + 1] = shCoeffs[shi](1,0);
+         shDataPtr[shi * 3 + 2] = shCoeffs[shi](2,0);
+      }
+
       // Proto : create a map with the spherical harmonics
       // cvShImage img( sz.x, sz.y );
       // sh::RenderDiffuseIrradianceMap( shCoeffs, &img );
 
-      // cvShImage img( sz.y, 2 * sz.y );
-      // renderEnvMapFromCoeff( img.cv(), _shOrder, shCoeffs );
+      /*cvShImage img( sz.y, sz.x );
+      renderEnvMapFromCoeff( img.cv(), _shOrder, shCoeffs );
+      if ( img.cv().data )
+      {
+         //imshow( "map", img.cv() );
+         cvtColor( img.cv(), img.cv(), COLOR_BGR2RGB );
+         copyToInterleavedBuffer( imgData + s * imgSize, img.cv() );
+         continue;
+      }*/
+
 
       // Open the image
 
@@ -349,14 +353,14 @@ bool EnvMapShDataSampler::sample( float* imgData, const uvec3 sz, float* shData,
       // threshold( oimg, oimg, 1.0, 1.0, THRESH_TRUNC );
       if ( oimg.data )
       {
-         // Mat small( sz.y, 2*sz.y, CV_32FC3 );
+         //Mat small( sz.y, 2*sz.y, CV_32FC3 );
          Mat crop( sz.y, sz.x, CV_32FC3 );
          sampleImageFromEnvMap( oimg, crop, camFoV, rotMat );
          // DEBUG !!!!!!!!!!!!!!
          //resize(oimg,crop,crop.size());
-         // resize(oimg,small,small.size());
-         // imshow( "original", small );
-         // imshow( "crop", crop );
+         /*resize(oimg,small,small.size());
+         imshow( "original", small );
+         imshow( "crop", crop );*/
          cvtColor( crop, crop, COLOR_BGR2RGB );
          copyToInterleavedBuffer( imgData + s * imgSize, crop );
       }
@@ -365,7 +369,7 @@ bool EnvMapShDataSampler::sample( float* imgData, const uvec3 sz, float* shData,
       // minMaxLoc( img.cv(), &minVal, &maxVal );
       // img.cv() = ( img.cv() - minVal ) / ( maxVal - minVal );
       // imshow( "irradianceMap", img.cv() );
-      // waitKey();
+      //waitKey();
    }
 
    // profiler.stop();
