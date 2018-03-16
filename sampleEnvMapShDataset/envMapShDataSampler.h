@@ -18,11 +18,16 @@
 #include <glm/glm.hpp>
 #include <Eigen/Dense>
 
+#include <boost/filesystem.hpp>
+
 #include <memory>
 #include <string>
 
 class EnvMapShDataSampler
 {
+   // color space linear import
+   const bool _linearCS;
+
    // sh order
    const int _shOrder;
    const int _nbShCoeffs;
@@ -30,6 +35,9 @@ class EnvMapShDataSampler
    // database
    std::unique_ptr<leveldb::DB> _dbPtr;
    leveldb::ReadOptions _dbOpts;
+
+   // image location
+   boost::filesystem::path _imgRootDir;
 
    // key hash for sampling keys
    std::vector<std::string> _keyHash;
@@ -48,7 +56,7 @@ class EnvMapShDataSampler
    Eigen::MatrixXd _shCovCoeffs;
 
   public:
-   EnvMapShDataSampler( int shOrder, leveldb::DB* db, int seed );
+   EnvMapShDataSampler( int shOrder, leveldb::DB* db, const std::string& imgRootDir, int seed, bool linearCS );
    virtual ~EnvMapShDataSampler();
 
    bool sample( float* /*imgData*/, const glm::uvec3 sz, float* /*shData*/, float* /*camData*/ );
@@ -60,7 +68,7 @@ class EnvMapShDataSampler
 
    static int nbShCoeffs( const int shOrder );
    static bool
-   loadSampleImg( const char* fileName, float* /*imgBuff*/, const size_t w, const size_t h );
+   loadSampleImg( const char* fileName, float* /*imgBuff*/, const size_t w, const size_t h, const bool linearCS );
    static bool generateEnvMapFromShCoeffs(
        const int shOrder,
        const float* shCoeffs,

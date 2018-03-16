@@ -24,6 +24,7 @@ using namespace glm;
 #include <leveldb/db.h>
 
 #include <string>
+#include <boost/filesystem.hpp>
 #include <boost/filesystem/convenience.hpp>
 
 using namespace std;
@@ -37,7 +38,8 @@ const string keys =
     "{mode           |0           | 0=compute coeffs, 1=estimate coeffs statistics, 2=generate "
     "maps  }"
     "{shOrder        |8           | sh order }"
-    "{imgLst         |            | lst of image to extract the sh }";
+    "{imgDir         |            | root dir of the images }"
+    "{imgLst         |            | lst of images (filenames relative to the root dir) to extract the sh }";
 
 namespace
 {
@@ -217,6 +219,7 @@ int main( int argc, char* argv[] )
       return ( 0 );
    }
 
+   boost::filesystem::path imgRootDir ( parser.get<string>( "imgDir" ) );
    string imgLstFilename = parser.get<string>( "imgLst" );
    string dbFilename = parser.get<string>( "@db" );
    const int mode = parser.get<int>( "mode" );
@@ -243,22 +246,24 @@ int main( int argc, char* argv[] )
       Perf profiler;
       profiler.start();
 
-      ImgFileLst lst( imgLstFilename.c_str() );
+      ImgFileLst lst( imgLstFilename.c_str(), false );
       leveldb::WriteOptions dbWriteOpts;
       for ( size_t lst_i = 0; lst_i < lst.size(); ++lst_i )
       {
          cout << "Processing #" << lst_i << " / " << lst.size() << endl;
-         const string& imgPath = lst.get( lst_i );
 
+         const  boost::filesystem::path imgPath( lst.get( lst_i ) );
+         const  std::string fullImgPath = boost::filesystem::path( imgRootDir / imgPath ).string();
+         
          // read the image
-         cv::Mat img = cv_utils::imread32FC3( imgPath );
+         cv::Mat img = cv_utils::imread32FC3( fullImgPath, true );
          if ( !img.data ) continue;
 
          // compute the sh coefficients
          vector<dvec3> shCoeff;
          if ( !computeSphericalHarmonics( img, shCoeff, shOrder ) )
          {
-            cerr << "Cannot compute SH for " << imgPath << endl;
+            cerr << "Cannot compute SH for " << fullImgPath << endl;
             continue;
          }
 
@@ -277,7 +282,7 @@ int main( int argc, char* argv[] )
          // write the result to the database
          dbPtr->Put(
              dbWriteOpts,
-             imgPath,
+             imgPath.generic_string(),
              leveldb::Slice(
                  reinterpret_cast<const char*>( value_ptr( shCoeff[0] ) ),
                  sizeof( dvec3 ) * shCoeff.size() ) );
@@ -303,7 +308,8 @@ int main( int argc, char* argv[] )
       leveldb::WriteOptions dbWriteOpts;
       for ( size_t lst_i = 0; lst_i < lst.size(); ++lst_i )
       {
-         const string& imgPath = lst.get( lst_i );
+         const  boost::filesystem::path imgPath( lst.get( lst_i ) );
+         const  std::string fullImgPath = boost::filesystem::path( imgRootDir / imgPath ).string();
 
          cout << "Processing : " << imgPath << endl;
 
@@ -317,20 +323,20 @@ int main( int argc, char* argv[] )
          envMap32f.convertTo( envMap, CV_8U * 255.0 );
          try
          {
-            imwrite( imgPath.c_str(), envMap );
+            imwrite( fullImgPath.c_str(), envMap );
             imshow( "envMap", envMap32f * 255.0 );
             waitKey( 1 );
          }
          catch ( ... )
          {
-            cout << "Error writing : " << imgPath << endl;
+            cout << "Error writing : " << fullImgPath << endl;
             continue;
          }
 
          // write the result to the database
          dbPtr->Put(
              dbWriteOpts,
-             imgPath,
+             imgPath.generic_string(),
              leveldb::Slice(
                  reinterpret_cast<const char*>( value_ptr( shCoeff[0] ) ),
                  sizeof( dvec3 ) * shCoeff.size() ) );

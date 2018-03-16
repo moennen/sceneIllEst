@@ -13,6 +13,9 @@ if (OPENMP_FOUND)
     set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
 endif()
 
+# PREFORMANCES
+#ADD_DEFINITIONS( -DHOP_ENABLED )
+
 #SET(MOENNEN_LOCAL /usr/local)
 #SET(MOENNEN_WKSPCE /home/moennen)
 SET(MOENNEN_LOCAL /mnt/p4/favila/moennen/local)
@@ -44,21 +47,25 @@ LINK_DIRECTORIES(
 
 ADD_EXECUTABLE(testSampleEnvMapShDataset sampleEnvMapShDataset_main.cpp 
 				   envMapShDataSampler.cpp
-               ${SPH}/spherical_harmonics.cc)
+               ${SPH}/spherical_harmonics.cc
+               ${UTILS}/cv_utils.C )
 
 TARGET_LINK_LIBRARIES( testSampleEnvMapShDataset
-	                    boost_thread boost_system 
+	                    boost_thread boost_system boost_filesystem
 	                    leveldb
-	                    opencv_world )
+	                    opencv_world
+	                    rt dl )
 
 ADD_LIBRARY(sampleEnvMapShDataset SHARED sampleEnvMapShDataset_lib.cpp
 				envMapShDataSampler.cpp
-				${SPH}/spherical_harmonics.cc)
+				${SPH}/spherical_harmonics.cc
+				${UTILS}/cv_utils.C )
 
 SET_PROPERTY(TARGET sampleEnvMapShDataset PROPERTY POSITION_INDEPENDENT_CODE ON)
 
 TARGET_LINK_LIBRARIES( sampleEnvMapShDataset
-	                    boost_thread boost_system 
+	                    boost_thread boost_system boost_filesystem
 	                    leveldb
-	                    opencv_world )
+	                    opencv_world
+	                    rt dl )
 

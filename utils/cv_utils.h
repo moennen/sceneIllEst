@@ -1,18 +1,13 @@
-//*****************************************************************************/
-//
-// Filename cv_utils.h
-//
-// Copyright (c) 2017 Autodesk, Inc.
-// All rights reserved.
-//
-// This computer source code and related instructions and comments are the
-// unpublished confidential and proprietary information of Autodesk, Inc.
-// and are protected under applicable copyright and trade secret law.
-// They may not be disclosed to, copied or used by any third party without
-// the prior written consent of Autodesk, Inc.
-//*****************************************************************************/
+/*! *****************************************************************************
+ *   \file cv_utils.h
+ *   \author moennen
+ *   \brief
+ *   \date 2018-03-16
+ *   *****************************************************************************/
 #ifndef _UTILS_CV_UTILS_H
 #define _UTILS_CV_UTILS_H
+
+#include "utils/Hop.h"
 
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/highgui.hpp>
@@ -27,24 +22,79 @@
 
 namespace cv_utils
 {
-inline cv::Mat imread32FC3( const std::string& imgPath )
+inline float toLinear( float c )
 {
-   cv::Mat img = cv::imread( imgPath, cv::IMREAD_UNCHANGED );
+   return c <= 0.04045f ? c / 12.92f : std::pow( ( c + 0.055f ) / 1.055f, 2.4f );
+}
+
+inline float toLog( float c )
+{
+   return c <= 0.0031308f ? c * 12.92f : 1.055f * std::pow( c, 1.0f / 2.4f ) - 0.055f;
+}
+
+inline void imToLinear( cv::Mat& img )
+{
+   HOP_PROF_FUNC();
+   const size_t rowSz = img.cols * 3;
+#pragma omp parallel for
+   for ( size_t y = 0; y < img.rows; y++ )
+   {
+      float* row_data = img.ptr<float>( y );
+      for ( size_t x = 0; x < rowSz; x++ )
+      {
+         row_data[x] = toLinear( row_data[x] );
+      }
+   }
+}
+
+inline void imToLog( cv::Mat& img )
+{
+   const size_t rowSz = img.cols * 3;
+#pragma omp parallel for
+   for ( size_t y = 0; y < img.rows; y++ )
+   {
+      float* row_data = img.ptr<float>( y );
+      for ( size_t x = 0; x < rowSz; x++ )
+      {
+         row_data[x] = toLog( row_data[x] );
+      }
+   }
+}
+
+cv::Mat convert8UC3ToLinear32FC3( cv::Mat& img );
+
+inline cv::Mat imread32FC3( const std::string& imgPath, bool toLinear = false )
+{
+   HOP_PROF_FUNC();
+   cv::Mat img;
+   {
+      HOP_PROF( "cv_imread" );
+      img = cv::imread( imgPath, cv::IMREAD_UNCHANGED );
+   }
    if ( !img.data || ( img.channels() < 3 ) || ( img.channels() > 4 ) )
    {
       std::cerr << "ERROR loading image : " << imgPath << std::endl;
       return cv::Mat();
    }
    if ( img.channels() == 4 ) cv::cvtColor( img, img, cv::COLOR_RGBA2RGB );
-   if ( img.type() != CV_32F )
+   if ( ( img.type() == CV_8UC3 ) && toLinear )
    {
-      img.convertTo( img, CV_32F );
-      img /= 255.0;
+      img = convert8UC3ToLinear32FC3( img );
+   }
+   else
+   {
+      if ( img.type() != CV_32F )
+      {
+         HOP_PROF( "cv_convert" );
+         img.convertTo( img, CV_32F );
+         img /= 255.0;
+      }
+      if ( toLinear ) imToLinear( img );
    }
    return img;
 }
 
-inline cv::Vec3f imsample32FC3( const cv::Mat& img, glm::vec2 in_pt )
+inline cv::Vec3f imsample32FC3( const cv::Mat& img, const glm::vec2& in_pt )
 {
    // compute the positions
    const glm::vec2 max_pt( img.cols - 1, img.rows - 1 );
