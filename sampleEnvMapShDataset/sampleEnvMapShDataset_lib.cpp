@@ -21,8 +21,13 @@ using namespace cv;
 
 static map<int, unique_ptr<EnvMapShDataSampler> > g_shSampler;
 
-extern "C" int
-initEnvMapShDataSampler( const int idx, const char* datasetName, const int shOrder, const int seed )
+extern "C" int initEnvMapShDataSampler(
+    const int idx,
+    const char* datasetName,
+    const char* imgRootDir,
+    const int shOrder,
+    const int seed,
+    const bool linearCS )
 {
    g_shSampler[idx].reset();
    {
@@ -36,7 +41,8 @@ initEnvMapShDataSampler( const int idx, const char* datasetName, const int shOrd
          cerr << dbStatus.ToString() << endl;
          return SHS_ERROR_BAD_DB;
       }
-      g_shSampler[idx].reset( new EnvMapShDataSampler( shOrder, db, seed ) );
+      g_shSampler[idx].reset(
+          new EnvMapShDataSampler( shOrder, db, string( imgRootDir ), seed, linearCS ) );
    }
 
    return SHS_SUCCESS;
@@ -72,16 +78,15 @@ extern "C" int getEnvMapShDataSample(
    return SHS_SUCCESS;
 }
 
-extern "C" int
-getNbShCoeffs( const int shOrder )
+extern "C" int getNbShCoeffs( const int shOrder )
 {
-   return EnvMapShDataSampler::nbShCoeffs(shOrder);
+   return EnvMapShDataSampler::nbShCoeffs( shOrder );
 }
 
 extern "C" int
-getImgFromFile( const char* fileName, float* img, const int w, const int h )
+getImgFromFile( const char* fileName, float* img, const int w, const int h, const bool linearCS )
 {
-   if ( !EnvMapShDataSampler::loadSampleImg( fileName, img, w, h ) )
+   if ( !EnvMapShDataSampler::loadSampleImg( fileName, img, w, h, linearCS ) )
    {
       return SHS_ERROR_GENERIC;
    }
@@ -89,8 +94,12 @@ getImgFromFile( const char* fileName, float* img, const int w, const int h )
    return SHS_SUCCESS;
 }
 
-extern "C" int
-getEnvMapFromCoeffs( const int shOrder, const float* shCoeffs, float* envMap, const int w, const int h )
+extern "C" int getEnvMapFromCoeffs(
+    const int shOrder,
+    const float* shCoeffs,
+    float* envMap,
+    const int w,
+    const int h )
 {
    if ( !EnvMapShDataSampler::generateEnvMapFromShCoeffs( shOrder, shCoeffs, envMap, w, h ) )
    {

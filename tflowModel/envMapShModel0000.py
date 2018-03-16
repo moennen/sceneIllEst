@@ -1,3 +1,4 @@
+#!/usr/bin/python
 """ EnvMapSh model #0000
 
 ---> input size : 192x108x3
@@ -33,9 +34,10 @@ logTrSteps = 1
 logTsSteps = 1
 batchSz = 128
 shOrder = 4
+doLinearCS = 1
 imgSz = [108, 192]
-envMapSz = [64, 128]
-# envMapSz = [256, 512]
+#envMapSz = [64, 128]
+envMapSz = [256, 512]
 # imgSz = envMapSz
 pixMean = [0.5, 0.5, 0.5]
 shCoeffsMean8 = [1.62535, 1.59993, 1.52873, -0.129034, -0.229063, -0.370292, 0.00808474, 0.00664647, 0.00937933, -0.000757816, -0.00102151, -0.00121659, 0.000707051, 0.000757851, 0.00084574, 0.00244401, 0.0023705, -3.71057e-05, -0.00725334, -0.0203365, -0.0511394, 0.000540162, 0.000259493, -3.54734e-05, -0.0141541, -0.0365667, -0.0914037, -0.0337918, -0.0471127, -0.0681103, 0.000125685, 0.000102473, 0.000561678, -0.0243074, -0.0345659, -0.0506261, 0.00374988, 0.0020202, 0.00125083, 0.000341624,
@@ -76,7 +78,7 @@ def showImgs(batch, img_depths):
     plt.show()
 
 
-def loadImgPIL(img_name, imgSz):
+def loadImgPIL(img_name, imgSz, linearCS):
 
     im = Image.open(img_name)
     ratio = float(imgSz[1])/imgSz[0]
@@ -89,6 +91,10 @@ def loadImgPIL(img_name, imgSz):
     im = im.resize([imgSz[1], imgSz[0]])
     im = np.array(im)
     im = im.astype(np.float32) / 255.0
+
+    if linearCS == 1:
+        im = (im <= 0.04045) * (im / 12.92) + (im > 0.04045) * \
+            np.power((im + 0.055)/1.055, 2.4)
 
     return [im]
 
@@ -367,10 +373,159 @@ def envMapShDeep9C6DModel(imgs, outputSz, dropout):
         return outputLayer
 
 
+def envMapShDeep9C7DModel(imgs, outputSz, dropout):
+
+    with tf.variable_scope('EnvMapShDeep9C7DModel'):
+
+        # -----> preprocessing
+        with tf.name_scope('preprocess') as scope:
+            img_mean = tf.constant(pixMean, dtype=tf.float32, shape=[
+                1, 1, 1, 3], name='img_mean')
+            layer0 = imgs-img_mean
+        # layer0 = imgs
+
+        # ----> 90x48x32
+        with tf.name_scope('layer1_1') as scope:
+            layer1 = conv_layer(layer0, [7, 7, 3, 32], 2, scope)
+        # ----> 41x20x64
+        with tf.name_scope('layer2_1') as scope:
+            layer2 = conv_layer(layer1, [5, 5, 32, 64], 2, scope)
+        with tf.name_scope('layer2_2') as scope:
+            layer2 = conv_layer(layer2, [5, 5, 64, 96], 1, scope, 'SAME')
+        with tf.name_scope('layer2_2') as scope:
+            layer2 = conv_layer(layer2, [5, 5, 96, 96], 1, scope)
+        # ----> 18x8x128
+        with tf.name_scope('layer3_1') as scope:
+            layer3 = conv_layer(layer2, [3, 3, 96, 128], 2, scope)
+        with tf.name_scope('layer3_2') as scope:
+            layer3 = conv_layer(layer3, [3, 3, 128, 256], 1, scope, 'SAME')
+        # ----> 18x8x128
+        with tf.name_scope('layer4_1') as scope:
+            layer4 = conv_layer(layer3, [3, 3, 256, 256], 1, scope)
+        # ----> 7x2x256
+        with tf.name_scope('layer5_1') as scope:
+            layer5 = conv_layer(layer4, [3, 3, 256, 512], 2, scope)
+        # ----> 1x1x512
+        with tf.name_scope('layer6_1') as scope:
+            layer6 = conv_layer(layer5, [3, 3, 512, 1024], 2, scope)
+
+        #
+        layer6f = tf.contrib.layers.flatten(layer6)
+        initializer = tf.contrib.layers.xavier_initializer()
+        with tf.name_scope('layer7_1') as scope:
+            layer7 = tf.layers.dense(layer6f, 2048, activation=tf.nn.relu, kernel_initializer=initializer,
+                                     bias_initializer=initializer, name=scope)
+            layer7d = tf.layers.dropout(layer7, rate=dropout)
+        with tf.name_scope('layer7_3') as scope:
+            layer7 = tf.layers.dense(layer7d, 1024, activation=tf.nn.relu, kernel_initializer=initializer,
+                                     bias_initializer=initializer, name=scope)
+            layer7d = tf.layers.dropout(layer7, rate=dropout)
+        with tf.name_scope('layer7_4') as scope:
+            layer7 = tf.layers.dense(layer7d, 768, activation=tf.nn.relu, kernel_initializer=initializer,
+                                     bias_initializer=initializer, name=scope)
+            layer7d = tf.layers.dropout(layer7, rate=dropout)
+        with tf.name_scope('layer7_5') as scope:
+            layer7 = tf.layers.dense(layer7d, 512, activation=tf.nn.relu, kernel_initializer=initializer,
+                                     bias_initializer=initializer, name=scope)
+            layer7d = tf.layers.dropout(layer7, rate=dropout)
+        with tf.name_scope('layer7_7') as scope:
+            layer7 = tf.layers.dense(layer7d, 256, activation=tf.nn.relu, kernel_initializer=initializer,
+                                     bias_initializer=initializer, name=scope)
+            layer7d = tf.layers.dropout(layer7, rate=dropout)
+        with tf.name_scope('layer7_8') as scope:
+            layer7 = tf.layers.dense(layer7d, 128, activation=tf.nn.relu, kernel_initializer=initializer,
+                                     bias_initializer=initializer, name=scope)
+            layer7d = tf.layers.dropout(layer7, rate=dropout)
+        with tf.name_scope('layer8_1') as scope:
+            outputLayer = tf.layers.dense(layer7d, outputSz, kernel_initializer=initializer,
+                                          bias_initializer=initializer, name=scope)
+
+        return outputLayer
+
+
+def envMapShDeep9C9DModel(imgs, outputSz, dropout):
+
+    with tf.variable_scope('EnvMapShDeep9C9DModel'):
+
+        # -----> preprocessing
+        with tf.name_scope('preprocess') as scope:
+            img_mean = tf.constant(pixMean, dtype=tf.float32, shape=[
+                1, 1, 1, 3], name='img_mean')
+            layer0 = imgs-img_mean
+        # layer0 = imgs
+
+        # ----> 90x48x32
+        with tf.name_scope('layer1_1') as scope:
+            layer1 = conv_layer(layer0, [7, 7, 3, 32], 2, scope)
+        # ----> 41x20x64
+        with tf.name_scope('layer2_1') as scope:
+            layer2 = conv_layer(layer1, [5, 5, 32, 64], 2, scope)
+        with tf.name_scope('layer2_2') as scope:
+            layer2 = conv_layer(layer2, [5, 5, 64, 96], 1, scope, 'SAME')
+        with tf.name_scope('layer2_2') as scope:
+            layer2 = conv_layer(layer2, [5, 5, 96, 96], 1, scope)
+        # ----> 18x8x128
+        with tf.name_scope('layer3_1') as scope:
+            layer3 = conv_layer(layer2, [3, 3, 96, 128], 2, scope)
+        with tf.name_scope('layer3_2') as scope:
+            layer3 = conv_layer(layer3, [3, 3, 128, 256], 1, scope, 'SAME')
+        # ----> 18x8x128
+        with tf.name_scope('layer4_1') as scope:
+            layer4 = conv_layer(layer3, [3, 3, 256, 256], 1, scope)
+        # ----> 7x2x256
+        with tf.name_scope('layer5_1') as scope:
+            layer5 = conv_layer(layer4, [3, 3, 256, 512], 2, scope)
+        # ----> 1x1x512
+        with tf.name_scope('layer6_1') as scope:
+            layer6 = conv_layer(layer5, [3, 3, 512, 1024], 2, scope)
+
+        #
+        layer6f = tf.contrib.layers.flatten(layer6)
+        initializer = tf.contrib.layers.xavier_initializer()
+        with tf.name_scope('layer7_1') as scope:
+            layer7 = tf.layers.dense(layer6f, 2048, activation=tf.nn.relu, kernel_initializer=initializer,
+                                     bias_initializer=initializer, name=scope)
+            layer7d = tf.layers.dropout(layer7, rate=dropout)
+        with tf.name_scope('layer7_2') as scope:
+            layer7 = tf.layers.dense(layer7d, 1536, activation=tf.nn.relu, kernel_initializer=initializer,
+                                     bias_initializer=initializer, name=scope)
+            layer7d = tf.layers.dropout(layer7, rate=dropout)
+        with tf.name_scope('layer7_3') as scope:
+            layer7 = tf.layers.dense(layer7d, 1024, activation=tf.nn.relu, kernel_initializer=initializer,
+                                     bias_initializer=initializer, name=scope)
+            layer7d = tf.layers.dropout(layer7, rate=dropout)
+        with tf.name_scope('layer7_4') as scope:
+            layer7 = tf.layers.dense(layer7d, 768, activation=tf.nn.relu, kernel_initializer=initializer,
+                                     bias_initializer=initializer, name=scope)
+            layer7d = tf.layers.dropout(layer7, rate=dropout)
+        with tf.name_scope('layer7_5') as scope:
+            layer7 = tf.layers.dense(layer7d, 512, activation=tf.nn.relu, kernel_initializer=initializer,
+                                     bias_initializer=initializer, name=scope)
+            layer7d = tf.layers.dropout(layer7, rate=dropout)
+        with tf.name_scope('layer7_6') as scope:
+            layer7 = tf.layers.dense(layer7d, 374, activation=tf.nn.relu, kernel_initializer=initializer,
+                                     bias_initializer=initializer, name=scope)
+            layer7d = tf.layers.dropout(layer7, rate=dropout)
+        with tf.name_scope('layer7_7') as scope:
+            layer7 = tf.layers.dense(layer7d, 256, activation=tf.nn.relu, kernel_initializer=initializer,
+                                     bias_initializer=initializer, name=scope)
+            layer7d = tf.layers.dropout(layer7, rate=dropout)
+        with tf.name_scope('layer7_8') as scope:
+            layer7 = tf.layers.dense(layer7d, 128, activation=tf.nn.relu, kernel_initializer=initializer,
+                                     bias_initializer=initializer, name=scope)
+            layer7d = tf.layers.dropout(layer7, rate=dropout)
+        with tf.name_scope('layer8_1') as scope:
+            outputLayer = tf.layers.dense(layer7d, outputSz, kernel_initializer=initializer,
+                                          bias_initializer=initializer, name=scope)
+
+        return outputLayer
+
+
 class EnvMapShDatasetTF(object):
 
-    def __init__(self, dbPath, seed):
-        self.__envMapDb = EnvMapShDataset(dbPath, shOrder, seed)
+    def __init__(self, dbPath, imgRootDir, seed, linearCS):
+        self.__envMapDb = EnvMapShDataset(
+            dbPath, imgRootDir, shOrder, seed, linearCS)
         self.__dims = [batchSz, imgSz[0], imgSz[1]]
         self.data = tf.data.Dataset.from_generator(
             self.genEnvMapSh, (tf.float32, tf.float32))
@@ -403,7 +558,7 @@ class EnvMapFoVDatasetTF(object):
         return self.__envMapDb.nbShCoeffs*3
 
 
-def evalEnvMapShModel(modelPath, imgLst, outputDir, envMapSz):
+def evalEnvMapShModel(modelPath, imgLst, outputDir, envMapSz, linearCS):
 
     modelFilename = modelPath + "/tfData"
 
@@ -418,7 +573,7 @@ def evalEnvMapShModel(modelPath, imgLst, outputDir, envMapSz):
             tf.float32, shape=inputShape, name="input_view")
         dropoutProb = tf.placeholder(tf.float32)  # dropout (keep probability)
 
-        computedSh = envMapShModel0000_1(inputView, nbShCoeffs, dropoutProb)
+        computedSh = envMapShDeep9C6DModel(inputView, nbShCoeffs, dropoutProb)
         # accuracy = tf.reduce_mean(tf.square(tf.subtract(computedSh, outputSh)))
 
         # Persistency
@@ -438,8 +593,8 @@ def evalEnvMapShModel(modelPath, imgLst, outputDir, envMapSz):
 
             for img_name in img_names_file:
 
-                img = loadImgPIL(img_name.rstrip('\n'), imgSz)
-                # img = EnvMapShDataset.loadImg(img_name,  imgSz)
+                img = loadImgPIL(img_name.rstrip('\n'), imgSz, linearCS)
+                #img = EnvMapShDataset.loadImg(img_name,  imgSz, linearCS)
                 toimage(img[0]).show()
 
                 output = sess.run(computedSh, feed_dict={dropoutProb: 0.0,
@@ -450,8 +605,10 @@ def evalEnvMapShModel(modelPath, imgLst, outputDir, envMapSz):
 
                 toimage(envMap[0]).show()
 
+                raw_input(".")
 
-def trainEnvMapShModel(modelPath, trainPath, testPath):
+
+def trainEnvMapShModel(modelPath, imgRootDir, trainPath, testPath, linearCS):
 
     tbLogsPath = modelPath + "/tbLogs"
     modelFilename = modelPath + "/tfData"
@@ -465,8 +622,8 @@ def trainEnvMapShModel(modelPath, trainPath, testPath):
 
     tf.set_random_seed(rseed)
 
-    trDs = EnvMapShDatasetTF(trainPath, rseed)
-    tsDs = EnvMapShDatasetTF(testPath, rseed)
+    trDs = EnvMapShDatasetTF(trainPath, imgRootDir, rseed, linearCS)
+    tsDs = EnvMapShDatasetTF(testPath, imgRootDir, rseed, linearCS)
 
     nbShCoeffs = trDs.getNbShCoeffs()
     shCoeffsMean = shCoeffsMean8[0:nbShCoeffs]
@@ -553,7 +710,7 @@ def trainEnvMapShModel(modelPath, trainPath, testPath):
     # Params Initializer
     varInit = tf.global_variables_initializer()
 
-    with tf.Session(config=tf.ConfigProto(device_count={'GPU': 0}, allow_soft_placement=True, log_device_placement=False)) as sess:
+    with tf.Session(config=tf.ConfigProto(device_count={'GPU': 1}, allow_soft_placement=True, log_device_placement=False)) as sess:
         # with tf.Session() as sess:
 
         summary_writer = tf.summary.FileWriter(tbLogsPath, graph=sess.graph)
@@ -655,12 +812,15 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("modelPath", help="path to the trainedModel")
     parser.add_argument(
+        "imgRootDir", help="root directory to the images in the levelDb databases")
+    parser.add_argument(
         "trainDbPath", help="path to the Training EnvMapDataset levelDb path")
     parser.add_argument(
         "testDbPath", help="path to the Testing EnvMapDataset levelDb path")
     args = parser.parse_args()
 
-    trainEnvMapShModel(args.modelPath, args.trainDbPath, args.testDbPath)
+    trainEnvMapShModel(args.modelPath, args.imgRootDir, args.trainDbPath,
+                       args.testDbPath, doLinearCS)
 
     # evalEnvMapShModel(args.modelPath,  args.trainDbPath,
-    #                  args.testDbPath, envMapSz)
+    #                  args.testDbPath, envMapSz, doLinearCS)

@@ -16,7 +16,7 @@ class EnvMapShDataset(object):
 
     __loadImg = library.getImgFromFile
     __loadImg.restype = c_int
-    __loadImg.argtypes = [c_char_p, POINTER(c_float), c_int, c_int]
+    __loadImg.argtypes = [c_char_p, POINTER(c_float), c_int, c_int, c_int]
 
     __generateEnvMap = library.getEnvMapFromCoeffs
     __generateEnvMap.restype = c_int
@@ -25,7 +25,7 @@ class EnvMapShDataset(object):
 
     __setDataPath = library.initEnvMapShDataSampler
     __setDataPath.restype = c_int
-    __setDataPath.argtypes = [c_int, c_char_p, c_int, c_int]
+    __setDataPath.argtypes = [c_int, c_char_p, c_char_p, c_int, c_int, c_int]
 
     __getNbCameraParams = library.getEnvMapShNbCamParams
     __getNbCameraParams.restype = c_int
@@ -47,10 +47,10 @@ class EnvMapShDataset(object):
         return EnvMapShDataset.__computeNbShCoeffs(shOrder)
 
     @staticmethod
-    def loadImg(imgFilename, sz):
+    def loadImg(imgFilename, sz, linearCS):
         imgData = np.zeros(sz[0]*sz[1]*3, np.float32)
         err = EnvMapShDataset.__loadImg(c_char_p(
-            imgFilename), imgData.ctypes.data_as(POINTER(c_float)), sz[1], sz[0])
+            imgFilename), imgData.ctypes.data_as(POINTER(c_float)), sz[1], sz[0], linearCS)
         return np.reshape(imgData, (1, sz[0], sz[1], 3))
 
     @staticmethod
@@ -60,12 +60,12 @@ class EnvMapShDataset(object):
             shOrder,  shCoeffsData.ctypes.data_as(POINTER(c_float)), imgData.ctypes.data_as(POINTER(c_float)), sz[1], sz[0])
         return np.reshape(imgData, (1, sz[0], sz[1], 3))
 
-    def __init__(self, dataPath, shOrder, seed):
+    def __init__(self, dataPath, imgPath, shOrder, seed, linearCS):
 
         self.__idx = EnvMapShDataset.__idx
         EnvMapShDataset.__idx += 1
 
-        if EnvMapShDataset.__setDataPath(self.__idx, dataPath, shOrder, seed) != 0:
+        if EnvMapShDataset.__setDataPath(self.__idx, dataPath, imgPath, shOrder, seed, linearCS) != 0:
             raise NameError("Bad dataset")
 
         self.nbCameraParams = EnvMapShDataset.__getNbCameraParams(self.__idx)

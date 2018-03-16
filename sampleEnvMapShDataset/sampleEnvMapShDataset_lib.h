@@ -17,10 +17,9 @@ enum
 };
 
 extern "C" int
-getImgFromFile( const char* fileName, float* img, const int w, const int h );
+getImgFromFile( const char* fileName, float* img, const int w, const int h, const bool linearCS );
 
-extern "C" int
-getNbShCoeffs( const int shOrder );
+extern "C" int getNbShCoeffs( const int shOrder );
 
 extern "C" int getEnvMapFromCoeffs(
     const int shOrder,
@@ -32,8 +31,10 @@ extern "C" int getEnvMapFromCoeffs(
 extern "C" int initEnvMapShDataSampler(
     const int idx,
     const char* datasetName,
+    const char* imgRootDir,
     const int shOrder,
-    const int seed );
+    const int seed,
+    const bool linearCS );
 
 extern "C" int getEnvMapShNbCamParams( const int idx );
 
