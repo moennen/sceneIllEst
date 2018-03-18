@@ -1,97 +1,111 @@
-/*! *****************************************************************************
+/*!
+ * *****************************************************************************
  *   \file phSpline.h
  *   \author moennen
- *   \brief
+ *   \brief implementation of a polyharmonic spline interpolant
  *   \date 2018-03-16
  *   *****************************************************************************/
 #ifndef _UTILS_PHSPLINE_H
 #define _UTILS_PHSPLINE_H
 
 #include <Eigen/Dense>
+#include <vector>
 
-template <unsigned NCtrls, unsigned InDim = 2, unsigned OutDim = InDim, unsigned Order = 2>
-class PhSpline final
-{
-  private:
-   // Ctrl points
-   // [c1 c2 ... cN]
-   Eigen::Matrix<float, InDim, NCtrls> _c;
-   // Spline weights params
-   // [w]
-   Eigen::Matrix<float, NCtrls, OutDim> _w;
-   // Spline affine params
-   // [v]
-   Eigen::Matrix<float, InDim + 1, OutDim> _v;
+template <unsigned InDim = 2, unsigned OutDim = InDim, unsigned Order = 2,
+          typename Real = float>
+class PhSpline final {
+  const size_t _nCtrlPts;
+  // Params of the spline : OutDim x ( _nCtrPts ( weights )  + InDim + 1  (
+  // affine ) )
+  std::vector<Real> _params;
 
-   // Vector used for evaluation
-   mutable Eigen::Matrix<float, 1, NCtrls> _kv;
+  template <typename t, int dim = Eigen::Dynamic>
+  using Vector = Eigen::Matrix<t, dim, 1>;
+  using Matrix = Eigen::Matrix<Real, Eigen::Dynamic, Eigen::Dynamic>;
 
-  public:
-   using InPt = Eigen::Vector<float, InDim>;
-   using OutPt = Eigen::Vector<float, OutDim>;
+ public:
+  PhSpline(const Real* ctrlPts, const Real* ctrlFunc, const size_t nCtrlPts)
+      : _nCtrlPts(nCtrlPts), _params(OutDim * (_nCtrlPts + InDim + 1)) {
+    // reject unsolvable system
+    assert(_nCtrlPts > InDim);
+    fit(ctrlPts, ctrlFunc, _nCtrlPts, &_params[0]);
+  }
 
-   PhSpline( const std::vector<InPt>& ctrlPts, const std::vector<OutPt>& ctrlFunc )
-   {
-      // set the ctrl points
-      for ( size_t c=0; c<NCtrls; ++c ) _c.col(c) = ctrlPts[c];
-      // set the ctrl values
-      Eigen::Matrix<float, OutDim, NCtrls> f;
-      for ( size_t c=0; c<NCtrls; ++c ) f.col(c) = ctrlFunc[c];
-      
-      // fit the parameters
-      fit(_c, f, _w, _v);
-   }
+  // given a point x of InDim dimensions return the corresponding function value
+  // y
+  // in OutDim dimensions
+  inline void operator()(const Real* ctrlPts, const Real* x, Real* y) const {
+    using namespace Eigen;
+    const size_t nParams = _nCtrlPts + InDim + 1;
+    const auto mapX = Map<const Vector<Real, InDim> >(x);
+    const auto mapCtrlPts = Map<const Matrix>(ctrlPts, InDim, _nCtrlPts);
+    Vector<Real> vecX(nParams);
+    for (unsigned pt = 0; pt < _nCtrlPts; ++pt) {
+      vecX[pt] = psi((mapX - mapCtrlPts.col(pt)).norm());
+    }
+    vecX.template segment<InDim>(_nCtrlPts) = mapX;
+    vecX[nParams - 1] = 1.0;
 
-   inline OutPt operator()( const InPt& x ) const
-   {
-      // compute the kernel with every control points
-      for ( unsigned c = 0; c < NCtrls; ++c ) _kv[c] = psi( ( x - _c.col( c ) ).norm() );
-      // construct the homogenous vector
-      const Eigen::Matrix<float, InDim + 1, 1> xh << x, Eigen::Matrix<float, 1, 1>::Ones();
-      // compute the interpolated function value
-      return ( _kv * _w + xh.transpose() * _v ).transpose();
-   }
+    // compute the interpolated function value
+    auto vecY = Map<Vector<Real, OutDim> >(y);
+    vecY = vecX.adjoint() * Map<const Matrix>(&_params[0], nParams, OutDim);
+  }
 
-  private:
-   static inline float psi( float r )
-   {
-      return ( Order % 2 ) ? std::pow( r, Order )
-                           : r < 1.0f ? std::pow( r, Order - 1 ) * std::log( std::pow( r, r ) )
-                                      : std::pow( r, Order ) * std::log( r );
-   }
+  inline size_t getNParams() const { return _nCtrlPts + InDim + 1; }
+  inline const Real* getParams() const & { return &_params[0]; }
 
-   // estimate the weight st
-   // _w = argmin_w ( ||eval(ref,w,ctrl) - probe||^2 )
-   static inline void fit( const Eigen::Matrix<float, InDim, NCtrls>& c,
-                           const Eigen::Matrix<float, OutDim, NCtrls>& f,
-                           Eigen::Matrix<float, NCtrls, OutDim>& w,
-                           Eigen::Matrix<float, InDim + 1, OutDim> v )
-   {
-      // construct the rbf matrix
-      Eigen::Matrix<float, NCtrls, NCtrls> A;
-#pragma omp parallel for
-      for ( size_t r = 0; r < NCtrls; ++r )
-         for ( unsigned c = 0; c < NCtrls; ++c )
-         {
-            A( r, c ) = psi( _c.col( r ) - _c.col( r ) ).norm();
-            // compute the RBF : norm^2 * log(norm)
-             = psi( norm );
-         }
+ private:
+  static inline Real psi(Real r) {
+    return (Order % 2)
+               ? std::pow(r, Order)
+               : r < 1.0f ? std::pow(r, Order - 1) * std::log(std::pow(r, r))
+                          : std::pow(r, Order) * std::log(r);
+  }
+
+  // estimate the weight st
+  // _w = argmin_w ( ||eval(ref,w,ctrl) - probe||^2 )
+  static inline void fit(const Real* ctrlPts, const Real* ctrlFuncs,
+                         const size_t nCtrlPts, Real* params) {
+    using namespace Eigen;
+    // system matrix
+    // -->
+    const size_t nParams = nCtrlPts + InDim + 1;
+    Matrix S(nParams, nParams);
+    //#pragma omp parallel for
+    for (size_t r = 0; r < nCtrlPts; ++r) {
+      auto rx = Map<const Vector<Real, InDim> >(&ctrlPts[r * InDim]);
+      for (unsigned c = 0; c < nCtrlPts; ++c) {
+        auto cx = Map<const Vector<Real, InDim> >(&ctrlPts[c * InDim]);
+        S(r, c) = psi((rx - cx).norm());
       }
+    }
+    //#pragma omp parallel for
+    for (size_t c = 0; c < nCtrlPts; ++c) {
+      auto cx = Map<const Vector<Real, InDim> >(&ctrlPts[c * InDim]);
+      S.col(c).template segment<InDim>(nCtrlPts) = cx;
+      S.row(c).template segment<InDim>(nCtrlPts) = cx;
+    }
+    S.template block<InDim + 1, InDim + 1>(nCtrlPts, nCtrlPts).setZero();
+    S.col(nParams - 1).topRows(nCtrlPts).setOnes();
+    S.row(nParams - 1).leftCols(nCtrlPts).setOnes();
 
-      // minimize ||A * x_i - b_i ||^2 with x_i = _w.row(i) and b_i = _probes.row(i) for every
-      // output dimension
-      //
-      _w.resize( outDim, getNbCtrl() );
-      Eigen::MatrixXd AtA( getNbRefs(), getNbCtrl() );
-      AtA.triangularView<Eigen::Lower>() = A.transpose() * A;
-      for ( size_t r = 0; r < outDim; ++r )
-      {
-         Eigen::MatrixXd Atb = A.transpose() * _probes.row( r ).transpose();
-         AtA.ldlt().solveInPlace( Atb );
-         _w.row( r ) = Atb.transpose();
+    Matrix StS(nParams, nParams);
+    StS.template triangularView<Lower>() = S.transpose() * S;
+
+    Vector<Real> f(nParams);
+    f.template bottomRows<InDim + 1>().setZero();
+    for (size_t d = 0; d < OutDim; ++d) {
+      for (size_t c = 0; c < nCtrlPts; ++c) {
+        f[c] = ctrlFuncs[c * OutDim + d];
       }
-   }
+      Matrix Stf = S.transpose() * f;
+      StS.ldlt().solveInPlace(Stf);
+      Map<Vector<Real> >(&params[d * nParams], nParams) = Stf;
+    }
+
+    // std::cout << S << std::endl;
+    // std::cout << Map<Matrix>(params, nParams, OutDim) << std::endl;
+  }
 };
 
 #endif  // _UTILS_PHSPLINE_H

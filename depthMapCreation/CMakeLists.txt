@@ -1,14 +1,12 @@
-# CMAKE FILE : testUtils/moennen/2017-12-19
+# CMAKE FILE : depthMapCreation/moennen/2017-12-19
 
 CMAKE_MINIMUM_REQUIRED(VERSION 2.6) 
 
-PROJECT(testUtils)
-ADD_DEFINITIONS( -DCOMPILER_GCC -std=gnu++0x )
+PROJECT(depthMapCreation)
+ADD_DEFINITIONS( -DCOMPILER_GCC -std=c++11 )
 SET(CMAKE_COLOR_MAKEFILE ON)
 SET(CMAKE_VERBOSE_MAKEFILE ON)
 
-#SET(MOENNEN_LOCAL /mnt/p4/favila/moennen/local)
-#SET(MOENNEN_WKSPCE /mnt/p4/avila/moennen_wkspce)
 SET(MOENNEN_LOCAL /usr/local)
 SET(MOENNEN_WKSPCE /home/moennen)
 SET(M_INC ${MOENNEN_LOCAL}/include)
@@ -26,7 +24,7 @@ LINK_DIRECTORIES(
 	${M_LIBS64}
 )
 
-ADD_EXECUTABLE(testUtils testUtils_main.cpp)
+ADD_EXECUTABLE(createDepthMap depthMapCreation_main.cpp)
 
-TARGET_LINK_LIBRARIES( testUtils GL GLU glut SDL opencv_world )
+TARGET_LINK_LIBRARIES( createDepthMap GL SDL2 opencv_world )
 
