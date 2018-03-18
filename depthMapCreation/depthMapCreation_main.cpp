@@ -88,11 +88,11 @@ int main(int argc, char* argv[]) {
   }
   string inputFilenameA = parser.get<string>("@imageA");
 
-  auto func = [](const vec2 x) {
+  /*auto func = [](const vec2 x) {
     return exp(0.5 * x.x * x.x) * exp(0.5 * x.y * x.y);
   };
   vector<vec2> ctrlX = {
-      {0.3f, -0.1f}, {-0.04f, 0.8f}, {-0.97f, 0.001f}, {1.5f, -1.3f}};
+      {0.3f, -0.1f}, {-0.04f, 0.8f}, {-0.97f, 0.001f}, {0.75f, -1.3f}};
   vector<float> ctrlY;
   ctrlY.reserve(ctrlX.size());
   transform(ctrlX.cbegin(), ctrlX.cend(), std::back_inserter(ctrlY), func);
@@ -100,17 +100,31 @@ int main(int argc, char* argv[]) {
   PhSpline<2, 1, 2, float> interpFunc(value_ptr(ctrlX[0]), &ctrlY[0],
                                       ctrlX.size());
 
-  for (float x = -1.0f; x <= 1.0f; x += 0.1f) {
-    for (float y = -1.0f; y <= 1.0f; y += 0.1f) {
-      const vec2 xy(x, y);
-      const float rf = func(xy);
-      float ef;
-      interpFunc(value_ptr(ctrlX[0]), value_ptr(xy), &ef);
-      cout << x << " " << y << " " << rf << " " << ef << endl;
-    }
+  for (float x = -2.0f; x <= 2.0f; x += 0.01f) {
+    // for (float y = -1.0f; y <= 1.0f; y += 0.1f) {
+    const vec2 xy(x, 0.0f);
+    const float rf = func(xy);
+    float ef;
+    interpFunc(value_ptr(ctrlX[0]), value_ptr(xy), &ef);
+    cout << x << " " << rf << " " << ef << endl;
   }
+  //}*/
 
-  return 0;
+  auto func = [](const float x) { return x < 0.0f ? 0.0f : exp(0.5 * x * x); };
+  vector<float> ctrlX = {-2.0f, 1.0f,   1.5f, 0.3f,   -0.1f, 0.1f, 0.5f,
+                         -0.6f, -0.04f, 0.8f, -1.75f, -1.3f, 2.0f};
+  vector<float> ctrlY;
+  ctrlY.reserve(ctrlX.size());
+  transform(ctrlX.cbegin(), ctrlX.cend(), std::back_inserter(ctrlY), func);
+
+  PhSpline<1, 1, 2, float> interpFunc(&ctrlX[0], &ctrlY[0], ctrlX.size());
+
+  for (float x = -2.0f; x <= 2.0f; x += 0.01f) {
+    const float rf = func(x);
+    float ef;
+    interpFunc(&ctrlX[0], &x, &ef);
+    cout << x << " " << rf << " " << ef << endl;
+  }
 
   // SDL init
   SDL_Init(SDL_INIT_EVERYTHING);
@@ -147,6 +161,32 @@ int main(int argc, char* argv[]) {
       switch (event.type) {
         case SDL_QUIT:
           running = false;
+          break;
+        case SDL_MOUSEBUTTONDOWN:
+          switch (event.button.button) {
+            case SDL_BUTTON_LEFT:
+              break;
+            case SDL_BUTTON_RIGHT:
+              break;
+            default:
+              break;
+          }
+          break;
+        case SDL_MOUSEMOTION: {
+          int mouseX = event.motion.x;
+          int mouseY = event.motion.y;
+          std::stringstream ss;
+          ss << "X: " << mouseX << " Y: " << mouseY;
+          SDL_SetWindowTitle(window, ss.str().c_str());
+        } break;
+        case SDL_MOUSEWHEEL:
+          if (event.wheel.y == 1)  // scroll up
+          {
+            // Pull up code here!
+          } else if (event.wheel.y == -1)  // scroll down
+          {
+            // Pull down code here!
+          }
           break;
       }
     }

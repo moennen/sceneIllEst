@@ -102,9 +102,6 @@ class PhSpline final {
       StS.ldlt().solveInPlace(Stf);
       Map<Vector<Real> >(&params[d * nParams], nParams) = Stf;
     }
-
-    // std::cout << S << std::endl;
-    // std::cout << Map<Matrix>(params, nParams, OutDim) << std::endl;
   }
 };
 
