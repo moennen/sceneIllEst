@@ -35,6 +35,22 @@ const string keys =
 
 static ivec2 windowSz(1024, 768);
 
+struct UIData 
+{
+  // point currently selected (if any)
+  size_t currSelection;
+  // viewport transform
+  mat4 currTransform;
+  
+} s_uiData;
+
+
+struct SceneData 
+{
+  vector<vec2> s_mapPts;
+
+} s_sceneData;
+
 void init() {
   glClearColor(0.0, 0.0, 0.0, 0.0);
   glMatrixMode(GL_PROJECTION);

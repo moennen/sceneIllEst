@@ -51,6 +51,10 @@ class EnvMapShDataSampler
    boost::variate_generator<boost::random::mt19937&, boost::random::normal_distribution<> >
        _rollGen;
    boost::random::uniform_real_distribution<> _yawGen;
+   boost::variate_generator<boost::random::mt19937&, boost::random::normal_distribution<> >
+       _noiseAngleGen;
+   boost::variate_generator<boost::random::mt19937&, boost::random::normal_distribution<> >
+       _noiseGaussGen;
 
    Eigen::VectorXd _shMeanCoeffs;
    Eigen::MatrixXd _shCovCoeffs;

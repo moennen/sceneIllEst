@@ -217,10 +217,12 @@ EnvMapShDataSampler::EnvMapShDataSampler(
       _dbPtr( db ),
       _imgRootDir( imgRootDir ),
       _rng( seed ),
-      _fovGen( _rng, boost::normal_distribution<>( 40.0, 20.0 ) ),
-      _rollGen( _rng, boost::normal_distribution<>( 0.0, 15.0 ) ),
-      _pitchGen( _rng, boost::normal_distribution<>( 0.0, 15.0 ) ),
-      _yawGen( -180.0, 180.0 )
+      _fovGen( _rng, boost::normal_distribution<>( 70.0, 20.0 ) ),
+      _rollGen( _rng, boost::normal_distribution<>( 0.0, 7.5 ) ),
+      _pitchGen( _rng, boost::normal_distribution<>( 0.0, 7.5 ) ),
+      _yawGen( -180.0, 180.0 ),
+      _noiseAngleGen( _rng, boost::normal_distribution<>( 0.0, 0.75 ) ),
+      _noiseGaussGen( _rng, boost::normal_distribution<>( 0.0, 1.5 ) )
 {
    HOP_PROF_FUNC();
 
@@ -304,10 +306,10 @@ bool EnvMapShDataSampler::sample( float* imgData, const uvec3 sz, float* shData,
       // sample the point on a sphere
 
       double camRoll = _rollGen();
-      while ( ( camRoll < -90.0 ) || ( camRoll > 90.0 ) ) camRoll = _rollGen();
+      while ( ( camRoll < -45.0 ) || ( camRoll > 45.0 ) ) camRoll = _rollGen();
       camRoll *= M_PI / 180.0;
       double camPitch = _pitchGen();
-      while ( ( camPitch < -90.0 ) || ( camPitch > 90.0 ) ) camPitch = _pitchGen();
+      while ( ( camPitch < -45.0 ) || ( camPitch > 45.0 ) ) camPitch = _pitchGen();
       camPitch *= M_PI / 180.0;
       const double camYaw = M_PI * _yawGen( _rng ) / 180.0;
 
@@ -317,7 +319,7 @@ bool EnvMapShDataSampler::sample( float* imgData, const uvec3 sz, float* shData,
       Quaterniond quat( rot.transpose() );
 
       // sample the fov in radians
-      float camFoV = 40.0;  //_fovGen();
+      float camFoV = 70.0; //_fovGen();
       while ( ( camFoV < 20.0 ) || ( camFoV > 120.0 ) ) camFoV = _fovGen();
       camFoV *= M_PI / 180.0;
 
@@ -391,8 +393,14 @@ bool EnvMapShDataSampler::sample( float* imgData, const uvec3 sz, float* shData,
       // threshold( oimg, oimg, 1.0, 1.0, THRESH_TRUNC );
       if ( oimg.data )
       {
+         Matrix3d noiseRot = AngleAxisd( _noiseAngleGen()* M_PI / 180.0, Vector3d::UnitY() ).toRotationMatrix();
+         noiseRot = AngleAxisd(  _noiseAngleGen()* M_PI / 180.0, noiseRot * Vector3d::UnitX() ).toRotationMatrix() * noiseRot;
+         noiseRot = AngleAxisd(  _noiseAngleGen()* M_PI / 180.0, noiseRot * Vector3d::UnitZ() ).toRotationMatrix() * noiseRot;
+      
          // Mat small( sz.y, 2*sz.y, CV_32FC3 );
-         sampleImageFromEnvMap( oimg, sampleView, camFoV, rot );
+         sampleImageFromEnvMap( oimg, sampleView, camFoV, noiseRot*rot );
+         GaussianBlur(sampleView, sampleView, Size(5,5), 0.5 + std::abs(_noiseGaussGen()));
+
          // DEBUG !!!!!!!!!!!!!!
          // resize(oimg,crop,crop.size());
          /*resize(oimg,small,small.size());
