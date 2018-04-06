@@ -1,9 +1,9 @@
 /*!
 * *****************************************************************************
-*   \file shLighting_main.cpp
+*   \file depthMapCreation_main.cpp
 *   \author moennen
 *   \brief
-*   \date 2017-12-19
+*   \date 2018-02-19
 *   *****************************************************************************/
 
 #include "utils/gl_utils.h"

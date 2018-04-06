@@ -31,7 +31,7 @@ from sampleEnvMapShDataset import *
 
 # Parameters
 # numSteps = 140000
-numSteps = 345000
+numSteps = 100000
 logStep = 250
 logTrSteps = 1
 logTsSteps = 1
@@ -537,9 +537,14 @@ def envMapShDeep9C9DModel(imgs, outputSz, dropout):
         return outputLayer
 
 
+def envMapShModel(imgs, outputSz, dropout):
+
+    return envMapShBaseModel(imgs, outputSz, dropout)
+
+
 class EnvMapShDatasetTF(object):
 
-    def __init__(self, dbPath, imgRootDir, seed, linearCS):
+    def __init__(self, dbPath, imgRootDir, batchSz, seed, linearCS):
         self.__envMapDb = EnvMapShDataset(
             dbPath, imgRootDir, shOrder, seed, linearCS)
         self.__dims = [batchSz, imgSz[0], imgSz[1]]
@@ -589,7 +594,7 @@ def evalEnvMapShModel(modelPath, imgLst, outputDir, envMapSz, linearCS):
             tf.float32, shape=inputShape, name="input_view")
         dropoutProb = tf.placeholder(tf.float32)  # dropout (keep probability)
 
-        computedSh = envMapShDeep9C6DModel(inputView, nbShCoeffs, dropoutProb)
+        computedSh = envMapShModel(inputView, nbShCoeffs, dropoutProb)
         # accuracy = tf.reduce_mean(tf.square(tf.subtract(computedSh, outputSh)))
 
         # Persistency
@@ -627,6 +632,71 @@ def evalEnvMapShModel(modelPath, imgLst, outputDir, envMapSz, linearCS):
                 raw_input(".")
 
 
+def testEnvMapShModel(modelPath, imgRootDir, testPath, nbTests, linearCS):
+
+    modelFilename = modelPath + "/tfData"
+
+    rseed = 639878  # int(time.time())
+    tf.set_random_seed(rseed)
+
+    tsDs = EnvMapShDatasetTF(testPath, imgRootDir, 1, rseed, linearCS)
+
+    nbShCoeffs = tsDs.getNbShCoeffs()
+    inputShape = [1, imgSz[0], imgSz[1], 3]
+    outputShape = [1, nbShCoeffs]
+
+    dsIt = tf.data.Iterator.from_structure(
+        tsDs.data.output_types, tsDs.data.output_shapes)
+    dsView = dsIt.get_next()
+    tsInit = dsIt.make_initializer(tsDs.data)
+
+    # Input
+    inputView = tf.placeholder(tf.float32, shape=inputShape, name="input_view")
+    dropoutProb = tf.placeholder(tf.float32)  # dropout (keep probability)
+
+    # Graph
+    computedSh = envMapShModel(inputView, nbShCoeffs, dropoutProb)
+
+    # Persistency
+    persistency = tf.train.Saver(pad_step_number=True, keep_checkpoint_every_n_hours=3,
+                                 filename=modelFilename)
+
+    # Params Initializer
+    varInit = tf.global_variables_initializer()
+
+    with tf.Session() as sess:
+        # initialize params
+        sess.run(varInit)
+
+        # initialize iterator
+        sess.run(tsInit)
+
+        # Restore model if needed
+        persistency.restore(sess, tf.train.latest_checkpoint(modelPath))
+
+        for step in range(0, nbTests):
+            coeffs, imgs = sess.run(dsView)
+            estCoeffs = sess.run(computedSh, feed_dict={dropoutProb: 0.0,
+                                                        inputView: imgs})
+
+            # show the sample
+            toimage(imgs[0]).show()
+
+            # show the ground truth map
+            envMapGT = EnvMapShDataset. generateEnvMap(
+                shOrder, coeffs[0], envMapSz)
+            toimage(envMapGT[0]).show()
+
+            raw_input(".")
+
+            # show the estimated map
+            envMap = EnvMapShDataset. generateEnvMap(
+                shOrder, estCoeffs[0], envMapSz)
+            toimage(envMap[0]).show()
+
+            raw_input(".")
+
+
 def trainEnvMapShModel(modelPath, imgRootDir, trainPath, testPath, linearCS):
 
     tbLogsPath = modelPath + "/tbLogs"
@@ -641,8 +711,8 @@ def trainEnvMapShModel(modelPath, imgRootDir, trainPath, testPath, linearCS):
 
     tf.set_random_seed(rseed)
 
-    trDs = EnvMapShDatasetTF(trainPath, imgRootDir, rseed, linearCS)
-    tsDs = EnvMapShDatasetTF(testPath, imgRootDir, rseed, linearCS)
+    trDs = EnvMapShDatasetTF(trainPath, imgRootDir, batchSz, rseed, linearCS)
+    tsDs = EnvMapShDatasetTF(testPath, imgRootDir, batchSz, rseed, linearCS)
 
     nbShCoeffs = trDs.getNbShCoeffs()
     shCoeffsMean = shCoeffsMean8[0:nbShCoeffs]
@@ -678,7 +748,7 @@ def trainEnvMapShModel(modelPath, imgRootDir, trainPath, testPath, linearCS):
     #    tf.square(tf.subtract(outputSh2, outputShNorm))))
 
     # Graph
-    computedSh = envMapShDeep9C6DModel(inputView, nbShCoeffs, dropoutProb)
+    computedSh = envMapShModel(inputView, nbShCoeffs, dropoutProb)
 
     # Optimizer
     costAll = tf.reduce_mean(
@@ -838,8 +908,11 @@ if __name__ == "__main__":
         "testDbPath", help="path to the Testing EnvMapDataset levelDb path")
     args = parser.parse_args()
 
-    trainEnvMapShModel(args.modelPath, args.imgRootDir, args.trainDbPath,
-                       args.testDbPath, doLinearCS)
+    # trainEnvMapShModel(args.modelPath, args.imgRootDir, args.trainDbPath,
+    #                   args.testDbPath, doLinearCS)
+
+    testEnvMapShModel(args.modelPath, args.imgRootDir,
+                      args.testDbPath, 30, doLinearCS)
 
     # evalEnvMapShModel(args.modelPath,  args.trainDbPath,
-    #                  args.testDbPath, envMapSz, doLinearCS)
+    #                   args.testDbPath, envMapSz, doLinearCS)

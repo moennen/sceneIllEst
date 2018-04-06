@@ -80,6 +80,35 @@ bool sampleImageFromEnvMap( Mat& envMap, Mat& sample, float fov, const Matrix3d&
    }
 }
 
+bool resampleEnvMap( Mat& envMap, Mat& sample, const Matrix3d& rotMat )
+{
+   const glm::vec2 scale( M_INV_PI * 0.5f * envMap.cols, M_INV_PI * envMap.rows );
+   const glm::vec2 offset( 0.5f * envMap.cols, 0.5f * envMap.rows );
+
+#pragma omp parallel for
+   for ( size_t y = 0; y < sample.rows; y++ )
+   {
+      float* row_data = sample.ptr<float>( y );
+      const double theta = ( 0.5 - ( y + 0.5 ) / sample.rows ) * M_PI;
+      const double stheta = sin( theta );
+      const double ctheta = cos( theta );
+
+      for ( size_t x = 0; x < sample.cols; x++ )
+      {
+         const double phi = ( 2.0 * ( x + 0.5 ) / sample.cols - 1.0 ) * M_PI;
+         Vector3d dir;
+         dir << ctheta * sin( phi ), stheta, ctheta * cos( phi );
+         dir.normalize();
+         dir = rotMat * dir;
+
+          const glm::vec2 pos(
+             scale.x * atan2( dir[0], dir[2] ) + offset.x,
+             scale.y * asin( glm::clamp( dir[1], -1.0, 1.0 ) ) + offset.y );
+         sample.at<Vec3f>( y, x ) = cv_utils::imsample32FC3( envMap, pos );
+      }
+   }
+}
+
 // integrate over an image to estimate the spherical harmonics of a scene
 // TODO : change the assumption that the unseen scene part is black
 bool estimateSphericalHarmonics( Mat& sample, float fov, vector<dvec3> shCoeff, int shOrder = 4 )
@@ -379,6 +408,7 @@ bool EnvMapShDataSampler::sample( float* imgData, const uvec3 sz, float* shData,
       renderEnvMapFromCoeff( img.cv(), _shOrder, shCoeffs );
       if ( img.cv().data )
       {
+         GaussianBlur(img.cv(), img.cv(), Size(5,5), 0.5 + std::abs(_noiseGaussGen())); 
          //imshow( "map", img.cv() );
          cvtColor( img.cv(), img.cv(), COLOR_BGR2RGB );
          copyToInterleavedBuffer( imgData + s * imgSize, img.cv() );
@@ -396,16 +426,18 @@ bool EnvMapShDataSampler::sample( float* imgData, const uvec3 sz, float* shData,
          Matrix3d noiseRot = AngleAxisd( _noiseAngleGen()* M_PI / 180.0, Vector3d::UnitY() ).toRotationMatrix();
          noiseRot = AngleAxisd(  _noiseAngleGen()* M_PI / 180.0, noiseRot * Vector3d::UnitX() ).toRotationMatrix() * noiseRot;
          noiseRot = AngleAxisd(  _noiseAngleGen()* M_PI / 180.0, noiseRot * Vector3d::UnitZ() ).toRotationMatrix() * noiseRot;
-      
-         // Mat small( sz.y, 2*sz.y, CV_32FC3 );
-         sampleImageFromEnvMap( oimg, sampleView, camFoV, noiseRot*rot );
-         GaussianBlur(sampleView, sampleView, Size(5,5), 0.5 + std::abs(_noiseGaussGen()));
 
          // DEBUG !!!!!!!!!!!!!!
-         // resize(oimg,crop,crop.size());
+         //resize(oimg,sampleView,sampleView.size());
          /*resize(oimg,small,small.size());
          imshow( "original", small );
          imshow( "crop", crop );*/
+      
+         // Mat small( sz.y, 2*sz.y, CV_32FC3 );
+         //resampleEnvMap( oimg, sampleView, noiseRot*rot );
+         sampleImageFromEnvMap( oimg, sampleView, camFoV, noiseRot*rot );
+         GaussianBlur(sampleView, sampleView, Size(5,5), 0.5 + std::abs(_noiseGaussGen()));
+
          cvtColor( sampleView, sampleView, COLOR_BGR2RGB );
          copyToInterleavedBuffer( imgData + s * imgSize, sampleView );
       }

@@ -2,7 +2,7 @@
 
 CMAKE_MINIMUM_REQUIRED(VERSION 2.6) 
 
-PROJECT(depthMapCreation)
+PROJECT(faceDepthMapFrom3DMM)
 ADD_DEFINITIONS( -DCOMPILER_GCC -std=c++11 -O3 )
 SET(CMAKE_COLOR_MAKEFILE ON)
 SET(CMAKE_VERBOSE_MAKEFILE ON)
@@ -24,18 +24,26 @@ SET(M_INC ${MOENNEN_LOCAL}/include)
 SET(M_LIBS ${MOENNEN_LOCAL}/lib)
 SET(M_LIBS64 ${MOENNEN_LOCAL}/lib64)
 
+SET(PROJROOT ../.)
+SET(UTILS ${PROJROOT}/utils/)
+SET(EXTERNALS ${PROJROOT}/externals)
+SET(FACE ${EXTERNALS}/face)
+
+
 INCLUDE_DIRECTORIES(
 	${MOENNEN_WKSPCE}/sceneIllEst
 	${M_INC}
 	${M_INC}/GL
 	${M_INC}/eigen3
+	${PROJROOT}
+	${EXTERNALS}
 )
 LINK_DIRECTORIES(
 	${M_LIBS}
 	${M_LIBS64}
 )
 
-ADD_EXECUTABLE(createDepthMap depthMapCreation_main.cpp)
+ADD_EXECUTABLE(createFaceMap faceDepthMapFrom3D_main.cpp ${FACE}/faceDetector.C)
 
-TARGET_LINK_LIBRARIES( createDepthMap GL SDL2 opencv_world )
+TARGET_LINK_LIBRARIES( createFaceMap GL SDL2 opencv_world dlib )
 
