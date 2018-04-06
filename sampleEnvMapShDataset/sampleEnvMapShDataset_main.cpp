@@ -66,7 +66,7 @@ int main( int argc, char* argv[] )
       return ( -1 );
    }
    imshow( "Sample", img );
-
+   
    // generate envMap
    success = EnvMapShDataSampler::nbShCoeffs( shOrder ) == shSampler->nbShCoeffs();
    if ( !success )

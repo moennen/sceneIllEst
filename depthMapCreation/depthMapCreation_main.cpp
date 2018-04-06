@@ -41,23 +41,30 @@ static ivec2 windowSz( 1024, 768 );
 using MapFunc = PhSpline<2, 3, 2>;
 using MapFuncPtr = unique_ptr<MapFunc>;
 
-MapFuncPtr createNewMapFunc( const vector<vec2>& mapCtrlPtx, const Mat& input )
+struct UIData
 {
-   vector<vec2> mapCtrlPos;
-   mapCtrlPos.reserve( mapCtrlPtx.size() );
-   vector<vec3> mapCtrlValues;
-   mapCtrlValues.reserve( mapCtrlPtx.size() );
-#pragma omp parallel for
-   for ( size_t idx = 0; idx < mapCtrlPtx.size(); ++idx )
-   {
-      const auto ctrVal = cv_utils::imsample32FC3( input, mapCtrlPtx[idx] );
-      mapCtrlPos.emplace_back(
-          vec2( 2.0f ) * ( mapCtrlPtx[idx] / vec2( windowSz ) - vec2( 0.5f ) ) );
-      mapCtrlValues.emplace_back( ctrVal( 0 ), ctrVal( 1 ), ctrVal( 2 ) );
-   }
+   // point currently selected (if any)
+   size_t currSelection;
+   // viewport transform
+   mat4 currTransform;
 
-   return MapFuncPtr( new MapFunc(
-       value_ptr( mapCtrlPos[0] ), value_ptr( mapCtrlValues[0] ), mapCtrlPtx.size() ) );
+} s_uiData;
+
+struct SceneData
+{
+   vector<vec2> s_mapPts;
+
+} s_sceneData;
+
+void init()
+{
+   glClearColor( 0.0, 0.0, 0.0, 0.0 );
+   glMatrixMode( GL_PROJECTION );
+   glLoadIdentity();
+   glOrtho( 0.0, windowSz.x, windowSz.y, 1.0, -1.0, 1.0 );
+   glEnable( GL_BLEND );
+   glEnable( GL_TEXTURE_2D );
+   glBlendFunc( GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA );
 }
 
 void computeMap( const MapFunc& mapFunc, const vector<vec2>& mapCtrlPtx, Mat& map )

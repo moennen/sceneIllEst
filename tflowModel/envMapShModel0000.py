@@ -14,9 +14,12 @@ import sys
 import time
 import tensorflow as tf
 import itertools
-from matplotlib import pyplot as plt
+#from matplotlib import pyplot as plt
 from scipy.misc import toimage
 from PIL import Image
+import OpenEXR
+import Imath
+import numpy as np
 
 sys.path.append('/mnt/p4/favila/moennen/local/lib/python2.7/site-packages')
 import cv2 as cv
@@ -28,15 +31,15 @@ from sampleEnvMapShDataset import *
 
 # Parameters
 # numSteps = 140000
-numSteps = 150000
-logStep = 100
+numSteps = 345000
+logStep = 250
 logTrSteps = 1
 logTsSteps = 1
 batchSz = 128
 shOrder = 4
 doLinearCS = 1
 imgSz = [108, 192]
-#envMapSz = [64, 128]
+# envMapSz = [64, 128]
 envMapSz = [256, 512]
 # imgSz = envMapSz
 pixMean = [0.5, 0.5, 0.5]
@@ -76,6 +79,19 @@ def showImgs(batch, img_depths):
 
     plt.imshow(batch_im)
     plt.show()
+
+
+def writeExrRGB(img, output_filename):
+    print img.shape
+    rpix = img[:, :, 0].astype(np.float16).tostring()
+    gpix = img[:, :, 1].astype(np.float16).tostring()
+    bpix = img[:, :, 2].astype(np.float16).tostring()
+    HEADER = OpenEXR.Header(img.shape[1], img.shape[0])
+    half_chan = Imath.Channel(Imath.PixelType(Imath.PixelType.HALF))
+    HEADER['channels'] = dict([(c, half_chan) for c in "RGB"])
+    exr = OpenEXR.OutputFile(output_filename, HEADER)
+    exr.writePixels({'R': rpix, 'G': gpix, 'B': bpix})
+    exr.close()
 
 
 def loadImgPIL(img_name, imgSz, linearCS):
@@ -594,7 +610,7 @@ def evalEnvMapShModel(modelPath, imgLst, outputDir, envMapSz, linearCS):
             for img_name in img_names_file:
 
                 img = loadImgPIL(img_name.rstrip('\n'), imgSz, linearCS)
-                #img = EnvMapShDataset.loadImg(img_name,  imgSz, linearCS)
+                # img = EnvMapShDataset.loadImg(img_name,  imgSz, linearCS)
                 toimage(img[0]).show()
 
                 output = sess.run(computedSh, feed_dict={dropoutProb: 0.0,
@@ -604,6 +620,9 @@ def evalEnvMapShModel(modelPath, imgLst, outputDir, envMapSz, linearCS):
                     shOrder, output[0], envMapSz)
 
                 toimage(envMap[0]).show()
+
+                # writeExrRGB(envMap[0], os.path.abspath(
+                #    outputDir + "/" + os.path.splitext(os.path.basename(img_name))[0] + ".exr"))
 
                 raw_input(".")
 
