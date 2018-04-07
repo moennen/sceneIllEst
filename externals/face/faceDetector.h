@@ -21,7 +21,7 @@ class FaceDetector final
 
    bool init( const char* faceDetectorModel, const char* landmarksDetectorModel );
 
-   void getFaces( cv::Mat& img, std::vector<glm::vec4> ) const;
+   void getFaces( cv::Mat& img, std::vector<glm::vec4>& ) const;
 
    void getFacesLandmarks(
        cv::Mat& img,

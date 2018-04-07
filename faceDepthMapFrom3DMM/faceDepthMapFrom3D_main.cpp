@@ -21,6 +21,9 @@ using namespace glm;
 // opencv
 #include "utils/cv_utils.h"
 
+// face detector
+#include "externals/face/faceDetector.h"
+
 #include <memory>
 
 #include <iostream>
@@ -31,6 +34,8 @@ using namespace glm;
 
 const string keys =
     "{help h usage ? |         | print this message   }"
+    "{@faceModel     |         | face detection model }"
+    "{@faceKpModel   |         | face key points detection model }"
     "{@imageA        |         | image1 for compare   }";
 
 static ivec2 windowSz( 1024, 768 );
@@ -58,6 +63,39 @@ void drawCircle( float x, float y, float r, int segments, const vec4& colour )
       glVertex2f( x + sin( t ) * r, y + cos( t ) * r );
    }
    glEnd();
+}
+
+void drawRect( const vec4& rect, const vec4& colour )
+{
+   glBegin( GL_LINE_LOOP );
+   glColor4fv( glm::value_ptr( colour ) );
+   glVertex2f( rect.x, rect.y );
+   glVertex2f( rect.z, rect.y );
+   glVertex2f( rect.z, rect.w );
+   glVertex2f( rect.x, rect.w );
+   glEnd();
+}
+
+void drawFaces( const vector<vec4>& faces, const vector<vector<vec2> >& facesKp )
+{
+   glLineWidth( 2.5 );
+   for ( size_t f = 0; f < faces.size(); ++f )
+   {
+      const auto colour = vec4( 0.0, 1.0, 0.0, 0.85 );
+      const auto& frect = faces[f];
+      drawRect( frect, colour );
+      const vec2 fsz( frect.z - frect.x, frect.w - frect.y );
+      const float fscale = 0.015 * length( fsz );
+      if ( facesKp.size() > f )
+      {
+         for ( const auto& kps : facesKp[f] )
+         {
+            drawCircle( kps.x, kps.y, fscale, 128, colour );
+         }
+      }
+   }
+
+   glColor4f( 1.0, 1.0, 1.0, 1.0 );
 }
 
 void draw( GLuint tex, size_t w, size_t h )
@@ -143,6 +181,20 @@ int main( int argc, char* argv[] )
    std::vector<glm::vec2> depthCtrlPtx;
    size_t selectedDepthCtrlPtx = 0;
 
+   // Face detector
+   cv::Mat img = cv::imread( inputFilenameA.c_str() );
+   cv::cvtColor( img, img, cv::COLOR_BGR2RGB );
+   FaceDetector faceEngine;
+   faceEngine.init(
+       parser.get<string>( "@faceModel" ).c_str(), parser.get<string>( "@faceKpModel" ).c_str() );
+   vector<vec4> imgFaces;
+   faceEngine.getFaces( img, imgFaces );
+   vector<vector<vec2> > imgFacesKps( imgFaces.size() );
+   if ( !imgFaces.empty() )
+   {
+      faceEngine.getFacesLandmarks( img, imgFaces.size(), &imgFaces[0], &imgFacesKps[0] );
+   }
+
    bool running = true;
    Uint32 start;
    SDL_Event event;
@@ -193,8 +245,6 @@ int main( int argc, char* argv[] )
                break;
             case SDL_MOUSEMOTION:
             {
-               //int mouseX = event.motion.x;
-               //int mouseY = event.motion.y;
                break;
             }
             break;
@@ -212,6 +262,7 @@ int main( int argc, char* argv[] )
       }
       glClear( GL_COLOR_BUFFER_BIT );
       draw( texA.id, texA.sz.x, texA.sz.y );
+      drawFaces( imgFaces, imgFacesKps );
       SDL_GL_SwapWindow( window );
       if ( 1000 / 60 > ( SDL_GetTicks() - start ) )
          SDL_Delay( 1000 / 60 - ( SDL_GetTicks() - start ) );

@@ -38,6 +38,7 @@ class FaceDetector::Detector final
            rcon5<rcon5<rcon5<downsampler<input_rgb_image_pyramid<pyramid_down<6>>>>>>>>;
 
    net_type _net;
+   shape_predictor _sp;
 
   public:
    Detector();
@@ -45,7 +46,7 @@ class FaceDetector::Detector final
 
    bool init( const char* faceModel, const char* landmarksModel );
 
-   void getFaces( cv::Mat& img, std::vector<glm::vec4> );
+   void getFaces( cv::Mat& img, std::vector<glm::vec4>& );
 
    void getFacesLandmarks(
        cv::Mat& img,
@@ -60,41 +61,59 @@ FaceDetector::Detector::~Detector() {}
 bool FaceDetector::Detector::init( const char* faceModel, const char* landmarksModel )
 {
    deserialize( faceModel ) >> _net;
+   deserialize( landmarksModel ) >> _sp;
    return true;
 }
 
-void FaceDetector::Detector::getFaces( cv::Mat& cvimg, std::vector<glm::vec4> faces )
+void FaceDetector::Detector::getFaces( cv::Mat& cvimg, std::vector<glm::vec4>& faces )
 {
    // convert to dlib
-   array2d<rgb_pixel> img;
+   matrix<rgb_pixel> img;
    assign_image( img, cv_image<rgb_pixel>( cvimg ) );
 
    // upsample the image to detect low res faces
    // while ( img.size() < 2048 * 2048 ) pyramid_up( img );
+   // while ( img.size() < 512 * 512 ) pyramid_up( img );
 
    // run the model
    auto dets = _net( img );
 
+   std::cout << "Face detected : " << dets.size() << std::endl;
+
    // transform from dlib rectangle to vec4 roi
-   faces.reserve( dets[0].size() );
-   for ( size_t i = 0; i < dets[0].size(); ++i )
+   faces.reserve( dets.size() );
+   for ( size_t i = 0; i < dets.size(); ++i )
    {
-      const auto faceRect = dets[0][i];
-      faces.emplace_back( faceRect.rect.left(), faceRect.rect.bottom(), faceRect.rect.right(), faceRect.rect.top() );
+      const auto faceRect = dets[i].rect;
+      std::cout << "FaceRect : " << faceRect.left() << "," << faceRect.top() << ","
+                << faceRect.right() << "," << faceRect.bottom() << std::endl;
+      faces.emplace_back( faceRect.left(), faceRect.top(), faceRect.right(), faceRect.bottom() );
    }
 }
 
 void FaceDetector::Detector::getFacesLandmarks(
-    cv::Mat& /*img*/,
-    const size_t /*nbFaces*/,
-    const glm::vec4* /*faces*/,
-    std::vector<glm::vec2>* /*landmarks*/ )
+    cv::Mat& cvimg,
+    const size_t nbFaces,
+    const glm::vec4* faces,
+    std::vector<glm::vec2>* landmarks )
 {
+   // convert to dlib
+   matrix<rgb_pixel> img;
+   assign_image( img, cv_image<rgb_pixel>( cvimg ) );
+
+   for ( size_t f = 0; f < nbFaces; ++f )
+   {
+      rectangle frect( faces[f].x, faces[f].y, faces[f].z, faces[f].w );
+      full_object_detection shape = _sp( img, frect );
+      landmarks[0].reserve( shape.num_parts() );
+      for ( size_t p = 0; p < shape.num_parts(); ++p )
+      {
+         landmarks[0].emplace_back( shape.part( p ).x(), shape.part( p ).y() );
+      }
+   }
 }
 
-FaceDetector::FaceDetector() : _detectorPtr( new Detector() )
-{
-};
+FaceDetector::FaceDetector() : _detectorPtr( new Detector() ){};
 
 FaceDetector::~FaceDetector(){};
 
@@ -103,7 +122,7 @@ bool FaceDetector::init( const char* faceModel, const char* landmarksModel )
    return _detectorPtr->init( faceModel, landmarksModel );
 }
 
-void FaceDetector::getFaces( cv::Mat& img, std::vector<glm::vec4> faces ) const
+void FaceDetector::getFaces( cv::Mat& img, std::vector<glm::vec4>& faces ) const
 {
    _detectorPtr->getFaces( img, faces );
 }

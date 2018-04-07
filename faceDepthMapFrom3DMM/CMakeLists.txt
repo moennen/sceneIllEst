@@ -16,10 +16,10 @@ endif()
 # PREFORMANCES
 #ADD_DEFINITIONS( -DHOP_ENABLED )
 
-#SET(MOENNEN_LOCAL /usr/local)
-#SET(MOENNEN_WKSPCE /home/moennen)
-SET(MOENNEN_LOCAL /mnt/p4/favila/moennen/local)
-SET(MOENNEN_WKSPCE /mnt/p4/avila/moennen_wkspce)
+SET(MOENNEN_LOCAL /usr/local)
+SET(MOENNEN_WKSPCE /home/moennen)
+#SET(MOENNEN_LOCAL /mnt/p4/favila/moennen/local)
+#SET(MOENNEN_WKSPCE /mnt/p4/avila/moennen_wkspce)
 SET(M_INC ${MOENNEN_LOCAL}/include)
 SET(M_LIBS ${MOENNEN_LOCAL}/lib)
 SET(M_LIBS64 ${MOENNEN_LOCAL}/lib64)
@@ -45,5 +45,5 @@ LINK_DIRECTORIES(
 
 ADD_EXECUTABLE(createFaceMap faceDepthMapFrom3D_main.cpp ${FACE}/faceDetector.C)
 
-TARGET_LINK_LIBRARIES( createFaceMap GL SDL2 opencv_world dlib )
+TARGET_LINK_LIBRARIES( createFaceMap GL SDL2 dlib opencv_world lapack blas )
 
