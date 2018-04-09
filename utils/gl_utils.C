@@ -6,6 +6,10 @@
  *   *****************************************************************************/
 #include <utils/gl_utils.h>
 
+#include <assimp/cimport.h>
+#include <assimp/postprocess.h>
+#include <assimp/scene.h>
+
 #include <fstream>
 #include <iostream>
 #include <string>
@@ -19,50 +23,75 @@ bool gl_utils::loadTriangleMesh(
     std::vector<size_t>& idx,
     std::vector<glm::vec3>& vtx,
     std::vector<glm::vec2>& uvs,
-    std::vector<glm::vec3> normals )
+    std::vector<glm::vec3>& normals )
 {
-  Assimp::Importer importer;
+   Assimp::Importer importer;
 
-  const aiScene* scene = importer.ReadFile(path, 0/*aiProcess_JoinIdenticalVertices | aiProcess_SortByPType*/);
-  if( !scene) {
-    fprintf( stderr, importer.GetErrorString());
-    getchar();
-    return false;
-  }
-  const aiMesh* mesh = scene->mMeshes[0]; // In this simple example code we always use the 1rst mesh (in OBJ files there is often only one anyway)
+   const aiScene* scene =
+       importer.ReadFile( filename, 0 /*aiProcess_JoinIdenticalVertices | aiProcess_SortByPType*/ );
+   if ( !scene ) return false;
 
-  // Fill vertices positions
-  vertices.reserve(mesh->mNumVertices);
-  for(unsigned int i=0; i<mesh->mNumVertices; i++){
-    aiVector3D pos = mesh->mVertices[i];
-    vertices.push_back(glm::vec3(pos.x, pos.y, pos.z));
-  }
+   // default to the first mesh
+   const aiMesh* mesh = scene->mMeshes[0];
 
-  // Fill vertices texture coordinates
-  uvs.reserve(mesh->mNumVertices);
-  for(unsigned int i=0; i<mesh->mNumVertices; i++){
-    aiVector3D UVW = mesh->mTextureCoords[0][i]; // Assume only 1 set of UV coords; AssImp supports 8 UV sets.
-    uvs.push_back(glm::vec2(UVW.x, UVW.y));
-  }
+   if ( mesh->HasPositions() )
+   {
+      vtx.reserve( mesh->mNumVertices );
+      for ( size_t i = 0; i < mesh->mNumVertices; ++i )
+      {
+         const aiVector3D pos = mesh->mVertices[i];
+         vtx.emplace_back( pos.x, pos.y, pos.z );
+      }
+   }
 
-  // Fill vertices normals
-  normals.reserve(mesh->mNumVertices);
-  for(unsigned int i=0; i<mesh->mNumVertices; i++){
-    aiVector3D n = mesh->mNormals[i];
-    normals.push_back(glm::vec3(n.x, n.y, n.z));
-  }
+   // Fill vertices texture coordinates
+   if ( mesh->HasTextureCoords( 0 ) )
+   {
+      uvs.reserve( mesh->mNumVertices );
+      for ( unsigned int i = 0; i < mesh->mNumVertices; i++ )
+      {
+         aiVector3D UVW = mesh->mTextureCoords[0][i];
+         uvs.emplace_back( UVW.x, UVW.y );
+      }
+   }
 
+   // Fill vertices normals
+   if ( mesh->HasNormals() )
+   {
+      normals.reserve( mesh->mNumVertices );
+      for ( unsigned int i = 0; i < mesh->mNumVertices; i++ )
+      {
+         const aiVector3D n = mesh->mNormals[i];
+         normals.emplace_back( n.x, n.y, n.z );
+      }
+   }
 
-  // Fill face indices
-  indices.reserve(3*mesh->mNumFaces);
-  for (unsigned int i=0; i<mesh->mNumFaces; i++){
-    // Assume the model has only triangles.
-    indices.push_back(mesh->mFaces[i].mIndices[0]);
-    indices.push_back(mesh->mFaces[i].mIndices[1]);
-    indices.push_back(mesh->mFaces[i].mIndices[2]);
-  }
-  
-  // The "scene" pointer will be deleted automatically by "importer"
+   // Fill face indices
+   // face are assumed to be triangles
+   if ( mesh->HasFaces() )
+   {
+      idx.reserve( 3 * mesh->mNumFaces );
+      for ( unsigned int i = 0; i < mesh->mNumFaces; i++ )
+      {
+         // Assume the model has only triangles.
+         for ( unsigned char j = 0; j < 3; ++j ) idx.emplace_back( mesh->mFaces[i].mIndices[j] );
+      }
+   }
+
+   aiReleaseImport( scene );
+}
+
+TriMeshBuffer::TriMesBuffer() {}
+TriMeshBuffer::~TriMesBuffer() { reset(); }
+void TriMeshBuffer::reset() {}
+
+bool TriMeshBuffer::load(
+    const size_t nb,
+    const size_t* idx,
+    const glm::vec3* vtx,
+    const glm::vec2* uvs,
+    const glm::vec3* normals )
+{
 }
 
 /*void gl_utils::program::reset()

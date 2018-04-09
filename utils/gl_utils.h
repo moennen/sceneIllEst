@@ -59,19 +59,24 @@ bool uploadToTexture(
 template <TextureFormat fmt>
 bool readbackTexture( const Texture<fmt>&, unsigned char* );
 
-/*struct TrianglesMeshBuffer final
+struct TriMeshBuffer final
 {
-   trianglesMeshBuffer();
-   ~trianglesMeshBuffer() { reset(); }
+   TriMeshBuffer();
+   ~TriMeshBuffer() { reset(); }
 
-   bool load( const size_t nb,
-      const size_t* idx,
-      const glm::vec3* vtx, const glm::vec2* uvs, const glm::vec3* normals );
+   bool load(
+       const size_t nb,
+       const size_t* idx,
+       const glm::vec3* vtx,
+       const glm::vec2* uvs,
+       const glm::vec3* normals );
+
+   void draw();
 
    void reset();
 
    GLuint id;
-};*/
+};
 
 bool loadTriangleMesh(
     const char* filename,
