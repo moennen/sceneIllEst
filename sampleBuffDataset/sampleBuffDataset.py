@@ -1,55 +1,73 @@
 from ctypes import *
 import numpy as np
 
-# library_path =
-# "/home/moennen/sceneIllEst/sampleImageShDataset/libsampleImageShDataset.so"
-library_path = "/mnt/p4/avila/moennen_wkspce/sceneIllEst/sampleImageShDataset/libsampleImageShDataset.so"
+
+class BufferDataSamplerLibrary(object):
+
+    def __init__(self, library_path):
+        self.library = CDLL(library_path)
+
+        self.initDataset = self.library.initBuffersDataSampler
+        self.initDataset.restype = c_int
+        self.initDataset.argtypes = [c_int, c_char_p,
+                                     c_char_p, c_int, POINTER(c_float), c_int]
+
+        self.sampleData = self.library.getBuffersDataSample
+        self.sampleData.restype = c_int
+        self.sampleData.argtypes = [c_int, POINTER(c_float)]
+
+        self.getNbBuffers = self.library.getNbBuffers
+        self.getNbBuffers.restype = c_int
+        self.getNbBuffers.argtypes = [c_int]
+
+        self.getBuffersDim = self.library.getBuffersDim
+        self.getBuffersDim.restype = c_int
+        self.getBuffersDim.argtypes = [c_int, POINTER(c_float)]
+
+        self.idx = 0
+
+    def getNewSamplerIdx(self):
+        self.idx = self.idx+1
+        return self.idx-1
 
 
-class GenBuffersDataset(object):
+class BufferDataSampler(object):
 
-    __library = 0
-    __setDataPath = 0
-    __sampleData = 0
+    def __init__(self, sampler_library, datasetPath, dataPath, params, seed):
 
-    __idx = 0
+        self.sampler_library = sampler_library
+        self.idx = sampler_library.getNewSamplerIdx()
 
-    @staticmethod
-    def init(library_path):
-       
-       __library = CDLL(library_path)
-
-       __setDataPath = library.initBuffersDataSampler
-       __setDataPath.restype = c_int
-       __setDataPath.argtypes = [c_int, c_char_p, c_char_p, c_int, c_int, c_int]
-    
-       __sampleData = library.getBuffersDataSample
-       __sampleData.restype = c_int
-       __sampleData.argtypes = [c_int, c_int, POINTER(
-        c_float), POINTER(c_float), c_int, c_int, POINTER(c_float)]
-
-    def __init__(self, datasetPath, dataPath, seed):
-
-        self.__idx = GenBuffersDataset.__idx
-        GenBuffersDataset.__idx += 1
-
-        if GenBuffersDataset.__setDataPath(self.__idx, datasetPath, dataPath, seed) != 0:
+        if sampler_library.initDataset(self.idx, datasetPath, dataPath,
+                                       params.size, params.ctypes.data_as(POINTER(c_float)), seed) != 0:
             raise NameError("Bad dataset")
 
-        self.nbCameraParams = ImageShDataset.__getNbCameraParams(self.__idx)
+        self.batchSz = int(params[0])
 
-        self.nbShCoeffs = ImageShDataset.__getNbShCoeffs(self.__idx)
+        nbBuffers = sampler_library.getNbBuffers(self.idx)
+        buffersDim = np.zeros(nbBuffers*3, dtype=np.float32)
+        sampler_library.getBuffersDim(self.idx,
+                                      buffersDim.ctypes.data_as(POINTER(c_float)))
+        buffersDim = buffersDim.astype(int)
+        self.buffersDim = np.array([(self.batchSz, buffersDim[i*3], buffersDim[i*3+1], buffersDim[i*3+2])
+                                    for i in range(nbBuffers)])
+        print self.buffersDim
+        self.buffersData = np.zeros(np.prod(self.buffersDim), dtype=np.float32)
+        buffersSz = [np.prod(self.buffersDim[i][:]) for i in range(nbBuffers)]
+        self.buffersEnd = np.cumsum(buffersSz)
+        self.buffersBegin = np.append(0,  self.buffersEnd[0:-1])
 
-    def getSample(self, dims):
+        print buffersSz
+        print np.prod(self.buffersDim)
+        print self.buffersBegin
+        print self.buffersEnd
 
-        imgData = np.zeros(dims[0]*dims[1]*dims[2]*3, np.float32)
-        camData = np.zeros(dims[0]*self.nbCameraParams, np.float32)
-        shCoeffsData = np.zeros(dims[0]*self.nbShCoeffs*3, np.float32)
-        err = ImageShDataset.__sampleData(self.__idx, dims[0], shCoeffsData.ctypes.data_as(POINTER(c_float)), camData.ctypes.data_as(
-            POINTER(c_float)), dims[2], dims[1], imgData.ctypes.data_as(POINTER(c_float)))
+    def getDataBuffers(self):
 
-        if err != 0 :
-            raise NameError("Incompatible sample")
+        # sample
+        if self.sampler_library.sampleData(self.idx, self.buffersData.ctypes.data_as(POINTER(c_float))) != 0:
+            raise NameError("Sample data error")
 
-        return [np.reshape(imgData, (dims[0], dims[1], dims[2], 3)), np.reshape(shCoeffsData, (dims[0], self.nbShCoeffs*3)),
-                np.reshape(camData, (dims[0], self.nbCameraParams))]
+        # reshape
+        return [np.reshape(self.buffersData[self.buffersBegin[i]:self.buffersEnd[i]], self.buffersDim[i][:])
+                for i in range(self.buffersDim.shape[0])]

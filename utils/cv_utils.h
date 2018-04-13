@@ -66,6 +66,7 @@ cv::Mat convert8UC3ToLinear32FC3( cv::Mat& img );
 inline cv::Mat imread32FC3( const std::string& imgPath, bool toLinear = false )
 {
    HOP_PROF_FUNC();
+
    cv::Mat img;
    {
       HOP_PROF( "cv_imread" );
@@ -116,6 +117,22 @@ inline cv::Vec3f imsample32FC3( const cv::Mat& img, const glm::vec2& in_pt )
 
    return cv::Vec3f( bgr.x, bgr.y, bgr.z );
 }
+
+inline void imToBuffer( const cv::Mat& img, float* buff, const bool toRGB = false )
+{
+   HOP_PROF_FUNC();
+   const size_t row_stride = img.cols * img.channels();
+   const size_t row_size = sizeof( float ) * row_stride;
+
+#pragma omp parallel for
+   for ( size_t y = 0; y < img.rows; y++ )
+   {
+      const float* row_img_data = img.ptr<float>( y );
+      float* row_buff_data = buff + y * row_stride;
+      memcpy( row_buff_data, row_img_data, row_size );
+   }
+}
+
 }
 
 #endif  // _UTILS_CV_UTILS_H

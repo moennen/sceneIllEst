@@ -1,9 +1,9 @@
-# CMAKE FILE : depthMapCreation/moennen/2017-12-19
+# CMAKE FILE : sampleEnvMapShDataset/moennen/2017-12-20
 
 CMAKE_MINIMUM_REQUIRED(VERSION 2.6) 
 
-PROJECT(faceDepthMapFrom3DMM)
-ADD_DEFINITIONS( -DCOMPILER_GCC -std=c++11 -O3 )
+PROJECT(sampleEnvMapShDataset)
+ADD_DEFINITIONS( -DCOMPILER_GCC -std=gnu++0x -O3 )
 SET(CMAKE_COLOR_MAKEFILE ON)
 SET(CMAKE_VERBOSE_MAKEFILE ON)
 
@@ -19,33 +19,33 @@ endif()
 #SET(MOENNEN_LOCAL /usr/local)
 #SET(MOENNEN_WKSPCE /home/moennen)
 SET(MOENNEN_LOCAL /mnt/p4/favila/moennen/local)
-SET(MOENNEN_WKSPCE /mnt/p4/avila/moennen_wkspce)
-SET(CUDA /usr/local/cuda)
+SET(MOENNEN_WKSPCE /mnt/p4/avila/moennen_wkspce/sceneIllEst)
 SET(M_INC ${MOENNEN_LOCAL}/include)
 SET(M_LIBS ${MOENNEN_LOCAL}/lib)
 SET(M_LIBS64 ${MOENNEN_LOCAL}/lib64)
 
-SET(PROJROOT ../.)
+SET(PROJROOT ../../.)
 SET(UTILS ${PROJROOT}/utils/)
-SET(EXTERNALS ${PROJROOT}/externals)
-SET(FACE ${EXTERNALS}/face)
-
 
 INCLUDE_DIRECTORIES(
-	${MOENNEN_WKSPCE}/sceneIllEst
+	${MOENNEN_WKSPCE}
 	${M_INC}
-	${M_INC}/GL
 	${M_INC}/eigen3
 	${PROJROOT}
-	${EXTERNALS}
 )
+
 LINK_DIRECTORIES(
 	${M_LIBS}
 	${M_LIBS64}
-	${CUDA}/lib64
 )
 
-ADD_EXECUTABLE(createFaceMap faceDepthMapFrom3D_main.cpp ${FACE}/faceDetector.C)
+ADD_LIBRARY(ImageLstSampler SHARED libImageLstSampler.cpp
+				${UTILS}/cv_utils.C )
 
-TARGET_LINK_LIBRARIES( createFaceMap GL SDL2 dlib openblas 
-	                    cudart cublas curand cusolver cudnn opencv_world )
+SET_PROPERTY(TARGET ImageLstSampler PROPERTY POSITION_INDEPENDENT_CODE ON)
+
+TARGET_LINK_LIBRARIES( ImageLstSampler
+	                    boost_thread boost_system boost_filesystem
+	                    opencv_world
+	                    rt dl )
+

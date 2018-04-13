@@ -6,8 +6,7 @@
  *   *****************************************************************************/
 #include <utils/gl_utils.h>
 
-#include <assimp/cimport.h>
-#include <assimp/postprocess.h>
+#include <assimp/Importer.hpp>
 #include <assimp/scene.h>
 
 #include <fstream>
@@ -20,7 +19,7 @@ using namespace glm;
 
 bool gl_utils::loadTriangleMesh(
     const char* filename,
-    std::vector<size_t>& idx,
+    std::vector<glm::uvec3>& idx,
     std::vector<glm::vec3>& vtx,
     std::vector<glm::vec2>& uvs,
     std::vector<glm::vec3>& normals )
@@ -39,7 +38,7 @@ bool gl_utils::loadTriangleMesh(
       vtx.reserve( mesh->mNumVertices );
       for ( size_t i = 0; i < mesh->mNumVertices; ++i )
       {
-         const aiVector3D pos = mesh->mVertices[i];
+         const aiVector3D& pos = mesh->mVertices[i];
          vtx.emplace_back( pos.x, pos.y, pos.z );
       }
    }
@@ -50,7 +49,7 @@ bool gl_utils::loadTriangleMesh(
       uvs.reserve( mesh->mNumVertices );
       for ( unsigned int i = 0; i < mesh->mNumVertices; i++ )
       {
-         aiVector3D UVW = mesh->mTextureCoords[0][i];
+         const aiVector3D& UVW = mesh->mTextureCoords[0][i];
          uvs.emplace_back( UVW.x, UVW.y );
       }
    }
@@ -61,7 +60,7 @@ bool gl_utils::loadTriangleMesh(
       normals.reserve( mesh->mNumVertices );
       for ( unsigned int i = 0; i < mesh->mNumVertices; i++ )
       {
-         const aiVector3D n = mesh->mNormals[i];
+         const aiVector3D& n = mesh->mNormals[i];
          normals.emplace_back( n.x, n.y, n.z );
       }
    }
@@ -70,37 +69,106 @@ bool gl_utils::loadTriangleMesh(
    // face are assumed to be triangles
    if ( mesh->HasFaces() )
    {
-      idx.reserve( 3 * mesh->mNumFaces );
+      idx.reserve( mesh->mNumFaces );
       for ( unsigned int i = 0; i < mesh->mNumFaces; i++ )
       {
+         const auto& face = mesh->mFaces[i];
          // Assume the model has only triangles.
-         for ( unsigned char j = 0; j < 3; ++j ) idx.emplace_back( mesh->mFaces[i].mIndices[j] );
+         idx.emplace_back(face.mIndices[0], face.mIndices[1], face.mIndices[2] );
       }
    }
-
-   aiReleaseImport( scene );
 }
 
-TriMeshBuffer::TriMesBuffer() {}
-TriMeshBuffer::~TriMesBuffer() { reset(); }
-void TriMeshBuffer::reset() {}
+void gl_utils::TriMeshBuffer::reset()
+{
+    if (vao_id != -1)  glDeleteVertexArrays(1, &vao_id);
+    vao_id = -1;
 
-bool TriMeshBuffer::load(
-    const size_t nb,
-    const size_t* idx,
+    for (auto& vboid : vbo_ids)
+    {
+      if (vboid != -1 ) glDeleteBuffers(1, &vboid); 
+      vboid = -1;
+    }
+
+    _nvtx = 0;
+    _nfaces = 0;
+}
+
+void gl_utils::TriMeshBuffer::draw()
+{
+   if (!_nvtx) return;
+   glBindVertexArray( vao_id );
+   if ( _nfaces )
+      glDrawElements( GL_TRIANGLES, _nfaces * 3, GL_UNSIGNED_INT, (void*)0 );
+   else
+      glDrawArrays( GL_TRIANGLES, 0, _nvtx );
+}
+
+bool gl_utils::TriMeshBuffer::load(
+    const size_t nvtx,
     const glm::vec3* vtx,
     const glm::vec2* uvs,
-    const glm::vec3* normals )
+    const glm::vec3* normals,
+    const size_t nfaces,
+    const glm::uvec3* idx )
 {
+  reset();
+  
+  if ( nvtx == 0 )  return true;  
+
+  if ( vtx != nullptr ) 
+  {
+    glGenVertexArrays( 1, &vao_id );
+    glBindVertexArray( vao_id );
+
+    glGenBuffers( 1, &vbo_ids[0] );
+    glBindBuffer( GL_ARRAY_BUFFER, vbo_ids[0] );
+    glBufferData( GL_ARRAY_BUFFER, nvtx * sizeof( vec3 ), value_ptr(vtx[0]),
+                  GL_STATIC_DRAW );
+    glVertexAttribPointer( 0, 3, GL_FLOAT, GL_FALSE, 0, NULL );
+    glEnableVertexAttribArray( 0 );
+    _nvtx = nvtx;
+  }
+  else return false;
+
+  if ( normals != nullptr ) 
+  {
+    glGenBuffers( 1, &vbo_ids[1] );
+    glBindBuffer( GL_ARRAY_BUFFER, vbo_ids[1] );
+    glBufferData( GL_ARRAY_BUFFER, nvtx * sizeof( vec3 ), value_ptr(normals[0]),
+                  GL_STATIC_DRAW );
+    glVertexAttribPointer( 1, 3, GL_FLOAT, GL_FALSE, 0, NULL );
+    glEnableVertexAttribArray( 1 );
+  }
+
+  if ( uvs != nullptr ) 
+  {
+    glGenBuffers( 1, &vbo_ids[2] );
+    glBindBuffer( GL_ARRAY_BUFFER, vbo_ids[2] );
+    glBufferData( GL_ARRAY_BUFFER, nvtx * sizeof( vec2 ), value_ptr(uvs[0]),
+                  GL_STATIC_DRAW );
+    glVertexAttribPointer( 2, 2, GL_FLOAT, GL_FALSE, 0, NULL );
+    glEnableVertexAttribArray( 2 );
+  }
+
+  if (nfaces > 0)
+  {
+    glGenBuffers(1, &vbo_ids[3]);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, vbo_ids[3]);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, nfaces * sizeof(uvec3), value_ptr(idx[0]), GL_STATIC_DRAW);
+    _nfaces = nfaces;
+  }
+
+  return true;
 }
 
-/*void gl_utils::program::reset()
+void gl_utils::RenderProgram::reset()
 {
    if ( id != -1 ) glDeleteProgram( id );
    id = -1;
 }
 
-bool gl_utils::program::load( const char* vertex_file_path, const char* fragment_file_path )
+bool gl_utils::RenderProgram::load(const char* fragment_file_path,  const char* vertex_file_path )
 {
    // Create the shaders
    GLuint VertexShaderID = glCreateShader( GL_VERTEX_SHADER );
@@ -198,7 +266,7 @@ bool gl_utils::program::load( const char* vertex_file_path, const char* fragment
    return id != -1;
 }
 
-bool gl_utils::program::activate()
+bool gl_utils::RenderProgram::activate()
 {
    if ( id != -1 )
    {
@@ -208,85 +276,41 @@ bool gl_utils::program::activate()
    return false;
 }
 
-GLint gl_utils::program::getUniform( const char* uniformName )
+GLint gl_utils::RenderProgram::getUniform( const char* uniformName )
 {
    if ( id != -1 )
    {
       return glGetUniformLocation( id, uniformName );
    }
    return -1;
-}*/
-
-/*bool gl_utils::renderBuffer::create( size_t nAttachments, const glm::ivec2 isz, const bool depth )
-{
-   if ( nAttachments >= GL_MAX_COLOR_ATTACHMENTS ) return false;
-
-   sz = isz;
-
-   // The framebuffer, which regroups 0, 1, or more textures, and 0 or 1 depth buffer.
-   glGenFramebuffers( 1, &id );
-   glBindFramebuffer( GL_FRAMEBUFFER, id );
-
-   // The texture we're going to render to
-   attachIds.resize( nAttachments );
-   for ( size_t a = 0; a < nAttachments; ++a )
-   {
-      GLuint renderedTexture;
-      glGenTextures( 1, &renderedTexture );
-
-      // "Bind" the newly created texture : all future texture functions will modify this texture
-      glBindTexture( GL_TEXTURE_2D, renderedTexture );
-
-      // Give an empty image to OpenGL ( the last "0" means "empty" )
-      glTexImage2D( GL_TEXTURE_2D, 0, GL_RGBA, sz.x, sz.y, 0, GL_RGBA, GL_FLOAT, 0 );
-
-      attachIds[a] = renderedTexture;
-   }
-
-   // The depth buffer
-   if ( depth )
-   {
-      glGenTextures( 1, &depthId );
-      glBindTexture( GL_TEXTURE_2D, depthId );
-      glTexImage2D(
-          GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT32F, sz.x, sz.y, 0, GL_DEPTH_COMPONENT, GL_FLOAT, 0 );
-   }
-
-   return true;
 }
 
-void gl_utils::renderBuffer::reset()
+gl_utils::RenderTarget::RenderTarget(const glm::uvec2 isz)
 {
-   if ( quadIds[0] != -1 )
-   {
-      glDeleteBuffers( 2, &quadIds[0] );
-      quadIds[0] = -1;
-   }
+   sz = isz;
+   // The framebuffer, which regroups 0, 1, or more textures, and 0 or 1 depth buffer.
+   glGenFramebuffers( 1, &id );
+}
 
-   if ( depthId != -1 )
-   {
-      glDeleteRenderbuffers( 1, &depthId );
-      depthId = -1;
-   }
-   glDeleteTextures( attachIds.size(), &attachIds[0] );
-   attachIds.clear();
+gl_utils::RenderTarget::~RenderTarget()
+{
    if ( id != -1 )
    {
       glDeleteFramebuffers( 1, &id );
       id = -1;
    }
-   sz = glm::ivec2( 0, 0 );
 }
 
-bool gl_utils::renderBuffer::bind()
+bool gl_utils::RenderTarget::bind(const size_t natts, GLuint* atts, GLuint* depth)
 {
-   if ( id == -1 ) return false;
+   if ( (natts==0) || (atts==nullptr)) return false;
+
    glBindFramebuffer( GL_DRAW_FRAMEBUFFER, id );
 
-   GLenum DrawBuffers[attachIds.size()];
-   for ( size_t a = 0; a < attachIds.size(); ++a )
+   GLenum DrawBuffers[natts];
+   for ( size_t a = 0; a < natts; ++a )
    {
-      GLuint renderedTexture = attachIds[a];
+      GLuint renderedTexture = atts[a];
 
       glBindTexture( GL_TEXTURE_2D, renderedTexture );
       // Poor filtering
@@ -298,113 +322,25 @@ bool gl_utils::renderBuffer::bind()
       glFramebufferTexture( GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0 + a, renderedTexture, 0 );
 
       DrawBuffers[a] = GL_COLOR_ATTACHMENT0 + a;
+      glBindTexture( GL_TEXTURE_2D, 0 );
    }
 
    // The depth buffer
-   if ( depthId != -1 )
+   if ( depth != nullptr )
    {
-      glBindTexture( GL_TEXTURE_2D, depthId );
+      glBindTexture( GL_TEXTURE_2D, *depth );
       glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST );
       glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST );
       glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
       glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
-      glFramebufferTexture( GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, depthId, 0 );
+      glFramebufferTexture( GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, *depth, 0 );
+      glBindTexture( GL_TEXTURE_2D, 0 );
    }
 
-   glDrawBuffers( attachIds.size(), &DrawBuffers[0] );
+   glDrawBuffers( natts, &DrawBuffers[0] );
 
    // Always check that our framebuffer is ok
    if ( glCheckFramebufferStatus( GL_FRAMEBUFFER ) != GL_FRAMEBUFFER_COMPLETE ) return false;
 
    return true;
 }
-
-bool gl_utils::renderBuffer::draw()
-{
-   if ( !bind() ) return false;
-
-   glDisable( GL_BLEND );
-   glDisable( GL_SCISSOR_TEST );
-
-   glColorMask( GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE );
-
-   // draw rect
-   static const vec3 g_quad_vertex[6] = {vec3( -1.0f, -1.0f, 0.0f ),
-                                         vec3( 1.0f, -1.0f, 0.0f ),
-                                         vec3( -1.0f, 1.0f, 0.0f ),
-                                         vec3( -1.0f, 1.0f, 0.0f ),
-                                         vec3( 1.0f, -1.0f, 0.0f ),
-                                         vec3( 1.0f, 1.0f, 0.0f )};
-   static const vec2 g_quad_uv[6] = {vec2( 0.0f, 1.0f ),
-                                     vec2( 1.0f, 0.0f ),
-                                     vec2( 0.0f, 1.0f ),
-                                     vec2( 0.0f, 1.0f ),
-                                     vec2( 1.0f, 0.0f ),
-                                     vec2( 1.0f, 1.0f )};
-
-   if ( quadIds[0] == -1 )
-   {
-      glGenBuffers( 2, &quadIds[0] );
-
-      glBindBuffer( GL_ARRAY_BUFFER, quadIds[0] );
-      glBufferData(
-          GL_ARRAY_BUFFER, sizeof( g_quad_vertex ), value_ptr( g_quad_vertex[0] ), GL_STATIC_DRAW );
-
-      glBindBuffer( GL_ARRAY_BUFFER, quadIds[1] );
-      glBufferData(
-          GL_ARRAY_BUFFER, sizeof( g_quad_uv ), value_ptr( g_quad_uv[0] ), GL_STATIC_DRAW );
-   }
-
-   // 1rst attribute buffer : vertices
-   glEnableVertexAttribArray( 0 );
-   glBindBuffer( GL_ARRAY_BUFFER, quadIds[0] );
-   glVertexAttribPointer(
-       0,  // attribute 0. No particular reason for 0, but must match the layout in the shader.
-       3,  // size
-       GL_FLOAT,  // type
-       GL_FALSE,  // normalized?
-       0,         // stride
-       (void*)0   // array buffer offset
-   );
-
-   glEnableVertexAttribArray( 1 );
-   glBindBuffer( GL_ARRAY_BUFFER, quadIds[1] );
-   glVertexAttribPointer(
-       1,         // attribute
-       2,         // size
-       GL_FLOAT,  // type
-       GL_FALSE,  // normalized?
-       0,         // stride
-       (void*)0   // array buffer offset
-   );
-
-   // Draw the triangles !
-   glDrawArrays( GL_TRIANGLES, 0, 6 );  // 2*3 indices starting at 0 -> 2 triangles
-
-   glDisableVertexAttribArray( 0 );
-   glDisableVertexAttribArray( 1 );
-}
-
-bool gl_utils::renderBuffer::read( float* buff, const size_t buffSz, size_t attachement )
-{
-   if ( ( id == -1 ) || ( attachement >= attachIds.size() ) || ( attachIds[attachement] == -1 ) )
-      return false;
-
-   glNamedFramebufferReadBuffer( id, GL_COLOR_ATTACHMENT0 + attachement );
-   glReadnPixels(
-       0, 0, sz.x, sz.y, GL_RGBA, GL_FLOAT, buffSz * sizeof( float ), (GLvoid*)buff );
-
-   return true;
-}
-
-bool gl_utils::renderBuffer::readDepth( float* buff, const size_t buffSz )
-{
-   if ( ( id == -1 ) || ( depthId == -1 ) ) return false;
-
-   glNamedFramebufferReadBuffer( id, GL_DEPTH_ATTACHMENT );
-   glReadnPixels(
-       0, 0, sz.x, sz.y, GL_RGBA, GL_FLOAT, buffSz * sizeof( float ), (GLvoid*)buff );
-
-   return true;
-}
-*/

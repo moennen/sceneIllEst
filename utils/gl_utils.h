@@ -14,12 +14,14 @@
 #ifdef _WIN32
 #include <windows.h>
 #endif
+#include <GL/glew.h>
 #include <GL/gl.h>
 #endif
 
 #include <glm/glm.hpp>
 
 #include <vector>
+#include <array>
 
 namespace gl_utils
 {
@@ -37,6 +39,7 @@ struct Texture final
 {
    Texture() : id( -1 ), sz( 0u, 0u ) {}
    Texture( const glm::uvec2 size ) : id( -1 ), sz( 0u, 0u ) { create( size ); }
+   Texture( GLuint i, glm::uvec2 size ) : id( i ), sz( size ) {}
    ~Texture() { reset(); }
 
    bool create( const glm::uvec2 size );
@@ -61,37 +64,40 @@ bool readbackTexture( const Texture<fmt>&, unsigned char* );
 
 struct TriMeshBuffer final
 {
-   TriMeshBuffer();
    ~TriMeshBuffer() { reset(); }
 
    bool load(
-       const size_t nb,
-       const size_t* idx,
+       const size_t nvtx,
        const glm::vec3* vtx,
        const glm::vec2* uvs,
-       const glm::vec3* normals );
+       const glm::vec3* normals,
+       const size_t nfaces,
+       const glm::uvec3*idx );
 
    void draw();
-
    void reset();
 
-   GLuint id;
+   size_t _nvtx = 0;
+   size_t _nfaces = 0;
+
+   GLuint vao_id = -1;
+   std::array<GLuint,4> vbo_ids = {{-1,-1,-1,-1}};
 };
 
 bool loadTriangleMesh(
     const char* filename,
-    std::vector<size_t>& idx,
+    std::vector<glm::uvec3>& idx,
     std::vector<glm::vec3>& vtx,
     std::vector<glm::vec2>& uvs,
-    std::vector<glm::vec3> normals );
+    std::vector<glm::vec3>& normals );
 
-/*
-struct renderProgram final
+
+struct RenderProgram final
 {
-   program() : id( -1 ) {}
-   ~program() { reset(); }
+   RenderProgram() : id( -1 ) {}
+   ~RenderProgram() { reset(); }
 
-   bool load( const char* v_shader_path, const char* f_shader_path );
+   bool load( const char* f_shader_path, const char* v_shader_path = nullptr  );
    void reset();
 
    bool activate();
@@ -99,30 +105,19 @@ struct renderProgram final
 
    GLuint id;
 };
-*/
 
-/*struct RenderTarget final
+struct RenderTarget final
 {
-   renderBuffer() : id( -1 ), depthId( -1 ), sz( 0, 0 ), quadIds{-1, -1} {}
-   ~renderBuffer() { reset(); }
+   RenderTarget(const glm::uvec2 sz);
+   ~RenderTarget();
 
-   bool create( size_t nAttachments, const glm::ivec2 sz, const bool depth = false );
-   void reset();
-
-   glm::ivec2 size() const { return sz; }
-
-   bool bind();
-   bool drawTextures(const size_t nb, const textureBuffer3x32FP*, const );
-   bool read( float* buff, const size_t buffSz, size_t attachement = 0 );
-   bool readDepth( float* buff, const size_t buffSz );
-
+   bool bind( size_t nbAtt, GLuint *atts, GLuint *depth=nullptr );
+   void unbind() {glBindFramebuffer(GL_FRAMEBUFFER, 0); glBindTexture( GL_TEXTURE_2D, 0 );}
+   
    GLuint id;
-   GLuint depthId;
-   std::vector<GLuint> attachIds;
-   glm::ivec2 sz;
+   glm::uvec2 sz;
+};
 
-   GLuint quadIds[2];
-};*/
 }
 
 #endif  // _UTILS_GL_UTILS_H

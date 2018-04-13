@@ -72,22 +72,21 @@ void FaceDetector::Detector::getFaces( cv::Mat& cvimg, std::vector<glm::vec4>& f
    assign_image( img, cv_image<rgb_pixel>( cvimg ) );
 
    // upsample the image to detect low res faces
+   // TODO : downscale the detected faces 
    // while ( img.size() < 2048 * 2048 ) pyramid_up( img );
-   // while ( img.size() < 512 * 512 ) pyramid_up( img );
-
+   
    // run the model
    auto dets = _net( img );
-
-   std::cout << "Face detected : " << dets.size() << std::endl;
 
    // transform from dlib rectangle to vec4 roi
    faces.reserve( dets.size() );
    for ( size_t i = 0; i < dets.size(); ++i )
    {
       const auto faceRect = dets[i].rect;
-      std::cout << "FaceRect : " << faceRect.left() << "," << faceRect.top() << ","
-                << faceRect.right() << "," << faceRect.bottom() << std::endl;
-      faces.emplace_back( faceRect.left(), faceRect.top(), faceRect.right(), faceRect.bottom() );
+      const glm::vec2 faceSz(
+          faceRect.right() - faceRect.left(), faceRect.bottom() - faceRect.top() );
+      faces.emplace_back(
+          faceRect.left(), faceRect.top(), faceRect.right(), faceRect.bottom() + 0.1f * faceSz.y );
    }
 }
 

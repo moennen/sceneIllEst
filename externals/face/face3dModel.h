@@ -8,12 +8,28 @@
 #define _FACE_FACE3DMODEL_H
 
 
-class Face3dModel {
+class Face3dModel final
+{
 
 public :
-   Face3dModel();
+   Face3dModel( const char* faceModel );
    virtual ~Face3dModel();
 
+
+   
+
+
+   bool getMeshFromParams( const double* faceParams,
+                           std::vector<float> vtx,
+                           std::vector<float> uvs,
+                           std::vector<size_t> tridx ) const;
+
+
+
+
+private:
+   struct MM3DModel;
+   std::unique_ptr<MM3DModel> _modelPtr;
 };
 
 #endif // _FACE_FACE3DMODEL_H

@@ -2,35 +2,33 @@
 
 import argparse
 import time
+import numpy as np
 from scipy.misc import toimage
-from sampleEnvMapShDataset import *
+from sampleBuffDataset import *
 
 
-def test(dataPath, imgDir, imgPath, shOrder, linearCS):
-    dims = [1, 128, 256]
-    img = EnvMapShDataset.loadImg(imgPath, dims[1:3], linearCS)
-    toimage(img[0]).show()
-    rseed = 0  # int(time.time())
-    shDb = EnvMapShDataset(dataPath, imgDir, shOrder, rseed, linearCS)
-    print shDb.nbShCoeffs
-    imgs, coeffs, cparams = shDb.sampleData(dims)
-    print cparams
-    print coeffs[0]
-    toimage(imgs[0]).show()
-    envMap = EnvMapShDataset.generateEnvMap(shOrder, coeffs[0], dims[1:3])
-    print envMap.shape
-    toimage(envMap[0]).show()
+def test(libPath, dataPath, rootPath):
+    batchSz = 10
+    rseed = int(time.time())
+
+    samplerLib = BufferDataSamplerLibrary(libPath)
+    sampler = BufferDataSampler(
+        samplerLib, dataPath, rootPath, np.array([batchSz, 512, 512], dtype=np.float32), rseed)
+    data = sampler.getDataBuffers()
+    for buff in data:
+        print buff.shape
+        toimage(buff[0]).show()
+        toimage(buff[batchSz-1]).show()
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "dbPath", help="path to the EnvMapDataset levelDb path")
+        "libPath", help="path to the dataset sampler library")
     parser.add_argument(
-        "imgDir", help="root directory of the images in the levelDb")
+        "dbPath", help="path to the dataset")
     parser.add_argument(
-        "imgPath", help="path to an image")
-    parser.add_argument("order", help="shOrder")
+        "rootPath", help="root directory of the data")
 
     args = parser.parse_args()
-    test(args.dbPath, args.imgDir, args.imgPath, int(args.order), True)
+    test(args.libPath, args.dbPath, args.rootPath)
