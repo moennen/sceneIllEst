@@ -13,8 +13,9 @@ def test(libPath, dataPath, rootPath):
 
     samplerLib = BufferDataSamplerLibrary(libPath)
     sampler = BufferDataSampler(
-        samplerLib, dataPath, rootPath, np.array([batchSz, 512, 512], dtype=np.float32), rseed)
+        samplerLib, dataPath, rootPath, np.array([batchSz, 256,256, 0.15], dtype=np.float32), rseed)
     data = sampler.getDataBuffers()
+    print len(data)
     for buff in data:
         print buff.shape
         toimage(buff[0]).show()

@@ -1,5 +1,5 @@
 /*! *****************************************************************************
- *   \file libImageLstSampler.cpp
+ *   \file libSampler.cpp
  *   \author moennen
  *   \brief
  *   \date 2018-04-06
@@ -53,7 +53,7 @@ struct Sampler final
          {
             getline( ifs, line );
             const boost::filesystem::path f( rootPath / boost::filesystem::path( line ) );
-            if (boost::filesystem::is_regular_file(f)) _paths.emplace_back( f.string() );
+            if ( boost::filesystem::is_regular_file( f ) ) _paths.emplace_back( f.string() );
          }
          _paths.shrink_to_fit();
       }

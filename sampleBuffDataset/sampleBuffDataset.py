@@ -52,11 +52,13 @@ class BufferDataSampler(object):
         self.buffersDim = np.array([(self.batchSz, buffersDim[i*3], buffersDim[i*3+1], buffersDim[i*3+2])
                                     for i in range(nbBuffers)])
         print self.buffersDim
-        self.buffersData = np.zeros(np.prod(self.buffersDim), dtype=np.float32)
+
         buffersSz = [np.prod(self.buffersDim[i][:]) for i in range(nbBuffers)]
         self.buffersEnd = np.cumsum(buffersSz)
         self.buffersBegin = np.append(0,  self.buffersEnd[0:-1])
 
+        self.buffersData = np.zeros(self.buffersEnd[-1], dtype=np.float32)
+        
         print buffersSz
         print np.prod(self.buffersDim)
         print self.buffersBegin
