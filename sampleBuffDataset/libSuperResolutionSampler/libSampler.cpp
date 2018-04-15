@@ -81,11 +81,8 @@ struct Sampler final
 
       for ( size_t s = 0; s < _sampleSz.x; ++s )
       {
-         TRACE;
          const std::string& iname = _paths[_pathGen( _rng )];
-         cout << "Img : " << iname << endl;
          Mat inputImg = cv_utils::imread32FC3( iname, true );
-         cout << "Img : " << iname << endl;
          ivec2 imgSz( inputImg.cols, inputImg.rows );
 
          // ignore too small samples
@@ -95,7 +92,6 @@ struct Sampler final
             continue;
          }
 
-         TRACE;
          // random rescale
          const float ds =
              mix( 1.0f,
@@ -104,27 +100,21 @@ struct Sampler final
          resize( inputImg, inputImg, Size(), ds, ds, CV_INTER_AREA );
          imgSz = ivec2( inputImg.cols, inputImg.rows );
 
-         TRACE;
          // random translate
          const ivec2 trans(
              std::floor( _transGen( _rng ) * ( imgSz.x - _sampleSz.y ) ),
              std::floor( _transGen( _rng ) * ( imgSz.y - _sampleSz.z ) ) );
 
-         TRACE;
          // crop
-         cout << "crop " << trans.x << " " << trans.y << " | " << imgSz.x << "," << imgSz.y << endl;
          inputImg = inputImg( Rect( trans.x, trans.y, _sampleSz.y, _sampleSz.z ) );
 
-         TRACE;
          // random small blur to remove artifacts
          GaussianBlur( inputImg, inputImg, Size( 3, 3 ), 0.5 * _transGen( _rng ) );
 
-         TRACE;
          // bgr 2 rgb
          Mat sampleImg( _sampleSz.z, _sampleSz.y, CV_32FC3, currBuffHD );
          cvtColor( inputImg, sampleImg, COLOR_BGR2RGB );
 
-         TRACE;
          // downsample / upsample
          Mat sampleDsImg( _sampleSz.z, _sampleSz.y, CV_32FC3, currBuffLD );
          Mat tmpDsImg;
