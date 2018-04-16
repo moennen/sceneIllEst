@@ -22,9 +22,6 @@ sys.path.append(os.path.abspath(
     '/mnt/p4/avila/moennen_wkspce/sceneIllEst/sampleBuffDataset/'))
 from sampleBuffDataset import *
 
-datasetLibraryPath = 
-  '/mnt/p4/avila/moennen_wkspce/sceneIllEst/sampleBuffDataset/libSuperResolutionSampler/libSuperResolutionSampler.so'
-
 # Parameters
 numSteps = 100000
 logStep = 250
@@ -36,6 +33,24 @@ batchSz = 128
 imgSz = [108, 192]
 
 pixMean = [0.5, 0.5, 0.5]
+
+
+class SupResDatasetTF(object):
+
+    __datasetLibraryPath = 
+       '/mnt/p4/avila/moennen_wkspce/sceneIllEst/sampleBuffDataset/libSuperResolutionSampler/libSuperResolutionSampler.so'
+
+    def __init__(self, dbPath, imgRootDir, batchSz, imgSz, scaleFactor, seed):
+        self.__ds = EnvMapShDataset(
+            dbPath, imgRootDir, shOrder, seed, linearCS)
+        self.__params = [batchSz, imgSz[0], imgSz[1], scaleFactor]
+        self.data = tf.data.Dataset.from_generator(self.sample, (tf.float32, tf.float32))
+
+    def sample(self):
+        for i in itertools.count(1):
+            imgGT, imgDS = self.__envMapDb.sampleData(self.__dims)
+            yield (imgGT, imgDS)
+
 
 # logging 
 tf.logging.set_verbosity(tf.logging.INFO)

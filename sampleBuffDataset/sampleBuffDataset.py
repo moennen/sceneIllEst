@@ -1,7 +1,6 @@
 from ctypes import *
 import numpy as np
 
-
 class BufferDataSamplerLibrary(object):
 
     def __init__(self, library_path):
