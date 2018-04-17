@@ -1,6 +1,7 @@
 from ctypes import *
 import numpy as np
 
+
 class BufferDataSamplerLibrary(object):
 
     def __init__(self, library_path):
@@ -57,7 +58,7 @@ class BufferDataSampler(object):
         self.buffersBegin = np.append(0,  self.buffersEnd[0:-1])
 
         self.buffersData = np.zeros(self.buffersEnd[-1], dtype=np.float32)
-        
+
         print buffersSz
         print np.prod(self.buffersDim)
         print self.buffersBegin

@@ -82,11 +82,12 @@ struct Sampler final
       for ( size_t s = 0; s < _sampleSz.x; ++s )
       {
          const std::string& iname = _paths[_pathGen( _rng )];
+
          Mat inputImg = cv_utils::imread32FC3( iname, true );
          ivec2 imgSz( inputImg.cols, inputImg.rows );
 
          // ignore too small samples
-         if ( ( imgSz.x < _sampleSz.x ) || ( imgSz.y < _sampleSz.z ) )
+         if ( ( imgSz.x < _sampleSz.y ) || ( imgSz.y < _sampleSz.z ) )
          {
             --s;
             continue;

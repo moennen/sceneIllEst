@@ -8,7 +8,7 @@ import sys
 import time
 import tensorflow as tf
 import itertools
-#from matplotlib import pyplot as plt
+# from matplotlib import pyplot as plt
 from scipy.misc import toimage
 from PIL import Image
 import OpenEXR
@@ -23,80 +23,45 @@ sys.path.append(os.path.abspath(
 from sampleBuffDataset import *
 
 # Parameters
-numSteps = 100000
-logStep = 250
+numSteps = 35000
+logStep = 5
 logTrSteps = 1
 logTsSteps = 1
 
+supResFactor = 0.75
+
 batchSz = 128
+imgSz = [256, 256]
 
-imgSz = [108, 192]
+# logging
+tf.logging.set_verbosity(tf.logging.INFO)
 
-pixMean = [0.5, 0.5, 0.5]
 
+#-----------------------------------------------------------------------------------------------------
+# DATASET
+#-----------------------------------------------------------------------------------------------------
 
 class SupResDatasetTF(object):
 
-    __datasetLibraryPath = 
-       '/mnt/p4/avila/moennen_wkspce/sceneIllEst/sampleBuffDataset/libSuperResolutionSampler/libSuperResolutionSampler.so'
+    __lib = BufferDataSamplerLibrary(
+        "/mnt/p4/avila/moennen_wkspce/sceneIllEst/sampleBuffDataset/libSuperResolutionSampler/libSuperResolutionSampler.so")
 
     def __init__(self, dbPath, imgRootDir, batchSz, imgSz, scaleFactor, seed):
-        self.__ds = EnvMapShDataset(
-            dbPath, imgRootDir, shOrder, seed, linearCS)
-        self.__params = [batchSz, imgSz[0], imgSz[1], scaleFactor]
-        self.data = tf.data.Dataset.from_generator(self.sample, (tf.float32, tf.float32))
+        params = np.array([batchSz, imgSz[0], imgSz[1],
+                           scaleFactor], dtype=np.float32)
+        self.__ds = BufferDataSampler(
+            SupResDatasetTF.__lib, dbPath, imgRootDir, params, seed)
+        self.data = tf.data.Dataset.from_generator(
+            self.sample, (tf.float32, tf.float32))
 
     def sample(self):
         for i in itertools.count(1):
-            imgGT, imgDS = self.__envMapDb.sampleData(self.__dims)
-            yield (imgGT, imgDS)
+            imgHD, imgLD = self.__ds.getDataBuffers()
+            yield (imgHD, imgLD)
 
-
-# logging 
-tf.logging.set_verbosity(tf.logging.INFO)
-
-def showImgs(batch, img_depths):
-
-    n_imgs = len(img_depths)
-
-    if np.sum(img_depths) != batch.shape[3]:
-        raise ValueError()
-
-    batch_im = np.zeros(
-        (batch.shape[0] * batch.shape[1], n_imgs * batch.shape[2], 3))
-
-    for b in range(batch.shape[0]):
-
-        n_offset = 0
-        for n in range(n_imgs):
-
-            im_d = img_depths[n]
-            im = batch[b, :, :, n_offset:n_offset + im_d]
-
-            if im_d > 3:
-                gray = np.mean(im, axis=2)
-                im = np.stack([gray, gray, gray], 2)
-
-            batch_im[b * batch.shape[1]:(b + 1) * batch.shape[1],
-                     n * batch.shape[2]:(n + 1) * batch.shape[2], 0:im_d] = im
-
-            n_offset += im_d
-
-    plt.imshow(batch_im)
-    plt.show()
-
-
-def writeExrRGB(img, output_filename):
-    print img.shape
-    rpix = img[:, :, 0].astype(np.float16).tostring()
-    gpix = img[:, :, 1].astype(np.float16).tostring()
-    bpix = img[:, :, 2].astype(np.float16).tostring()
-    HEADER = OpenEXR.Header(img.shape[1], img.shape[0])
-    half_chan = Imath.Channel(Imath.PixelType(Imath.PixelType.HALF))
-    HEADER['channels'] = dict([(c, half_chan) for c in "RGB"])
-    exr = OpenEXR.OutputFile(output_filename, HEADER)
-    exr.writePixels({'R': rpix, 'G': gpix, 'B': bpix})
-    exr.close()
+#-----------------------------------------------------------------------------------------------------
+# UTILS
+#-----------------------------------------------------------------------------------------------------
 
 
 def loadImgPIL(img_name, imgSz, linearCS):
@@ -127,105 +92,142 @@ def printVarTF(sess):
         print var.eval(sess)
 
 #-----------------------------------------------------------------------------------------------------
+# MODEL
 #-----------------------------------------------------------------------------------------------------
+
 
 def conv_layer(x, filter_size, step, scope, padding='VALID'):
     # tf.random_normal(filter_size))
     initializer = tf.contrib.layers.xavier_initializer()
     layer_w = tf.Variable(initializer(filter_size))
     layer_b = tf.Variable(initializer([filter_size[3]]))
-    layer = tf.nn.conv2d(x, layer_w, strides=[
-        1, step, step, 1], padding=padding)
+    if step > 0:
+        layer = tf.nn.conv2d(x, layer_w, [1, step, step, 1], padding)
+    else:
+        layer = tf.nn.atrous_conv2d(x, layer_w, abs(step), padding)
     layer = tf.nn.bias_add(layer, layer_b)
     layer = tf.nn.relu(layer, name=scope)
     return layer
 
-def supResBaseModel(imgs, outputSz, dropout):
+
+def ms_conv_layer(x, filter_size, scope, padding='SAME'):
+
+    ms_filter_size = [filter_size[0], filter_size[1],
+                      filter_size[3], filter_size[3]]
+
+    with tf.name_scope('ms_0') as scope:
+        ms_0 = conv_layer(x, filter_size, 1, scope, padding)
+    with tf.name_scope('ms_2') as scope:
+        ms_2 = conv_layer(ms_2, ms_filter_size, -2, scope, padding)
+    with tf.name_scope('ms_5') as scope:
+        ms_5 = conv_layer(ms_2, ms_filter_size, -5, scope, padding)
+
+    return tf.concat([ms_0, ms_2, ms_5], 3)
+
+
+def supResBaseModel(imgs):
 
     with tf.variable_scope('SupResBaseModel'):
 
-        # -----> preprocessing
+        # -----> preprocessing : put the pix values in [-1..1]
         with tf.name_scope('preprocess') as scope:
-            img_mean = tf.constant(pixMean, dtype=tf.float32, shape=[
+            img_mean = tf.constant([0.5, 0.5, 0.5], dtype=tf.float32, shape=[
                 1, 1, 1, 3], name='img_mean')
-            layer0 = imgs-img_mean
+            layer = 2.0 * (imgs - img_mean)
         # layer0 = imgs
 
-        # ----> 90x48x32
-        with tf.name_scope('layer1_1') as scope:
-            layer1 = conv_layer(layer0, [7, 7, 3, 32], 2, scope)
-        # ----> 41x20x64
-        with tf.name_scope('layer2_1') as scope:
-            layer2 = conv_layer(layer1, [5, 5, 32, 64], 2, scope)
-        with tf.name_scope('layer2_2') as scope:
-            layer2 = conv_layer(layer2, [5, 5, 64, 96], 1, scope, 'SAME')
-        with tf.name_scope('layer2_2') as scope:
-            layer2 = conv_layer(layer2, [5, 5, 96, 96], 1, scope)
-        # ----> 18x8x128
-        with tf.name_scope('layer3_1') as scope:
-            layer3 = conv_layer(layer2, [3, 3, 96, 128], 2, scope)
-        with tf.name_scope('layer3_2') as scope:
-            layer3 = conv_layer(layer3, [3, 3, 128, 256], 1, scope, 'SAME')
-        # ----> 18x8x128
-        with tf.name_scope('layer4_1') as scope:
-            layer4 = conv_layer(layer3, [3, 3, 256, 256], 1, scope)
-        # ----> 7x2x256
-        with tf.name_scope('layer5_1') as scope:
-            layer5 = conv_layer(layer4, [3, 3, 256, 512], 2, scope)
-        # ----> 1x1x512
-        with tf.name_scope('layer6_1') as scope:
-            layer6 = conv_layer(layer5, [3, 3, 512, 1024], 2, scope)
+        # ---->
+        with tf.name_scope('layer1') as scope:
+            layer = ms_conv_layer(layer, [5, 5, 3, 8], scope)
 
-        #
-        layer6f = tf.contrib.layers.flatten(layer6)
-        initializer = tf.contrib.layers.xavier_initializer()
-        with tf.name_scope('layer7_1') as scope:
-            layer7 = tf.layers.dense(layer6f, 2048, activation=tf.nn.relu, kernel_initializer=initializer,
-                                     bias_initializer=initializer, name=scope)
-            layer7d = tf.layers.dropout(layer7, rate=dropout)
-        with tf.name_scope('layer7_2') as scope:
-            layer7 = tf.layers.dense(layer7d, 1024, activation=tf.nn.relu, kernel_initializer=initializer,
-                                     bias_initializer=initializer, name=scope)
-            layer7d = tf.layers.dropout(layer7, rate=dropout)
-        with tf.name_scope('layer7_2') as scope:
-            layer7 = tf.layers.dense(layer7d, 512, activation=tf.nn.relu, kernel_initializer=initializer,
-                                     bias_initializer=initializer, name=scope)
-            layer7d = tf.layers.dropout(layer7, rate=dropout)
-        with tf.name_scope('layer7_2') as scope:
-            layer7 = tf.layers.dense(layer7d, 256, activation=tf.nn.relu, kernel_initializer=initializer,
-                                     bias_initializer=initializer, name=scope)
-            layer7d = tf.layers.dropout(layer7, rate=dropout)
-        with tf.name_scope('layer7_2') as scope:
-            layer7 = tf.layers.dense(layer7d, 128, activation=tf.nn.relu, kernel_initializer=initializer,
-                                     bias_initializer=initializer, name=scope)
-            layer7d = tf.layers.dropout(layer7, rate=dropout)
-        with tf.name_scope('layer8_1') as scope:
-            outputLayer = tf.layers.dense(layer7d, outputSz, kernel_initializer=initializer,
-                                          bias_initializer=initializer, name=scope)
+        # ---->
+        with tf.name_scope('layer2') as scope:
+            layer = ms_conv_layer(layer, [5, 5, 24, 12], scope)
 
-        return outputLayer
+        # ---->
+        with tf.name_scope('layer3') as scope:
+            layer = ms_conv_layer(layer, [5, 5, 36, 18], scope)
 
-def supResModel(imgs, outputSz, dropout):
+        # ---->
+        with tf.name_scope('layer4') as scope:
+            layer = ms_conv_layer(layer, [5, 5, 54, 27], scope)
 
-    return supResBaseModel(imgs, outputSz, dropout)
+        # ---->
+        with tf.name_scope('layer5') as scope:
+            layer = ms_conv_layer(layer, [5, 5, 81, 46], scope)
+
+        # ---->
+        with tf.name_scope('layer6') as scope:
+            layer = ms_conv_layer(layer, [5, 5, 138, 69], scope)
+
+        # ---->
+        with tf.name_scope('layer7') as scope:
+            layer = conv_layer(layer, [3, 3, 207, 3], 1, scope, 'SAME')
+
+        return layer
+
+
+def supResModel(imgs):
+
+    return supResBaseModel(imgs)
 
 #-----------------------------------------------------------------------------------------------------
+# UNIT TESTS
 #-----------------------------------------------------------------------------------------------------
 
-def trainSupResModel(modelPath, dataSamplerLib, imgRootDir, trainPath, testPath):
+
+def tstDataset(imgRootDir, trainPath):
+
+    # rseed = int(time.time())
+    rseed = 20160704
+    print "SEED : " + str(rseed)
+
+    tf.set_random_seed(rseed)
+
+    trDs = SupResDatasetTF(trainPath, imgRootDir, batchSz,
+                           imgSz, supResFactor, rseed)
+
+    dsIt = tf.data.Iterator.from_structure(
+        trDs.data.output_types, trDs.data.output_shapes)
+    dsView = dsIt.get_next()
+
+    trInit = dsIt.make_initializer(trDs.data)
+
+    with tf.Session() as sess:
+
+        sess.run(trInit)
+
+        for step in range(1):
+
+            imgHD, imgLD = sess.run(dsView)
+
+            toimage(imgHD[0]).show()
+            toimage(imgLD[0]).show()
+
+            toimage(imgHD[-1]).show()
+            toimage(imgLD[-1]).show()
+
+
+#-----------------------------------------------------------------------------------------------------
+# TRAINING
+#-----------------------------------------------------------------------------------------------------
+
+
+def trainSupResModel(modelPath, imgRootDir, trainPath, testPath):
 
     tbLogsPath = modelPath + "/tbLogs"
     modelFilename = modelPath + "/tfData"
 
-    #rseed = int(time.time())
+    # rseed = int(time.time())
     rseed = 20160704
-    print "SEED : " + rseed
+    print "SEED : " + str(rseed)
 
     tf.set_random_seed(rseed)
 
-    dsParams = [batchSz, imgSz[0], imgSz[1], supResFactor ]
-    trDs = BufferDataSamplerLibrary( dataSamplerLib, trainPath, imgRootDir, dsParams, rseed )
-    tsDs = BufferDataSamplerLibrary( dataSamplerLib, testPath, imgRootDir, dsParams, rseed )
+    trDs = SupResDatasetTF(trainPath, imgRootDir, batchSz,
+                           imgSz, supResFactor, rseed)
+    tsDs = SupResDatasetTF(testPath, imgRootDir, batchSz,
+                           imgSz, supResFactor, rseed)
 
     inputShape = [batchSz, imgSz[0], imgSz[1], 3]
     outputShape = [batchSz, imgSz[0], imgSz[1], 3]
@@ -238,42 +240,26 @@ def trainSupResModel(modelPath, dataSamplerLib, imgRootDir, trainPath, testPath)
     tsInit = dsIt.make_initializer(tsDs.data)
 
     # Input
-    inputView = tf.placeholder(tf.float32, shape=inputShape, name="input_view")
-    outputSh = tf.placeholder(tf.float32, shape=outputShape, name="output_sh")
-    dropoutProb = tf.placeholder(tf.float32)  # dropout (keep probability)
-
-    # NormoutputSh
-    outputShMean = tf.constant(shCoeffsMean, dtype=tf.float32, shape=[
-        1, 1, 1, nbShCoeffs], name='shCoeffs_mean')
-    outputShStd = tf.constant(shCoeffsStd, dtype=tf.float32, shape=[
-        1, 1, 1, nbShCoeffs], name='shCoeffs_mean')
-    outputShNorm = (outputSh-outputShMean) / outputShStd
-    # outputShNorm = (outputSh-outputShMean)
-    # outputShNorm=outputSh
-
-    # Test
-    # outputSh2 = tf.placeholder(
-    #    tf.float32, shape=outputShape, name="output_sh2")
-    # outStd = tf.sqrt(tf.reduce_mean(
-    #    tf.square(tf.subtract(outputSh2, outputShNorm))))
+    inputLD = tf.placeholder(
+        tf.float32, shape=inputShape, name="input_ld")
+    outputHD = tf.placeholder(
+        tf.float32, shape=outputShape, name="output_hd")
 
     # Graph
-    computedSh = envMapShModel(inputView, nbShCoeffs, dropoutProb)
+    computedHDRes = supResModel(inputLD)
+
+    outputHDRes = tf.subtract(outputHD, inputLD)
 
     # Optimizer
-    costAll = tf.reduce_mean(
-        tf.square(tf.subtract(computedSh, outputSh)), 0)
-    # tf.square(tf.subtract(computedSh, outputShNorm)), 0)
-    accuracyAll = tf.reduce_mean(
-        tf.square(tf.subtract(computedSh, outputSh)), 0)
-    # tf.square(tf.subtract(computedSh*outputShStd+outputShMean,
-    #                      outputSh)), 0)
-    # tf.square(tf.subtract(computedSh+outputShMean, outputSh)), 0)
-    cost = tf.reduce_mean(costAll)
-    accuracy = tf.reduce_mean(accuracyAll)
+
+    # TODO : set a cost function that is adaptive according to the ground truth residual
+    cost = tf.reduce_mean(tf.square(tf.subtract(computedHDRes, outputHDRes)))
+
     globalStep = tf.Variable(0, trainable=False)
+
     learningRate = tf.train.polynomial_decay(0.001, globalStep, numSteps, 0.0,
                                              power=0.7)
+
     optEngine = tf.train.AdamOptimizer(learning_rate=learningRate)
     optimizer = optEngine.minimize(cost, global_step=globalStep)
 
@@ -293,19 +279,6 @@ def trainSupResModel(modelPath, dataSamplerLib, imgRootDir, trainPath, testPath)
     tf.summary.scalar("test_loss", cost)
     test_summary_op = tf.summary.merge_all()
 
-    # Metrics : Mean
-    meanOutputSh, meanOutputShUpdateOp = tf.contrib.metrics.streaming_mean_tensor(
-        outputSh)
-
-    currentMeanOutputSh = tf.placeholder(
-        tf.float32, shape=outputShape, name="output_sh")
-    outStdAll = tf.reshape(tf.reduce_mean(
-        currentMeanOutputSh, 0), [1, nbShCoeffs])
-    outStdAll = tf.tile(outStdAll, [batchSz, 1])
-    outStdAll = tf.sqrt(tf.reduce_mean(
-        tf.square(tf.subtract(outStdAll, outputSh)), 0))
-    outStd = tf.reduce_mean(outStdAll)
-
     # Params Initializer
     varInit = tf.global_variables_initializer()
 
@@ -322,82 +295,54 @@ def trainSupResModel(modelPath, dataSamplerLib, imgRootDir, trainPath, testPath)
         try:
             persistency.restore(sess, tf.train.latest_checkpoint(modelPath))
         except:
-            print "Cannot load model:", sys.exc_info()[0]
+            print "ERROR Loading model @ ", sys.exc_info()[0]
 
         sess.run(trInit)
 
         # get each element of the training dataset until the end is reached
         for step in range(globalStep.eval(sess), numSteps):
 
-            # initialize the iterator on the training data
-
             # Get the next training batch
-            coeffs, imgs = sess.run(dsView)
+            imgHD, imgLD = sess.run(dsView)
 
             # Run optimization op (backprop)
-            _, currMean = sess.run([optimizer, meanOutputShUpdateOp], feed_dict={dropoutProb: 0.2,
-                                                                                 inputView: imgs,
-                                                                                 outputSh: coeffs})
+            sess.run(optimizer, feed_dict={inputLD: imgLD, outputHD: imgHD})
+
             # Log
             if step % logStep == 0:
 
                 # summary
-                summary = sess.run(merged_summary_op, feed_dict={dropoutProb: 0.0,
-                                                                 inputView: imgs,
-                                                                 outputSh: coeffs})
+                summary = sess.run(merged_summary_op, feed_dict={
+                                   inputLD: imgLD, outputHD: imgHD})
                 summary_writer.add_summary(summary, globalStep.eval(sess))
 
                 # Sample train accuracy
                 sess.run(trInit)
-                trAccuracy = 0
-                trStd = 0
+                trCost = 0
                 for logTrStep in range(logTrSteps):
-                    coeffs, imgs = sess.run(dsView)
-                    trAcc = sess.run(accuracy, feed_dict={dropoutProb: 0.0,
-                                                          inputView: imgs,
-                                                          outputSh:  coeffs})
-                    trAccuracy += trAcc
-                    # trAccuracyAll += trAccAll
-                    # coeffs2, imgs2 = sess.run(dsView)
-                    # trStd += sess.run(outStd, feed_dict={outputSh:  coeffs,
-                    #                                     outputSh2: coeffs2})
+                    imgHD, imgLD = sess.run(dsView)
+                    trC = sess.run(
+                        cost, feed_dict={inputLD: imgLD, outputHD: imgHD})
+                    trCost += trC
 
-                # print "------------------------------------------"
-                # print imgs
-                # print "------------------------------------------"
-                # print coeffs
-                # print "------------------------------------------"
-                # print computedSh.eval(feed_dict={dropoutProb: 0.0,
-                #                                 inputView: imgs,
-                #                                 outputSh:  coeffs})
-                # print "------------------------------------------"
-
-            # Sample test accuracy
+                # Sample test accuracy
                 sess.run(tsInit)
-                tsAccuracy = 0
-                stdAccuracy = 0
+                tsCost = 0
                 for logTsStep in range(logTsSteps):
-                    coeffs, imgs = sess.run(dsView)
-                    tsAcc, stdAcc = sess.run([accuracy, outStd], feed_dict={dropoutProb: 0.0,
-                                                                            inputView: imgs,
-                                                                            outputSh:  coeffs,
-                                                                            currentMeanOutputSh: currMean})
-                    tsAccuracy += tsAcc
-                    stdAccuracy += stdAcc
+                    imgHD, imgLD = sess.run(dsView)
+                    tsC = sess.run(
+                        cost, feed_dict={inputLD: imgLD, outputHD: imgHD})
+                    tsCost += tsC
 
                 # summary
-                summary = sess.run(test_summary_op, feed_dict={dropoutProb: 0.0,
-                                                               inputView: imgs,
-                                                               outputSh: coeffs})
+                summary = sess.run(test_summary_op, feed_dict={
+                                   inputLD: imgLD, outputHD: imgHD})
                 summary_writer.add_summary(summary, globalStep.eval(sess))
 
                 print("{:08d}".format(globalStep.eval(sess)) +
                       " | lr = " + "{:.8f}".format(learningRate.eval()) +
-                      " | trAcc  = " + "{:.5f}".format(trAccuracy/logTrSteps) +
-                      " | tsAcc  = " + "{:.5f}".format(tsAccuracy/logTsSteps) +
-                      " | stdAcc  = " + "{:.5f}".format(stdAccuracy/logTsSteps))
-                # print(" trAcc :")
-                # print trAccAll
+                      " | trCost = " + "{:.5f}".format(trCost/logTrSteps) +
+                      " | tsCost = " + "{:.5f}".format(tsCost/logTsSteps))
 
                 # step
                 persistency.save(sess, modelFilename, global_step=globalStep)
@@ -408,27 +353,29 @@ def trainSupResModel(modelPath, dataSamplerLib, imgRootDir, trainPath, testPath)
 #-----------------------------------------------------------------------------------------------------
 #-----------------------------------------------------------------------------------------------------
 
+
 if __name__ == "__main__":
 
     #------------------------------------------------------------------------------------------------
 
     parser = argparse.ArgumentParser()
-    
+
     parser.add_argument("modelPath", help="path to the trainedModel")
-    
+
     parser.add_argument(
         "imgRootDir", help="root directory to the images in the datasets")
-    
+
     parser.add_argument(
         "trainLstPath", help="path to the training dataset (list of images path relative to root dir)")
 
     parser.add_argument(
         "testLstPath", help="path to the testing dataset (list of images path relative to root dir)")
-    
-    args = parser.parse_args()
 
+    args = parser.parse_args()
 
     #------------------------------------------------------------------------------------------------
 
-    trainSupResModel(args.modelPath, datasetLibraryPath, args.imgRootDir, args.trainLstPath,
-                     args.testLstPath)
+    # tstDataset(args.imgRootDir, args.trainLstPath)
+
+    trainSupResModel(args.modelPath, args.imgRootDir,
+                     args.trainLstPath, args.testLstPath)
