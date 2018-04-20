@@ -17,6 +17,54 @@
 
 using namespace glm;
 
+namespace
+{
+GLuint createShader( const char* shader_file_path, const GLenum shaderType )
+{
+   GLuint shaderID = -1;
+
+   if ( shader_file_path )
+   {
+      // Read the Vertex Shader code from the file
+      std::string shaderCode;
+      std::ifstream shaderStream( shader_file_path, std::ios::in );
+      if ( shaderStream.is_open() )
+      {
+         std::string strLine = "";
+         while ( getline( shaderStream, strLine ) ) shaderCode += "\n" + strLine;
+         shaderStream.close();
+      }
+      else
+      {
+         std::cerr << "Cannot open shader : " << shader_file_path << std::endl;
+         return shaderID;
+      }
+
+      shaderID = glCreateShader( shaderType );
+
+      char const* sourcePtr = shaderCode.c_str();
+      glShaderSource( shaderID, 1, &sourcePtr, NULL );
+      glCompileShader( shaderID );
+
+      GLint result = GL_FALSE;
+      int infoLogLength;
+
+      glGetShaderiv( shaderID, GL_COMPILE_STATUS, &result );
+      glGetShaderiv( shaderID, GL_INFO_LOG_LENGTH, &infoLogLength );
+      if ( infoLogLength > 0 )
+      {
+         std::string errorMessage( infoLogLength, '\0' );
+         glGetShaderInfoLog( shaderID, infoLogLength, NULL, &errorMessage[0] );
+         std::cerr << "Error compiling " << shader_file_path << " : " << errorMessage << std::endl;
+         glDeleteShader( shaderID );
+         return -1;
+      }
+   }
+
+   return shaderID;
+}
+}
+
 bool gl_utils::loadTriangleMesh(
     const char* filename,
     std::vector<glm::uvec3>& idx,
@@ -74,34 +122,43 @@ bool gl_utils::loadTriangleMesh(
       {
          const auto& face = mesh->mFaces[i];
          // Assume the model has only triangles.
-         idx.emplace_back(face.mIndices[0], face.mIndices[1], face.mIndices[2] );
+         idx.emplace_back( face.mIndices[0], face.mIndices[1], face.mIndices[2] );
       }
    }
+
+   return true;
 }
 
 void gl_utils::TriMeshBuffer::reset()
 {
-    if (vao_id != -1)  glDeleteVertexArrays(1, &vao_id);
-    vao_id = -1;
+   if ( vao_id != -1 ) glDeleteVertexArrays( 1, &vao_id );
+   vao_id = -1;
 
-    for (auto& vboid : vbo_ids)
-    {
-      if (vboid != -1 ) glDeleteBuffers(1, &vboid); 
+   for ( auto& vboid : vbo_ids )
+   {
+      if ( vboid != -1 ) glDeleteBuffers( 1, &vboid );
       vboid = -1;
-    }
+   }
 
-    _nvtx = 0;
-    _nfaces = 0;
+   _nvtx = 0;
+   _nfaces = 0;
 }
 
-void gl_utils::TriMeshBuffer::draw()
+void gl_utils::TriMeshBuffer::draw( const bool wireframe ) const
 {
-   if (!_nvtx) return;
+   if ( !_nvtx ) return;
    glBindVertexArray( vao_id );
+   if ( wireframe ) glPolygonMode( GL_FRONT_AND_BACK, GL_LINE );
    if ( _nfaces )
-      glDrawElements( GL_TRIANGLES, _nfaces * 3, GL_UNSIGNED_INT, (void*)0 );
+   {
+      glBindBuffer( GL_ELEMENT_ARRAY_BUFFER, vbo_ids[3] );
+      glDrawElements( GL_TRIANGLES, _nfaces * sizeof( uvec3 ), GL_UNSIGNED_INT, (void*)0 );
+      glBindBuffer( GL_ELEMENT_ARRAY_BUFFER, 0 );
+   }
    else
       glDrawArrays( GL_TRIANGLES, 0, _nvtx );
+   if ( wireframe ) glPolygonMode( GL_FRONT_AND_BACK, GL_FILL );
+   glBindVertexArray( 0 );
 }
 
 bool gl_utils::TriMeshBuffer::load(
@@ -112,165 +169,119 @@ bool gl_utils::TriMeshBuffer::load(
     const size_t nfaces,
     const glm::uvec3* idx )
 {
-  reset();
-  
-  if ( nvtx == 0 )  return true;  
+   // reset();
 
-  if ( vtx != nullptr ) 
-  {
-    glGenVertexArrays( 1, &vao_id );
-    glBindVertexArray( vao_id );
+   if ( nvtx == 0 ) return true;
 
-    glGenBuffers( 1, &vbo_ids[0] );
-    glBindBuffer( GL_ARRAY_BUFFER, vbo_ids[0] );
-    glBufferData( GL_ARRAY_BUFFER, nvtx * sizeof( vec3 ), value_ptr(vtx[0]),
-                  GL_STATIC_DRAW );
-    glVertexAttribPointer( 0, 3, GL_FLOAT, GL_FALSE, 0, NULL );
-    glEnableVertexAttribArray( 0 );
-    _nvtx = nvtx;
-  }
-  else return false;
+   if ( vtx != nullptr )
+   {
+      glGenVertexArrays( 1, &vao_id );
+      glBindVertexArray( vao_id );
+      glGenBuffers( 1, &vbo_ids[0] );
+      glBindBuffer( GL_ARRAY_BUFFER, vbo_ids[0] );
+      glBufferData( GL_ARRAY_BUFFER, nvtx * sizeof( vec3 ), value_ptr( vtx[0] ), GL_STATIC_DRAW );
+      glVertexAttribPointer( 0, 3, GL_FLOAT, GL_FALSE, 0, NULL );
+      glEnableVertexAttribArray( 0 );
+      glBindBuffer( GL_ARRAY_BUFFER, 0 );
+      _nvtx = nvtx;
+   }
+   else
+      return false;
 
-  if ( normals != nullptr ) 
-  {
-    glGenBuffers( 1, &vbo_ids[1] );
-    glBindBuffer( GL_ARRAY_BUFFER, vbo_ids[1] );
-    glBufferData( GL_ARRAY_BUFFER, nvtx * sizeof( vec3 ), value_ptr(normals[0]),
-                  GL_STATIC_DRAW );
-    glVertexAttribPointer( 1, 3, GL_FLOAT, GL_FALSE, 0, NULL );
-    glEnableVertexAttribArray( 1 );
-  }
+   if ( normals != nullptr )
+   {
+      glGenBuffers( 1, &vbo_ids[1] );
+      glBindBuffer( GL_ARRAY_BUFFER, vbo_ids[1] );
+      glBufferData(
+          GL_ARRAY_BUFFER, nvtx * sizeof( vec3 ), value_ptr( normals[0] ), GL_STATIC_DRAW );
+      glVertexAttribPointer( 1, 3, GL_FLOAT, GL_FALSE, 0, NULL );
+      glEnableVertexAttribArray( 1 );
+      glBindBuffer( GL_ARRAY_BUFFER, 0 );
+   }
 
-  if ( uvs != nullptr ) 
-  {
-    glGenBuffers( 1, &vbo_ids[2] );
-    glBindBuffer( GL_ARRAY_BUFFER, vbo_ids[2] );
-    glBufferData( GL_ARRAY_BUFFER, nvtx * sizeof( vec2 ), value_ptr(uvs[0]),
-                  GL_STATIC_DRAW );
-    glVertexAttribPointer( 2, 2, GL_FLOAT, GL_FALSE, 0, NULL );
-    glEnableVertexAttribArray( 2 );
-  }
+   if ( uvs != nullptr )
+   {
+      glGenBuffers( 1, &vbo_ids[2] );
+      glBindBuffer( GL_ARRAY_BUFFER, vbo_ids[2] );
+      glBufferData( GL_ARRAY_BUFFER, nvtx * sizeof( vec2 ), value_ptr( uvs[0] ), GL_STATIC_DRAW );
+      glVertexAttribPointer( 2, 2, GL_FLOAT, GL_FALSE, 0, NULL );
+      glEnableVertexAttribArray( 2 );
+      glBindBuffer( GL_ARRAY_BUFFER, 0 );
+   }
 
-  if (nfaces > 0)
-  {
-    glGenBuffers(1, &vbo_ids[3]);
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, vbo_ids[3]);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, nfaces * sizeof(uvec3), value_ptr(idx[0]), GL_STATIC_DRAW);
-    _nfaces = nfaces;
-  }
+   if ( nfaces > 0 )
+   {
+      glGenBuffers( 1, &vbo_ids[3] );
+      glBindBuffer( GL_ELEMENT_ARRAY_BUFFER, vbo_ids[3] );
+      glBufferData(
+          GL_ELEMENT_ARRAY_BUFFER, nfaces * sizeof( uvec3 ), value_ptr( idx[0] ), GL_STATIC_DRAW );
+      _nfaces = nfaces;
+      glBindBuffer( GL_ELEMENT_ARRAY_BUFFER, 0 );
+   }
 
-  return true;
+   glBindVertexArray( 0 );
+
+   return true;
 }
 
 void gl_utils::RenderProgram::reset()
 {
-   if ( id != -1 ) glDeleteProgram( id );
-   id = -1;
+   if ( _id != -1 ) glDeleteProgram( _id );
+   _id = -1;
 }
 
-bool gl_utils::RenderProgram::load(const char* fragment_file_path,  const char* vertex_file_path )
+bool gl_utils::RenderProgram::load( const char* fragment_file_path, const char* vertex_file_path )
 {
+   bool success = true;
+
    // Create the shaders
-   GLuint VertexShaderID = glCreateShader( GL_VERTEX_SHADER );
-   GLuint FragmentShaderID = glCreateShader( GL_FRAGMENT_SHADER );
+   GLuint vtxId = createShader( vertex_file_path, GL_VERTEX_SHADER );
+   GLuint fragId = createShader( fragment_file_path, GL_FRAGMENT_SHADER );
 
-   // Read the Vertex Shader code from the file
-   std::string VertexShaderCode;
-   std::ifstream VertexShaderStream( vertex_file_path, std::ios::in );
-   if ( VertexShaderStream.is_open() )
-   {
-      std::string Line = "";
-      while ( getline( VertexShaderStream, Line ) ) VertexShaderCode += "\n" + Line;
-      VertexShaderStream.close();
-   }
-   else
-   {
-      printf(
-          "Impossible to open %s. Are you in the right directory ? Don't forget to read the FAQ "
-          "!\n",
-          vertex_file_path );
-      getchar();
-      return false;
-   }
-
-   // Read the Fragment Shader code from the file
-   std::string FragmentShaderCode;
-   std::ifstream FragmentShaderStream( fragment_file_path, std::ios::in );
-   if ( FragmentShaderStream.is_open() )
-   {
-      std::string Line = "";
-      while ( getline( FragmentShaderStream, Line ) ) FragmentShaderCode += "\n" + Line;
-      FragmentShaderStream.close();
-   }
-
-   GLint Result = GL_FALSE;
-   int InfoLogLength;
-
-   // Compile Vertex Shader
-   printf( "Compiling shader : %s\n", vertex_file_path );
-   char const* VertexSourcePointer = VertexShaderCode.c_str();
-   glShaderSource( VertexShaderID, 1, &VertexSourcePointer, NULL );
-   glCompileShader( VertexShaderID );
-
-   // Check Vertex Shader
-   glGetShaderiv( VertexShaderID, GL_COMPILE_STATUS, &Result );
-   glGetShaderiv( VertexShaderID, GL_INFO_LOG_LENGTH, &InfoLogLength );
-   if ( InfoLogLength > 0 )
-   {
-      std::vector<char> VertexShaderErrorMessage( InfoLogLength + 1 );
-      glGetShaderInfoLog( VertexShaderID, InfoLogLength, NULL, &VertexShaderErrorMessage[0] );
-      printf( "%s\n", &VertexShaderErrorMessage[0] );
-   }
-
-   // Compile Fragment Shader
-   printf( "Compiling shader : %s\n", fragment_file_path );
-   char const* FragmentSourcePointer = FragmentShaderCode.c_str();
-   glShaderSource( FragmentShaderID, 1, &FragmentSourcePointer, NULL );
-   glCompileShader( FragmentShaderID );
-
-   // Check Fragment Shader
-   glGetShaderiv( FragmentShaderID, GL_COMPILE_STATUS, &Result );
-   glGetShaderiv( FragmentShaderID, GL_INFO_LOG_LENGTH, &InfoLogLength );
-   if ( InfoLogLength > 0 )
-   {
-      std::vector<char> FragmentShaderErrorMessage( InfoLogLength + 1 );
-      glGetShaderInfoLog( FragmentShaderID, InfoLogLength, NULL, &FragmentShaderErrorMessage[0] );
-      printf( "%s\n", &FragmentShaderErrorMessage[0] );
-   }
+   if ( ( vtxId == -1 ) && ( fragId == -1 ) ) return false;
 
    // Link the program
-   printf( "Linking program\n" );
-   GLuint ProgramID = glCreateProgram();
-   glAttachShader( ProgramID, VertexShaderID );
-   glAttachShader( ProgramID, FragmentShaderID );
-   glLinkProgram( ProgramID );
+   _id = glCreateProgram();
+   if ( vtxId != -1 ) glAttachShader( _id, vtxId );
+   if ( fragId != -1 ) glAttachShader( _id, fragId );
+   glLinkProgram( _id );
 
    // Check the program
-   glGetProgramiv( ProgramID, GL_LINK_STATUS, &Result );
-   glGetProgramiv( ProgramID, GL_INFO_LOG_LENGTH, &InfoLogLength );
-   if ( InfoLogLength > 0 )
+   GLint result = GL_FALSE;
+   int infoLogLength;
+   glGetProgramiv( _id, GL_LINK_STATUS, &result );
+   glGetProgramiv( _id, GL_INFO_LOG_LENGTH, &infoLogLength );
+   if ( infoLogLength > 0 )
    {
-      std::vector<char> ProgramErrorMessage( InfoLogLength + 1 );
-      glGetProgramInfoLog( ProgramID, InfoLogLength, NULL, &ProgramErrorMessage[0] );
-      printf( "%s\n", &ProgramErrorMessage[0] );
+      std::string errorMessage( infoLogLength, '\0' );
+      glGetProgramInfoLog( _id, infoLogLength, NULL, &errorMessage[0] );
+      std::cerr << "Error linking "
+                << " : " << errorMessage << std::endl;
+      success = false;
    }
 
-   glDetachShader( ProgramID, VertexShaderID );
-   glDetachShader( ProgramID, FragmentShaderID );
+   if ( vtxId != -1 )
+   {
+      glDetachShader( _id, vtxId );
+      glDeleteShader( vtxId );
+   }
 
-   glDeleteShader( VertexShaderID );
-   glDeleteShader( FragmentShaderID );
+   if ( fragId != -1 )
+   {
+      glDetachShader( _id, fragId );
+      glDeleteShader( fragId );
+   }
 
-   id = ProgramID;
+   if ( !success ) reset();
 
-   return id != -1;
+   return success;
 }
 
 bool gl_utils::RenderProgram::activate()
 {
-   if ( id != -1 )
+   if ( _id != -1 )
    {
-      glUseProgram( id );
+      glUseProgram( _id );
       return true;
    }
    return false;
@@ -278,14 +289,14 @@ bool gl_utils::RenderProgram::activate()
 
 GLint gl_utils::RenderProgram::getUniform( const char* uniformName )
 {
-   if ( id != -1 )
+   if ( _id != -1 )
    {
-      return glGetUniformLocation( id, uniformName );
+      return glGetUniformLocation( _id, uniformName );
    }
    return -1;
 }
 
-gl_utils::RenderTarget::RenderTarget(const glm::uvec2 isz)
+gl_utils::RenderTarget::RenderTarget( const glm::uvec2 isz )
 {
    sz = isz;
    // The framebuffer, which regroups 0, 1, or more textures, and 0 or 1 depth buffer.
@@ -301,9 +312,9 @@ gl_utils::RenderTarget::~RenderTarget()
    }
 }
 
-bool gl_utils::RenderTarget::bind(const size_t natts, GLuint* atts, GLuint* depth)
+bool gl_utils::RenderTarget::bind( const size_t natts, GLuint* atts, GLuint* depth )
 {
-   if ( (natts==0) || (atts==nullptr)) return false;
+   if ( ( natts == 0 ) || ( atts == nullptr ) ) return false;
 
    glBindFramebuffer( GL_DRAW_FRAMEBUFFER, id );
 

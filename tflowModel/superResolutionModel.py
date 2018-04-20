@@ -23,15 +23,18 @@ sys.path.append(os.path.abspath(
 from sampleBuffDataset import *
 
 # Parameters
-numSteps = 35000
-logStep = 5
+numSteps = 75000
+logStep = 75
 logTrSteps = 1
 logTsSteps = 1
 
 supResFactor = 0.75
 
-batchSz = 128
-imgSz = [256, 256]
+baseLearningRate = 0.00013
+
+batchSz = 64
+imgSz = [96, 96]
+imgSzTst = [128, 128]
 
 # logging
 tf.logging.set_verbosity(tf.logging.INFO)
@@ -117,24 +120,34 @@ def ms_conv_layer(x, filter_size, scope, padding='SAME'):
 
     with tf.name_scope('ms_0') as scope:
         ms_0 = conv_layer(x, filter_size, 1, scope, padding)
-    with tf.name_scope('ms_2') as scope:
-        ms_2 = conv_layer(ms_2, ms_filter_size, -2, scope, padding)
-    with tf.name_scope('ms_5') as scope:
-        ms_5 = conv_layer(ms_2, ms_filter_size, -5, scope, padding)
+    # with tf.name_scope('ms_2') as scope:
+    #     ms_2 = conv_layer(ms_0, ms_filter_size, -2, scope, padding)
+    # with tf.name_scope('ms_5') as scope:
+    #     ms_5 = conv_layer(ms_2, ms_filter_size, -5, scope, padding)
 
-    return tf.concat([ms_0, ms_2, ms_5], 3)
+    # return tf.concat([ms_0, ms_2, ms_5], 3)
+    return tf.concat([ms_0, ms_0, ms_0], 3)
 
 
-def supResBaseModel(imgs):
+def preprocess(imgs):
+    # -----> preprocessing : put the pix values in [-1..1]
+    with tf.name_scope('preprocess') as scope:
+        img_mean = tf.constant([0.5, 0.5, 0.5], dtype=tf.float32, shape=[
+            1, 1, 1, 3], name='img_mean')
+        return tf.multiply(tf.subtract(imgs, img_mean), 2.0)
+
+
+def computeWeights(res):
+    # -----> compute the weight to compensate the sparsity bias
+    # (res*20 +1.5)^4 / 3000
+    resw = tf.square(tf.add(tf.multiply(tf.abs(res), 20.0), 1.5))
+    resw = tf.minimum(tf.multiply(tf.square(resw), 0.000333333333), 1.0)
+    return resw
+
+
+def supResBaseModel(layer):
 
     with tf.variable_scope('SupResBaseModel'):
-
-        # -----> preprocessing : put the pix values in [-1..1]
-        with tf.name_scope('preprocess') as scope:
-            img_mean = tf.constant([0.5, 0.5, 0.5], dtype=tf.float32, shape=[
-                1, 1, 1, 3], name='img_mean')
-            layer = 2.0 * (imgs - img_mean)
-        # layer0 = imgs
 
         # ---->
         with tf.name_scope('layer1') as scope:
@@ -178,8 +191,7 @@ def supResModel(imgs):
 
 def tstDataset(imgRootDir, trainPath):
 
-    # rseed = int(time.time())
-    rseed = 20160704
+    rseed = int(time.time())
     print "SEED : " + str(rseed)
 
     tf.set_random_seed(rseed)
@@ -207,10 +219,148 @@ def tstDataset(imgRootDir, trainPath):
             toimage(imgHD[-1]).show()
             toimage(imgLD[-1]).show()
 
+#-----------------------------------------------------------------------------------------------------
+# TESTING
+#-----------------------------------------------------------------------------------------------------
+
+
+def testSupResModel(modelPath, imgRootDir, testPath, nbTests):
+
+    modelFilename = modelPath + "/tfData"
+
+    rseed = int(time.time())
+    # rseed = 20160704
+    print "SEED : " + str(rseed)
+
+    tf.set_random_seed(rseed)
+
+    tsDs = SupResDatasetTF(testPath, imgRootDir, 1,
+                           imgSzTst, supResFactor, rseed)
+
+    inputShape = [1, imgSzTst[0], imgSzTst[1], 3]
+    outputShape = [1, imgSzTst[0], imgSzTst[1], 3]
+
+    dsIt = tf.data.Iterator.from_structure(
+        tsDs.data.output_types, tsDs.data.output_shapes)
+    dsView = dsIt.get_next()
+    tsInit = dsIt.make_initializer(tsDs.data)
+
+    # Input
+    inputLD = tf.placeholder(
+        tf.float32, shape=inputShape, name="input_ld")
+    inputLD = preprocess(inputLD)
+
+    # GT
+    outputHD = tf.placeholder(
+        tf.float32, shape=outputShape, name="output_hd")
+    outputHD = preprocess(outputHD)
+
+    outputHDRes = tf.subtract(outputHD, inputLD)
+
+    # Graph
+    computedHDRes = supResModel(inputLD)
+
+    # Persistency
+    persistency = tf.train.Saver(pad_step_number=True, keep_checkpoint_every_n_hours=3,
+                                 filename=modelFilename)
+
+    # Params Initializer
+    varInit = tf.global_variables_initializer()
+
+    with tf.Session(config=tf.ConfigProto(device_count={'GPU': 0})) as sess:
+        # initialize params
+        sess.run(varInit)
+
+        # initialize iterator
+        sess.run(tsInit)
+
+        # Restore model if needed
+        persistency.restore(sess, tf.train.latest_checkpoint(modelPath))
+
+        for step in range(nbTests):
+            imgHD, imgLD = sess.run(dsView)
+            imgHDResEst, imgHDRest = sess.run(
+                [computedHDRes, outputHDRes], feed_dict={inputLD: imgLD, outputHD: imgHD})
+
+            # NB : to reconstruct the image we need to perform rescaling from -1.0..1.0 to 0.0..1.0
+
+            # show the sample
+            toimage(imgHDResEst[0]).show()
+
+            # show the ground truth map
+            toimage(imgHDRest[0]).show()
+
+            raw_input(".")
 
 #-----------------------------------------------------------------------------------------------------
 # TRAINING
 #-----------------------------------------------------------------------------------------------------
+
+
+#--------------------------------------
+# ESTIMATE THE DISTRIBUTION OF SPARSITY
+
+
+def trainSparsityDistribution(imgRootDir, trainPath, nbTrain):
+
+    rseed = int(time.time())
+    # rseed = 20160704
+    print "SEED : " + str(rseed)
+
+    tf.set_random_seed(rseed)
+
+    trDs = SupResDatasetTF(trainPath, imgRootDir, 1,
+                           imgSz, supResFactor, rseed)
+
+    inputShape = [1, imgSz[0], imgSz[1], 3]
+    outputShape = [1, imgSz[0], imgSz[1], 3]
+
+    dsIt = tf.data.Iterator.from_structure(
+        trDs.data.output_types, trDs.data.output_shapes)
+    dsView = dsIt.get_next()
+    trInit = dsIt.make_initializer(trDs.data)
+
+    # Input
+    inputLD = tf.placeholder(
+        tf.float32, shape=inputShape, name="input_ld")
+    inputLD = preprocess(inputLD)
+
+    # GT
+    outputHD = tf.placeholder(
+        tf.float32, shape=outputShape, name="output_hd")
+    outputHD = preprocess(outputHD)
+
+    outputHDRes = tf.subtract(outputHD, inputLD)
+    #outputHDResW = tf.divide(outputHDRes, computeWeights(outputHDRes))
+
+    # Params Initializer
+    varInit = tf.global_variables_initializer()
+
+    with tf.Session(config=tf.ConfigProto(device_count={'GPU': 0})) as sess:
+        # initialize params
+        sess.run(varInit)
+
+        # initialize iterator
+        sess.run(trInit)
+
+        histSum = np.zeros(512, dtype=np.float32) + 1.0
+
+        for step in range(nbTrain):
+            imgHD, imgLD = sess.run(dsView)
+            imgHDRes = sess.run(outputHDRes, feed_dict={
+                                inputLD: imgLD, outputHD: imgHD})
+
+            hist, bin_edges = np.histogram(
+                np.abs(imgHDRes[0]), 512, (0.0, 1.0))
+            histSum += hist
+
+        histSum *= 1.0/np.sum(histSum)
+
+        for b in range(512):
+            print 0.5*(bin_edges[b]+bin_edges[b+1]), min(2000.0, 1.0/(histSum[b]*512)) / 2000.0
+
+#----------------
+# LEARN THE MODEL
 
 
 def trainSupResModel(modelPath, imgRootDir, trainPath, testPath):
@@ -218,8 +368,8 @@ def trainSupResModel(modelPath, imgRootDir, trainPath, testPath):
     tbLogsPath = modelPath + "/tbLogs"
     modelFilename = modelPath + "/tfData"
 
-    # rseed = int(time.time())
-    rseed = 20160704
+    rseed = int(time.time())
+    # rseed = 20160704
     print "SEED : " + str(rseed)
 
     tf.set_random_seed(rseed)
@@ -242,22 +392,29 @@ def trainSupResModel(modelPath, imgRootDir, trainPath, testPath):
     # Input
     inputLD = tf.placeholder(
         tf.float32, shape=inputShape, name="input_ld")
+    inputLD = preprocess(inputLD)
+
+    # GT
     outputHD = tf.placeholder(
         tf.float32, shape=outputShape, name="output_hd")
+    outputHD = preprocess(outputHD)
+
+    outputHDRes = tf.subtract(outputHD, inputLD)
+    outputHDResW = computeWeights(outputHDRes)
 
     # Graph
     computedHDRes = supResModel(inputLD)
 
-    outputHDRes = tf.subtract(outputHD, inputLD)
-
     # Optimizer
 
     # TODO : set a cost function that is adaptive according to the ground truth residual
-    cost = tf.reduce_mean(tf.square(tf.subtract(computedHDRes, outputHDRes)))
+    cost = tf.reduce_mean(tf.multiply(outputHDResW, tf.square(
+        tf.subtract(computedHDRes, outputHDRes))))
+    #cost = tf.reduce_mean(tf.square(tf.subtract(computedHDRes, outputHDRes)))
 
     globalStep = tf.Variable(0, trainable=False)
 
-    learningRate = tf.train.polynomial_decay(0.001, globalStep, numSteps, 0.0,
+    learningRate = tf.train.polynomial_decay(baseLearningRate, globalStep, numSteps, 0.0,
                                              power=0.7)
 
     optEngine = tf.train.AdamOptimizer(learning_rate=learningRate)
@@ -377,5 +534,13 @@ if __name__ == "__main__":
 
     # tstDataset(args.imgRootDir, args.trainLstPath)
 
+    #------------------------------------------------------------------------------------------------
+
+    #trainSparsityDistribution(args.imgRootDir, args.trainLstPath, 10000)
+
     trainSupResModel(args.modelPath, args.imgRootDir,
                      args.trainLstPath, args.testLstPath)
+
+    #------------------------------------------------------------------------------------------------
+
+    #testSupResModel(args.modelPath, args.imgRootDir, args.testLstPath, 10)

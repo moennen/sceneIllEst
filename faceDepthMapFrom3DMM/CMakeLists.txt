@@ -3,7 +3,7 @@
 CMAKE_MINIMUM_REQUIRED(VERSION 2.6) 
 
 PROJECT(faceDepthMapFrom3DMM)
-ADD_DEFINITIONS( -DCOMPILER_GCC -std=c++11 -O3 )
+ADD_DEFINITIONS( -DCOMPILER_GCC -std=c++11 )
 SET(CMAKE_COLOR_MAKEFILE ON)
 SET(CMAKE_VERBOSE_MAKEFILE ON)
 
@@ -45,7 +45,7 @@ LINK_DIRECTORIES(
 	${CUDA}/lib64
 )
 
-ADD_EXECUTABLE(createFaceMap faceDepthMapFrom3D_main.cpp ${FACE}/faceDetector.C)
+ADD_EXECUTABLE(createFaceMap faceDepthMapFrom3D_main.cpp ${FACE}/faceDetector.C ${UTILS}/gl_utils.C)
 
-TARGET_LINK_LIBRARIES( createFaceMap GL SDL2 dlib openblas 
+TARGET_LINK_LIBRARIES( createFaceMap GLEW GL SDL2 dlib openblas assimp
 	                    cudart cublas curand cusolver cudnn opencv_world )

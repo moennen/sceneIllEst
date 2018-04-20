@@ -72,16 +72,16 @@ struct TriMeshBuffer final
        const glm::vec2* uvs,
        const glm::vec3* normals,
        const size_t nfaces,
-       const glm::uvec3*idx );
+       const glm::uvec3* idx );
 
-   void draw();
+   void draw(const bool wireframe = false) const;
    void reset();
 
    size_t _nvtx = 0;
    size_t _nfaces = 0;
 
    GLuint vao_id = -1;
-   std::array<GLuint,4> vbo_ids = {{-1,-1,-1,-1}};
+   std::array<GLuint, 4> vbo_ids = {{-1, -1, -1, -1}};
 };
 
 bool loadTriangleMesh(
@@ -91,33 +91,36 @@ bool loadTriangleMesh(
     std::vector<glm::vec2>& uvs,
     std::vector<glm::vec3>& normals );
 
-
 struct RenderProgram final
 {
-   RenderProgram() : id( -1 ) {}
+   RenderProgram() : _id( -1 ) {}
    ~RenderProgram() { reset(); }
 
-   bool load( const char* f_shader_path, const char* v_shader_path = nullptr  );
+   bool load( const char* f_shader_path, const char* v_shader_path = nullptr );
    void reset();
 
    bool activate();
+   bool deactivate() { glUseProgram(0); }
    GLint getUniform( const char* );
 
-   GLuint id;
+   GLuint _id;
 };
 
 struct RenderTarget final
 {
-   RenderTarget(const glm::uvec2 sz);
+   RenderTarget( const glm::uvec2 sz );
    ~RenderTarget();
 
-   bool bind( size_t nbAtt, GLuint *atts, GLuint *depth=nullptr );
-   void unbind() {glBindFramebuffer(GL_FRAMEBUFFER, 0); glBindTexture( GL_TEXTURE_2D, 0 );}
-   
+   bool bind( size_t nbAtt, GLuint* atts, GLuint* depth = nullptr );
+   void unbind()
+   {
+      glBindFramebuffer( GL_FRAMEBUFFER, 0 );
+      glBindTexture( GL_TEXTURE_2D, 0 );
+   }
+
    GLuint id;
    glm::uvec2 sz;
 };
-
 }
 
 #endif  // _UTILS_GL_UTILS_H
