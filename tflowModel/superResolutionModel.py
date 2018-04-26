@@ -23,14 +23,15 @@ sys.path.append(os.path.abspath(
 from sampleBuffDataset import *
 
 # Parameters
-numSteps = 75000
-logStep = 75
+numSteps = 45000
+logStep = 50
 logTrSteps = 1
 logTsSteps = 1
+logShowFirstTraining = False
 
 supResFactor = 0.75
 
-baseLearningRate = 0.00013
+baseLearningRate = 0.00005
 
 batchSz = 64
 imgSz = [96, 96]
@@ -100,7 +101,6 @@ def printVarTF(sess):
 
 
 def conv_layer(x, filter_size, step, scope, padding='VALID'):
-    # tf.random_normal(filter_size))
     initializer = tf.contrib.layers.xavier_initializer()
     layer_w = tf.Variable(initializer(filter_size))
     layer_b = tf.Variable(initializer([filter_size[3]]))
@@ -109,24 +109,28 @@ def conv_layer(x, filter_size, step, scope, padding='VALID'):
     else:
         layer = tf.nn.atrous_conv2d(x, layer_w, abs(step), padding)
     layer = tf.nn.bias_add(layer, layer_b)
+    return layer
+
+
+def convrelu_layer(x, filter_size, step, scope, padding='VALID'):
+    layer = conv_layer(x, filter_size, step, scope, padding)
     layer = tf.nn.relu(layer, name=scope)
     return layer
 
 
-def ms_conv_layer(x, filter_size, scope, padding='SAME'):
+def ms_convrelu_layer(x, filter_size, scope, padding='SAME'):
 
     ms_filter_size = [filter_size[0], filter_size[1],
                       filter_size[3], filter_size[3]]
 
     with tf.name_scope('ms_0') as scope:
-        ms_0 = conv_layer(x, filter_size, 1, scope, padding)
-    # with tf.name_scope('ms_2') as scope:
-    #     ms_2 = conv_layer(ms_0, ms_filter_size, -2, scope, padding)
-    # with tf.name_scope('ms_5') as scope:
-    #     ms_5 = conv_layer(ms_2, ms_filter_size, -5, scope, padding)
+        ms_0 = convrelu_layer(x, filter_size, 1, scope, padding)
+    with tf.name_scope('ms_2') as scope:
+        ms_2 = convrelu_layer(ms_0, ms_filter_size, -2, scope, padding)
+    with tf.name_scope('ms_5') as scope:
+        ms_5 = convrelu_layer(ms_2, ms_filter_size, -5, scope, padding)
 
-    # return tf.concat([ms_0, ms_2, ms_5], 3)
-    return tf.concat([ms_0, ms_0, ms_0], 3)
+    return tf.concat([ms_0, ms_2, ms_5], 3)
 
 
 def preprocess(imgs):
@@ -139,10 +143,21 @@ def preprocess(imgs):
 
 def computeWeights(res):
     # -----> compute the weight to compensate the sparsity bias
-    # (res*20 +1.5)^4 / 3000
+    # (|res|*20 +1.5)^4 / 3000
     resw = tf.square(tf.add(tf.multiply(tf.abs(res), 20.0), 1.5))
     resw = tf.minimum(tf.multiply(tf.square(resw), 0.000333333333), 1.0)
     return resw
+
+
+def getResiduals(imgsHD, imgsLD):
+    # normalization of the residuals
+    res_norm = tf.constant([5.0, 5.0, 5.0],
+                           dtype=tf.float32, shape=[1, 1, 1, 3], name='res_norm')
+    outputHDRes = tf.subtract(imgsHD, imgsLD)
+    outputHDResW = computeWeights(outputHDRes)
+    outputHDRes = tf.multiply(res_norm, outputHDRes)
+
+    return outputHDRes, outputHDResW
 
 
 def supResBaseModel(layer):
@@ -151,31 +166,66 @@ def supResBaseModel(layer):
 
         # ---->
         with tf.name_scope('layer1') as scope:
-            layer = ms_conv_layer(layer, [5, 5, 3, 8], scope)
+            layer = ms_convrelu_layer(layer, [5, 5, 3, 8], scope)
 
         # ---->
         with tf.name_scope('layer2') as scope:
-            layer = ms_conv_layer(layer, [5, 5, 24, 12], scope)
+            layer = ms_convrelu_layer(layer, [5, 5, 24, 12], scope)
 
         # ---->
         with tf.name_scope('layer3') as scope:
-            layer = ms_conv_layer(layer, [5, 5, 36, 18], scope)
+            layer = ms_convrelu_layer(layer, [5, 5, 36, 18], scope)
 
         # ---->
         with tf.name_scope('layer4') as scope:
-            layer = ms_conv_layer(layer, [5, 5, 54, 27], scope)
+            layer = ms_convrelu_layer(layer, [5, 5, 54, 27], scope)
 
         # ---->
         with tf.name_scope('layer5') as scope:
-            layer = ms_conv_layer(layer, [5, 5, 81, 46], scope)
+            layer = ms_convrelu_layer(layer, [5, 5, 81, 46], scope)
 
         # ---->
         with tf.name_scope('layer6') as scope:
-            layer = ms_conv_layer(layer, [5, 5, 138, 69], scope)
+            layer = ms_convrelu_layer(layer, [5, 5, 138, 69], scope)
 
         # ---->
         with tf.name_scope('layer7') as scope:
             layer = conv_layer(layer, [3, 3, 207, 3], 1, scope, 'SAME')
+
+        return layer
+
+
+def supResTestModel(layer):
+
+    with tf.variable_scope('SupResBaseModel'):
+
+        # ---->
+        with tf.name_scope('layer1') as scope:
+            layer = convrelu_layer(layer, [5, 5, 3, 8], 1,  scope, 'SAME')
+
+        # ---->
+        with tf.name_scope('layer2') as scope:
+            layer = convrelu_layer(layer, [5, 5, 8, 12], 1, scope, 'SAME')
+
+        # ---->
+        with tf.name_scope('layer3') as scope:
+            layer = convrelu_layer(layer, [5, 5, 12, 18], 1, scope, 'SAME')
+
+        # ---->
+        with tf.name_scope('layer4') as scope:
+            layer = convrelu_layer(layer, [5, 5, 18, 27], 1, scope, 'SAME')
+
+        # ---->
+        with tf.name_scope('layer5') as scope:
+            layer = convrelu_layer(layer, [5, 5, 27, 46], 1, scope, 'SAME')
+
+        # ---->
+        with tf.name_scope('layer6') as scope:
+            layer = convrelu_layer(layer, [5, 5, 46, 69], 1, scope, 'SAME')
+
+        # ---->
+        with tf.name_scope('layer7') as scope:
+            layer = conv_layer(layer, [3, 3, 69, 3], 1, scope, 'SAME')
 
         return layer
 
@@ -258,7 +308,7 @@ def testSupResModel(modelPath, imgRootDir, testPath, nbTests):
     outputHDRes = tf.subtract(outputHD, inputLD)
 
     # Graph
-    computedHDRes = supResModel(inputLD)
+    computedHDRes = supResModel(outputHDRes)
 
     # Persistency
     persistency = tf.train.Saver(pad_step_number=True, keep_checkpoint_every_n_hours=3,
@@ -331,7 +381,7 @@ def trainSparsityDistribution(imgRootDir, trainPath, nbTrain):
     outputHD = preprocess(outputHD)
 
     outputHDRes = tf.subtract(outputHD, inputLD)
-    #outputHDResW = tf.divide(outputHDRes, computeWeights(outputHDRes))
+    # outputHDResW = tf.divide(outputHDRes, computeWeights(outputHDRes))
 
     # Params Initializer
     varInit = tf.global_variables_initializer()
@@ -351,13 +401,14 @@ def trainSparsityDistribution(imgRootDir, trainPath, nbTrain):
                                 inputLD: imgLD, outputHD: imgHD})
 
             hist, bin_edges = np.histogram(
-                np.abs(imgHDRes[0]), 512, (0.0, 1.0))
+                np.abs(imgHDRes[0]), 512, (0.0, 2.0))
             histSum += hist
 
         histSum *= 1.0/np.sum(histSum)
 
         for b in range(512):
-            print 0.5*(bin_edges[b]+bin_edges[b+1]), min(2000.0, 1.0/(histSum[b]*512)) / 2000.0
+            # print 0.5*(bin_edges[b]+bin_edges[b+1]), min(2000.0, 1.0/(histSum[b]*512)) / 2000.0
+            print 0.5*(bin_edges[b]+bin_edges[b+1]), histSum[b]
 
 #----------------
 # LEARN THE MODEL
@@ -368,8 +419,8 @@ def trainSupResModel(modelPath, imgRootDir, trainPath, testPath):
     tbLogsPath = modelPath + "/tbLogs"
     modelFilename = modelPath + "/tfData"
 
-    rseed = int(time.time())
-    # rseed = 20160704
+    # rseed = int(time.time())
+    rseed = 20160704
     print "SEED : " + str(rseed)
 
     tf.set_random_seed(rseed)
@@ -399,18 +450,24 @@ def trainSupResModel(modelPath, imgRootDir, trainPath, testPath):
         tf.float32, shape=outputShape, name="output_hd")
     outputHD = preprocess(outputHD)
 
-    outputHDRes = tf.subtract(outputHD, inputLD)
-    outputHDResW = computeWeights(outputHDRes)
+    # Residuals
+    outputHDRes, outputHDResW = getResiduals(outputHD, inputLD)
 
-    # Graph
+    # Model
     computedHDRes = supResModel(inputLD)
 
     # Optimizer
 
-    # TODO : set a cost function that is adaptive according to the ground truth residual
-    cost = tf.reduce_mean(tf.multiply(outputHDResW, tf.square(
-        tf.subtract(computedHDRes, outputHDRes))))
-    #cost = tf.reduce_mean(tf.square(tf.subtract(computedHDRes, outputHDRes)))
+    # Charbonnier cost with adaptive reweighting
+    res_eps = tf.constant([0.0000001, 0.0000001, 0.0000001],
+                          dtype=tf.float32, shape=[1, 1, 1, 3], name='res_eps')
+    cost = tf.reduce_mean(
+        tf.multiply(outputHDResW,
+                    tf.sqrt(tf.add(tf.square(tf.subtract(computedHDRes, outputHDRes)), res_eps))))
+
+    # Least -square cost with adaptive reweigthing
+    # cost = tf.reduce_mean(tf.multiply(outputHDResW, tf.square(
+    #    tf.subtract(computedHDRes, outputHDRes))))
 
     globalStep = tf.Variable(0, trainable=False)
 
@@ -468,9 +525,17 @@ def trainSupResModel(modelPath, imgRootDir, trainPath, testPath):
             # Log
             if step % logStep == 0:
 
+                # sample image to evaluate qualitatively the training progress
+                if logShowFirstTraining:
+                    imgHDIn, imgHDOut = sess.run([outputHDRes, computedHDRes], feed_dict={
+                        inputLD: imgLD, outputHD: imgHD})
+
+                    toimage(imgHDIn[0]).show()
+                    toimage(imgHDOut[0]).show()
+
                 # summary
                 summary = sess.run(merged_summary_op, feed_dict={
-                                   inputLD: imgLD, outputHD: imgHD})
+                    inputLD: imgLD, outputHD: imgHD})
                 summary_writer.add_summary(summary, globalStep.eval(sess))
 
                 # Sample train accuracy
@@ -493,7 +558,7 @@ def trainSupResModel(modelPath, imgRootDir, trainPath, testPath):
 
                 # summary
                 summary = sess.run(test_summary_op, feed_dict={
-                                   inputLD: imgLD, outputHD: imgHD})
+                    inputLD: imgLD, outputHD: imgHD})
                 summary_writer.add_summary(summary, globalStep.eval(sess))
 
                 print("{:08d}".format(globalStep.eval(sess)) +
@@ -543,4 +608,4 @@ if __name__ == "__main__":
 
     #------------------------------------------------------------------------------------------------
 
-    #testSupResModel(args.modelPath, args.imgRootDir, args.testLstPath, 10)
+    # testSupResModel(args.modelPath, args.imgRootDir, args.testLstPath, 10)

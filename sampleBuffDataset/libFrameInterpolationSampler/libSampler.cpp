@@ -11,6 +11,7 @@
 #include "utils/Hop.h"
 
 #include <boost/filesystem.hpp>
+#include <boost/algorithm/string.hpp>
 #include <boost/random/mersenne_twister.hpp>
 #include <boost/random/uniform_int_distribution.hpp>
 #include <boost/random/uniform_real_distribution.hpp>
@@ -37,10 +38,22 @@ namespace
 struct Sampler final
 {
    boost::random::mt19937 _rng;
-   boost::random::uniform_int_distribution<> _pathGen;
+   boost::random::uniform_int_distribution<> _dataGen;
    boost::random::uniform_real_distribution<> _transGen;
 
-   std::vector<std::string> _paths;
+   struct Data
+   {
+      const float _alpha;
+      const std::string _pathA;
+      const std::string _pathB;
+      const std::string _pathC;
+
+      inline Data( const float alpha, const std::string& fA, const std::string& fB, const std::string& fC )
+          : _alpha( alpha ), _pathA( fA ), _pathB( fB ), _pathC( fC )
+      {
+      }
+   };
+   std::vector<Data> _data;
    const ivec3 _sampleSz;
    const float _downsample;
 
@@ -58,18 +71,39 @@ struct Sampler final
       std::ifstream ifs( dataSetPath );
       if ( ifs.is_open() )
       {
-         _paths.reserve( 25000 );
+         _data.reserve( 50000 );
+         vector<string> splitLine;
+         splitLine.reserve( 4 );
          std::string line;
          while ( ifs.good() )
          {
             getline( ifs, line );
-            const boost::filesystem::path f( rootPath / boost::filesystem::path( line ) );
-            if ( boost::filesystem::is_regular_file( f ) ) _paths.emplace_back( f.string() );
+            splitLine.clear();
+            boost::split( splitLine, line, boost::is_any_of( "\t " ) );
+            if ( splitLine.size() == 4 )
+            {
+               try
+               {
+                  // first path :
+                  const boost::filesystem::path fA(
+                      rootPath / boost::filesystem::path( splitLine[0] ) );
+                  const boost::filesystem::path fB(
+                      rootPath / boost::filesystem::path( splitLine[1] ) );
+                  const boost::filesystem::path fC(
+                      rootPath / boost::filesystem::path( splitLine[2] ) );
+                  const float alpha( stof( splitLine[3] ) );
+                  if ( boost::filesystem::is_regular_file( fA ) &&
+                       boost::filesystem::is_regular_file( fB ) &&
+                       boost::filesystem::is_regular_file( fC ) )
+                     _data.emplace_back( alpha, fA.string(), fB.string(), fC.string() );
+               }
+               catch ( ... ) {}
+            }
          }
-         _paths.shrink_to_fit();
+         _data.shrink_to_fit();
       }
-      _pathGen = boost::random::uniform_int_distribution<>( 0, _paths.size() - 1 );
-   }
+      _dataGen = boost::random::uniform_int_distribution<>( 0, _data.size() - 1 );
+   } 
 
    bool sample( float* buff )
    {
@@ -81,7 +115,8 @@ struct Sampler final
 
       for ( size_t s = 0; s < _sampleSz.x; ++s )
       {
-         const std::string& iname = _paths[_pathGen( _rng )];
+         const Data& data = _data[_dataGen( _rng )];
+         const std::string& iname = data._pathA;
 
          Mat inputImg = cv_utils::imread32FC3( iname, true );
          ivec2 imgSz( inputImg.cols, inputImg.rows );
@@ -120,7 +155,7 @@ struct Sampler final
          Mat sampleDsImg( _sampleSz.z, _sampleSz.y, CV_32FC3, currBuffLD );
          Mat tmpDsImg;
          resize( sampleImg, tmpDsImg, Size(), _downsample, _downsample, CV_INTER_AREA );
-         resize( tmpDsImg, sampleDsImg, Size( _sampleSz.y, _sampleSz.z ), 0, 0, CV_INTER_LINEAR );
+         resize( tmpDsImg, sampleDsImg, Size( _sampleSz.y, _sampleSz.z ), 0, 0, CV_INTER_CUBIC );
 
          currBuffHD += buffSz;
          currBuffLD += buffSz;
@@ -129,14 +164,14 @@ struct Sampler final
       return true;
    }
 
-   size_t nSamples() const { return _paths.size(); }
+   size_t nSamples() const { return _data.size(); }
    ivec3 sampleSizes() const { return _sampleSz; }
 };
 
 array<unique_ptr<Sampler>, 33> g_samplers;
 };
 
-extern "C" int getNbBuffers( const int /*sidx*/ ) { return 2; }
+extern "C" int getNbBuffers( const int /*sidx*/ ) { return 5; }
 
 extern "C" int getBuffersDim( const int sidx, float* dims )
 {
