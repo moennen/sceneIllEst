@@ -24,18 +24,18 @@ from sampleBuffDataset import *
 
 # Parameters
 numSteps = 45000
-logStep = 50
+logStep = 25
 logTrSteps = 1
 logTsSteps = 1
-logShowFirstTraining = False
+logShowFirstTraining = True
 
 supResFactor = 0.75
 
 baseLearningRate = 0.00005
 
-batchSz = 64
-imgSz = [96, 96]
-imgSzTst = [128, 128]
+batchSz = 32
+imgSz = [64, 64]
+imgSzTst = [384, 384]
 
 # logging
 tf.logging.set_verbosity(tf.logging.INFO)
@@ -68,7 +68,20 @@ class SupResDatasetTF(object):
 #-----------------------------------------------------------------------------------------------------
 
 
-def loadImgPIL(img_name, imgSz, linearCS):
+def loadImgPIL(img_name, linearCS):
+
+    im = Image.open(img_name)
+    im = np.array(im)
+    im = im.astype(np.float32) / 255.0
+
+    if linearCS == 1:
+        im = (im <= 0.04045) * (im / 12.92) + (im > 0.04045) * \
+            np.power((im + 0.055)/1.055, 2.4)
+
+    return [im]
+
+
+def loadResizeImgPIL(img_name, imgSz, linearCS):
 
     im = Image.open(img_name)
     ratio = float(imgSz[1])/imgSz[0]
@@ -160,6 +173,277 @@ def getResiduals(imgsHD, imgsLD):
     return outputHDRes, outputHDResW
 
 
+def getReconstructed(imgsLD, imgsRes):
+    # normalization of the residuals
+    res_norm = tf.constant([0.2, 0.2, 0.2],
+                           dtype=tf.float32, shape=[1, 1, 1, 3], name='res_norm')
+    img_mean = tf.constant([0.5, 0.5, 0.5], dtype=tf.float32, shape=[
+        1, 1, 1, 3], name='img_mean')
+    return tf.add(tf.multiply(tf.add(tf.multiply(res_norm, imgsRes), imgsLD), 0.5), img_mean)
+
+
+def loadVGG16(x, vggParamsFilename, maxLayerId, sess, toTrain=False):
+
+    parameters = []
+    layers = []
+    currLayer = 0
+
+    with tf.name_scope('vgg') as scope:
+
+        # convert from -1..1 to 0..255
+        mean = tf.constant([123.68, 116.779, 103.939], dtype=tf.float32, shape=[
+            1, 1, 1, 3], name='img_mean')
+
+        vggLayer = tf.multiply(tf.add(x, 1.0), 127.5) - mean
+
+        # conv1_1
+        with tf.name_scope('conv1_1') as scope:
+            kernel = tf.Variable(tf.truncated_normal([3, 3, 3, 64], dtype=tf.float32,
+                                                     stddev=1e-1), name='weights')
+            conv = tf.nn.conv2d(x, kernel, [1, 1, 1, 1], padding='SAME')
+            biases = tf.Variable(tf.constant(0.0, shape=[64], dtype=tf.float32),
+                                 trainable=toTrain, name='biases')
+            out = tf.nn.bias_add(conv, biases)
+            vggLayer = tf.nn.relu(out, name=scope)
+            parameters += [kernel, biases]
+            layers += [vggLayer]
+            currLayer += 1
+
+        if (currLayer < maxLayerId):
+
+           # conv1_2
+            with tf.name_scope('conv1_2') as scope:
+                kernel = tf.Variable(tf.truncated_normal([3, 3, 64, 64], dtype=tf.float32,
+                                                         stddev=1e-1), name='weights')
+                conv = tf.nn.conv2d(vggLayer, kernel, [
+                    1, 1, 1, 1], padding='SAME')
+                biases = tf.Variable(tf.constant(0.0, shape=[64], dtype=tf.float32),
+                                     trainable=toTrain, name='biases')
+                out = tf.nn.bias_add(conv, biases)
+                vggLayer = tf.nn.relu(out, name=scope)
+                parameters += [kernel, biases]
+                layers += [vggLayer]
+                currLayer += 1
+
+        if (currLayer < maxLayerId):
+
+            # pool1
+            vggLayer = tf.nn.max_pool(vggLayer,
+                                      ksize=[1, 2, 2, 1],
+                                      strides=[1, 2, 2, 1],
+                                      padding='SAME',
+                                      name='pool1')
+
+            # conv2_1
+            with tf.name_scope('conv2_1') as scope:
+                kernel = tf.Variable(tf.truncated_normal([3, 3, 64, 128], dtype=tf.float32,
+                                                         stddev=1e-1), name='weights')
+                conv = tf.nn.conv2d(vggLayer, kernel, [
+                                    1, 1, 1, 1], padding='SAME')
+                biases = tf.Variable(tf.constant(0.0, shape=[128], dtype=tf.float32),
+                                     trainable=toTrain, name='biases')
+                out = tf.nn.bias_add(conv, biases)
+                vggLayer = tf.nn.relu(out, name=scope)
+                parameters += [kernel, biases]
+                layers += [vggLayer]
+                currLayer += 1
+
+        if (currLayer < maxLayerId):
+
+            # conv2_2
+            with tf.name_scope('conv2_2') as scope:
+                kernel = tf.Variable(tf.truncated_normal([3, 3, 128, 128], dtype=tf.float32,
+                                                         stddev=1e-1), name='weights')
+                conv = tf.nn.conv2d(vggLayer, kernel, [
+                                    1, 1, 1, 1], padding='SAME')
+                biases = tf.Variable(tf.constant(0.0, shape=[128], dtype=tf.float32),
+                                     trainable=toTrain, name='biases')
+                out = tf.nn.bias_add(conv, biases)
+                vggLayer = tf.nn.relu(out, name=scope)
+                parameters += [kernel, biases]
+                layers += [vggLayer]
+                currLayer += 1
+
+        if (currLayer < maxLayerId):
+
+            # pool2
+            vggLayer = tf.nn.max_pool(vggLayer,
+                                      ksize=[1, 2, 2, 1],
+                                      strides=[1, 2, 2, 1],
+                                      padding='SAME',
+                                      name='pool2')
+
+            # conv3_1
+            with tf.name_scope('conv3_1') as scope:
+                kernel = tf.Variable(tf.truncated_normal([3, 3, 128, 256], dtype=tf.float32,
+                                                         stddev=1e-1), name='weights')
+                conv = tf.nn.conv2d(vggLayer, kernel, [
+                                    1, 1, 1, 1], padding='SAME')
+                biases = tf.Variable(tf.constant(0.0, shape=[256], dtype=tf.float32),
+                                     trainable=toTrain, name='biases')
+                out = tf.nn.bias_add(conv, biases)
+                vggLayer = tf.nn.relu(out, name=scope)
+                parameters += [kernel, biases]
+                layers += [vggLayer]
+                currLayer += 1
+
+        if (currLayer < maxLayerId):
+
+            # conv3_2
+            with tf.name_scope('conv3_2') as scope:
+                kernel = tf.Variable(tf.truncated_normal([3, 3, 256, 256], dtype=tf.float32,
+                                                         stddev=1e-1), name='weights')
+                conv = tf.nn.conv2d(vggLayer, kernel, [
+                                    1, 1, 1, 1], padding='SAME')
+                biases = tf.Variable(tf.constant(0.0, shape=[256], dtype=tf.float32),
+                                     trainable=toTrain, name='biases')
+                out = tf.nn.bias_add(conv, biases)
+                vggLayer = tf.nn.relu(out, name=scope)
+                parameters += [kernel, biases]
+                layers += [vggLayer]
+                currLayer += 1
+
+        if (currLayer < maxLayerId):
+
+            # conv3_3
+            with tf.name_scope('conv3_3') as scope:
+                kernel = tf.Variable(tf.truncated_normal([3, 3, 256, 256], dtype=tf.float32,
+                                                         stddev=1e-1), name='weights')
+                conv = tf.nn.conv2d(vggLayer, kernel, [
+                                    1, 1, 1, 1], padding='SAME')
+                biases = tf.Variable(tf.constant(0.0, shape=[256], dtype=tf.float32),
+                                     trainable=toTrain, name='biases')
+                out = tf.nn.bias_add(conv, biases)
+                vggLayer = tf.nn.relu(out, name=scope)
+                parameters += [kernel, biases]
+                layers += [vggLayer]
+                currLayer += 1
+
+        if (currLayer < maxLayerId):
+
+            # pool3
+            vggLayer = tf.nn.max_pool(vggLayer,
+                                      ksize=[1, 2, 2, 1],
+                                      strides=[1, 2, 2, 1],
+                                      padding='SAME',
+                                      name='pool3')
+
+            # conv4_1
+            with tf.name_scope('conv4_1') as scope:
+                kernel = tf.Variable(tf.truncated_normal([3, 3, 256, 512], dtype=tf.float32,
+                                                         stddev=1e-1), name='weights')
+                conv = tf.nn.conv2d(vggLayer, kernel, [
+                                    1, 1, 1, 1], padding='SAME')
+                biases = tf.Variable(tf.constant(0.0, shape=[512], dtype=tf.float32),
+                                     trainable=toTrain, name='biases')
+                out = tf.nn.bias_add(conv, biases)
+                vggLayer = tf.nn.relu(out, name=scope)
+                parameters += [kernel, biases]
+                layers += [vggLayer]
+                currLayer += 1
+
+        if (currLayer < maxLayerId):
+
+            # conv4_2
+            with tf.name_scope('conv4_2') as scope:
+                kernel = tf.Variable(tf.truncated_normal([3, 3, 512, 512], dtype=tf.float32,
+                                                         stddev=1e-1), name='weights')
+                conv = tf.nn.conv2d(vggLayer, kernel, [
+                                    1, 1, 1, 1], padding='SAME')
+                biases = tf.Variable(tf.constant(0.0, shape=[512], dtype=tf.float32),
+                                     trainable=toTrain, name='biases')
+                out = tf.nn.bias_add(conv, biases)
+                vggLayer = tf.nn.relu(out, name=scope)
+                parameters += [kernel, biases]
+                layers += [vggLayer]
+                currLayer += 1
+
+        if (currLayer < maxLayerId):
+
+            # conv4_3
+            with tf.name_scope('conv4_3') as scope:
+                kernel = tf.Variable(tf.truncated_normal([3, 3, 512, 512], dtype=tf.float32,
+                                                         stddev=1e-1), name='weights')
+                conv = tf.nn.conv2d(vggLayer, kernel, [
+                                    1, 1, 1, 1], padding='SAME')
+                biases = tf.Variable(tf.constant(0.0, shape=[512], dtype=tf.float32),
+                                     trainable=toTrain, name='biases')
+                out = tf.nn.bias_add(conv, biases)
+                vggLayer = tf.nn.relu(out, name=scope)
+                parameters += [kernel, biases]
+                layers += [vggLayer]
+                currLayer += 1
+
+        if (currLayer < maxLayerId):
+
+            # pool4
+            vggLayer = tf.nn.max_pool(vggLayer,
+                                      ksize=[1, 2, 2, 1],
+                                      strides=[1, 2, 2, 1],
+                                      padding='SAME',
+                                      name='pool4')
+
+            # conv5_1
+            with tf.name_scope('conv5_1') as scope:
+                kernel = tf.Variable(tf.truncated_normal([3, 3, 512, 512], dtype=tf.float32,
+                                                         stddev=1e-1), name='weights')
+                conv = tf.nn.conv2d(vggLayer, kernel, [
+                                    1, 1, 1, 1], padding='SAME')
+                biases = tf.Variable(tf.constant(0.0, shape=[512], dtype=tf.float32),
+                                     trainable=toTrain, name='biases')
+                out = tf.nn.bias_add(conv, biases)
+                vggLayer = tf.nn.relu(out, name=scope)
+                parameters += [kernel, biases]
+                layers += [vggLayer]
+                currLayer += 1
+
+        if (currLayer < maxLayerId):
+
+            # conv5_2
+            with tf.name_scope('conv5_2') as scope:
+                kernel = tf.Variable(tf.truncated_normal([3, 3, 512, 512], dtype=tf.float32,
+                                                         stddev=1e-1), name='weights')
+                conv = tf.nn.conv2d(vggLayer, kernel, [
+                                    1, 1, 1, 1], padding='SAME')
+                biases = tf.Variable(tf.constant(0.0, shape=[512], dtype=tf.float32),
+                                     trainable=toTrain, name='biases')
+                out = tf.nn.bias_add(conv, biases)
+                vggLayer = tf.nn.relu(out, name=scope)
+                parameters += [kernel, biases]
+                layers += [vggLayer]
+                currLayer += 1
+
+        if (currLayer < maxLayerId):
+
+            # conv5_3
+            with tf.name_scope('conv5_3') as scope:
+                kernel = tf.Variable(tf.truncated_normal([3, 3, 512, 512], dtype=tf.float32,
+                                                         stddev=1e-1), name='weights')
+                conv = tf.nn.conv2d(vggLayer, kernel, [
+                                    1, 1, 1, 1], padding='SAME')
+                biases = tf.Variable(tf.constant(0.0, shape=[512], dtype=tf.float32),
+                                     trainable=toTrain, name='biases')
+                out = tf.nn.bias_add(conv, biases)
+                vggLayer = tf.nn.relu(out, name=scope)
+                parameters += [kernel, biases]
+                layers += [vggLayer]
+                currLayer += 1
+
+        # set the parameters
+        weights = np.load(vggParamsFilename)
+        keys = sorted(weights.keys())
+        for i, k in enumerate(keys):
+            if i >= currLayer:
+                break
+            sess.run(parameters[i].assign(weights[k]))
+
+        return layers
+
+
+def vggFeatCost(x, y):
+    return tf.reduce_mean(tf.square(x-y))
+
+
 def supResBaseModel(layer):
 
     with tf.variable_scope('SupResBaseModel'):
@@ -191,6 +475,7 @@ def supResBaseModel(layer):
         # ---->
         with tf.name_scope('layer7') as scope:
             layer = conv_layer(layer, [3, 3, 207, 3], 1, scope, 'SAME')
+            layer = tf.tanh(layer)
 
         return layer
 
@@ -226,6 +511,7 @@ def supResTestModel(layer):
         # ---->
         with tf.name_scope('layer7') as scope:
             layer = conv_layer(layer, [3, 3, 69, 3], 1, scope, 'SAME')
+            layer = tf.tanh(layer)
 
         return layer
 
@@ -233,6 +519,73 @@ def supResTestModel(layer):
 def supResModel(imgs):
 
     return supResBaseModel(imgs)
+
+#-----------------------------------------------------------------------------------------------------
+# EVAL
+#-----------------------------------------------------------------------------------------------------
+
+
+def evalSupResModel(modelPath, imgLst, upscaleFactor):
+
+    modelFilename = modelPath + "/tfData"
+
+    inputLD = tf.placeholder(tf.float32, name="input_ld")
+    inputLD = preprocess(inputLD)
+
+    # Model
+    computedHDRes = supResModel(inputLD)
+
+    # Reconstructed
+    computedHD = getReconstructed(inputLD, computedHDRes)
+
+    # Persistency
+    persistency = tf.train.Saver(pad_step_number=True, keep_checkpoint_every_n_hours=3,
+                                 filename=modelFilename)
+
+    # Params Initializer
+    varInit = tf.global_variables_initializer()
+
+    #
+    invSupResFactor = 1.0/supResFactor
+
+    with tf.Session() as sess:
+
+        # initialize params
+        sess.run(varInit)
+
+        # Restore model if needed
+        persistency.restore(sess, tf.train.latest_checkpoint(modelPath))
+
+        # input
+        with open(imgLst, 'r') as img_names_file:
+
+            for img_name in img_names_file:
+
+                imgLD = loadImgPIL(img_name.rstrip('\n'), 1)
+                imgLD = [cv.resize(imgLD[0], (0, 0), fx=0.25,
+                                   fy=0.25, interpolation=cv.INTER_AREA)]
+                imgLDUp = imgLD
+
+                factor = 1.0
+
+                while factor < upscaleFactor:
+
+                    factor *= invSupResFactor
+
+                    # probe
+                    imgLDUp = [
+                        cv.resize(imgLDUp[0], (0, 0), fx=invSupResFactor, fy=invSupResFactor, interpolation=cv.INTER_CUBIC)]
+
+                    imgLD = [cv.resize(
+                        imgLD[0], (0, 0), fx=invSupResFactor, fy=invSupResFactor)]
+                    imgLD = sess.run(computedHD, feed_dict={inputLD: imgLD})
+
+                # show the sample
+
+                toimage(imgLDUp[0]).show()
+                toimage(imgLD[0]).show()
+
+                raw_input(".")
 
 #-----------------------------------------------------------------------------------------------------
 # UNIT TESTS
@@ -300,15 +653,11 @@ def testSupResModel(modelPath, imgRootDir, testPath, nbTests):
         tf.float32, shape=inputShape, name="input_ld")
     inputLD = preprocess(inputLD)
 
-    # GT
-    outputHD = tf.placeholder(
-        tf.float32, shape=outputShape, name="output_hd")
-    outputHD = preprocess(outputHD)
+    # Model
+    computedHDRes = supResModel(inputLD)
 
-    outputHDRes = tf.subtract(outputHD, inputLD)
-
-    # Graph
-    computedHDRes = supResModel(outputHDRes)
+    # Reconstructed
+    computedHD = getReconstructed(inputLD, computedHDRes)
 
     # Persistency
     persistency = tf.train.Saver(pad_step_number=True, keep_checkpoint_every_n_hours=3,
@@ -329,16 +678,13 @@ def testSupResModel(modelPath, imgRootDir, testPath, nbTests):
 
         for step in range(nbTests):
             imgHD, imgLD = sess.run(dsView)
-            imgHDResEst, imgHDRest = sess.run(
-                [computedHDRes, outputHDRes], feed_dict={inputLD: imgLD, outputHD: imgHD})
-
-            # NB : to reconstruct the image we need to perform rescaling from -1.0..1.0 to 0.0..1.0
-
-            # show the sample
-            toimage(imgHDResEst[0]).show()
+            imgHDEst = sess.run(computedHD, feed_dict={inputLD: imgLD})
 
             # show the ground truth map
-            toimage(imgHDRest[0]).show()
+            toimage(imgHD[0]).show()
+            toimage(imgLD[0]).show()
+            # show the sample
+            toimage(imgHDEst[0]).show()
 
             raw_input(".")
 
@@ -416,11 +762,13 @@ def trainSparsityDistribution(imgRootDir, trainPath, nbTrain):
 
 def trainSupResModel(modelPath, imgRootDir, trainPath, testPath):
 
+    vggFile = "./externals/vgg16_weights.npz"
+
     tbLogsPath = modelPath + "/tbLogs"
     modelFilename = modelPath + "/tfData"
 
-    # rseed = int(time.time())
-    rseed = 20160704
+    rseed = int(time.time())
+    # rseed = 20160704
     print "SEED : " + str(rseed)
 
     tf.set_random_seed(rseed)
@@ -439,6 +787,10 @@ def trainSupResModel(modelPath, imgRootDir, trainPath, testPath):
 
     trInit = dsIt.make_initializer(trDs.data)
     tsInit = dsIt.make_initializer(tsDs.data)
+
+    # Session
+    sess = tf.Session(config=tf.ConfigProto(
+        device_count={'GPU': 1}, allow_soft_placement=True, log_device_placement=False))
 
     # Input
     inputLD = tf.placeholder(
@@ -459,15 +811,24 @@ def trainSupResModel(modelPath, imgRootDir, trainPath, testPath):
     # Optimizer
 
     # Charbonnier cost with adaptive reweighting
-    res_eps = tf.constant([0.0000001, 0.0000001, 0.0000001],
-                          dtype=tf.float32, shape=[1, 1, 1, 3], name='res_eps')
-    cost = tf.reduce_mean(
-        tf.multiply(outputHDResW,
-                    tf.sqrt(tf.add(tf.square(tf.subtract(computedHDRes, outputHDRes)), res_eps))))
+    # res_eps = tf.constant([0.0000001, 0.0000001, 0.0000001],
+    #                      dtype=tf.float32, shape=[1, 1, 1, 3], name='res_eps')
+    # cost = tf.reduce_mean(
+    #    tf.multiply(outputHDResW,
+    #                tf.sqrt(tf.add(tf.square(tf.subtract(computedHDRes, outputHDRes)), res_eps))))
 
     # Least -square cost with adaptive reweigthing
     # cost = tf.reduce_mean(tf.multiply(outputHDResW, tf.square(
     #    tf.subtract(computedHDRes, outputHDRes))))
+
+    cost = tf.reduce_mean(tf.square(tf.subtract(computedHDRes, outputHDRes)))
+
+    # Feature cost
+    reconstructedHD = getReconstructed(inputLD, computedHDRes)
+    vggRecLayers = loadVGG16(reconstructedHD, vggFile, 3, sess)
+    vggGtLayers = loadVGG16(outputHD, vggFile, 3, sess)
+
+    cost = 0.333 * vggFeatCost(vggRecLayers[2], vggGtLayers[2]) + 0.777 * cost
 
     globalStep = tf.Variable(0, trainable=False)
 
@@ -496,8 +857,7 @@ def trainSupResModel(modelPath, imgRootDir, trainPath, testPath):
     # Params Initializer
     varInit = tf.global_variables_initializer()
 
-    with tf.Session(config=tf.ConfigProto(device_count={'GPU': 1}, allow_soft_placement=True, log_device_placement=False)) as sess:
-        # with tf.Session() as sess:
+    with sess.as_default():
 
         summary_writer = tf.summary.FileWriter(tbLogsPath, graph=sess.graph)
 
@@ -525,7 +885,7 @@ def trainSupResModel(modelPath, imgRootDir, trainPath, testPath):
             # Log
             if step % logStep == 0:
 
-                # sample image to evaluate qualitatively the training progress
+                    # sample image to evaluate qualitatively the training progress
                 if logShowFirstTraining:
                     imgHDIn, imgHDOut = sess.run([outputHDRes, computedHDRes], feed_dict={
                         inputLD: imgLD, outputHD: imgHD})
@@ -601,7 +961,7 @@ if __name__ == "__main__":
 
     #------------------------------------------------------------------------------------------------
 
-    #trainSparsityDistribution(args.imgRootDir, args.trainLstPath, 10000)
+    # trainSparsityDistribution(args.imgRootDir, args.trainLstPath, 10000)
 
     trainSupResModel(args.modelPath, args.imgRootDir,
                      args.trainLstPath, args.testLstPath)
@@ -609,3 +969,7 @@ if __name__ == "__main__":
     #------------------------------------------------------------------------------------------------
 
     # testSupResModel(args.modelPath, args.imgRootDir, args.testLstPath, 10)
+
+    #------------------------------------------------------------------------------------------------
+
+    #evalSupResModel(args.modelPath, args.testLstPath, 2.0)
