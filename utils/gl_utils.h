@@ -42,6 +42,12 @@ struct Texture final
    Texture( GLuint i, glm::uvec2 size ) : id( i ), sz( size ) {}
    ~Texture() { reset(); }
 
+   void swap( Texture<fmt>& tex ) 
+   {
+      std::swap(id,tex.id);
+      std::swap(sz,tex.sz);
+   } 
+
    bool create( const glm::uvec2 size );
    void reset();
 

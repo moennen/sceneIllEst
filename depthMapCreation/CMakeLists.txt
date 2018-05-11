@@ -24,11 +24,17 @@ SET(M_INC ${MOENNEN_LOCAL}/include)
 SET(M_LIBS ${MOENNEN_LOCAL}/lib)
 SET(M_LIBS64 ${MOENNEN_LOCAL}/lib64)
 
+SET(PROJROOT ../.)
+SET(UTILS ${PROJROOT}/utils/)
+SET(EXTERNALS ${PROJROOT}/externals)
+
 INCLUDE_DIRECTORIES(
-	${MOENNEN_WKSPCE}/sceneIllEst
+	${PROJROOT}
+   ${EXTERNALS}
 	${M_INC}
 	${M_INC}/GL
 	${M_INC}/eigen3
+   ${M_INC}/varOpticalFlowCL
 )
 LINK_DIRECTORIES(
 	${M_LIBS}
@@ -36,6 +42,8 @@ LINK_DIRECTORIES(
 )
 
 ADD_EXECUTABLE(createDepthMap depthMapCreation_main.cpp)
-
 TARGET_LINK_LIBRARIES( createDepthMap GL SDL2 opencv_world )
+
+ADD_EXECUTABLE(createDepthMapHSBS depthMapCreationHSBS_main.cpp ${UTILS}/gl_utils.C )
+TARGET_LINK_LIBRARIES( createDepthMapHSBS GL GLEW SDL2 VarOpticalFlowCL opencv_world assimp )
 

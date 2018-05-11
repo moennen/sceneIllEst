@@ -6,20 +6,43 @@ import numpy as np
 from scipy.misc import toimage
 from sampleBuffDataset import *
 
+import sys
+sys.path.append('/mnt/p4/favila/moennen/local/lib/python2.7/site-packages')
+import cv2 as cv
 
-def test(libPath, dataPath, rootPath):
+
+def testSupRes(libPath, dataPath, rootPath):
     batchSz = 10
     rseed = int(time.time())
 
     samplerLib = BufferDataSamplerLibrary(libPath)
     sampler = BufferDataSampler(
-        samplerLib, dataPath, rootPath, np.array([batchSz, 256,256, 0.15], dtype=np.float32), rseed)
+        samplerLib, dataPath, rootPath, np.array([batchSz, 256, 256, 0.15], dtype=np.float32), rseed)
     data = sampler.getDataBuffers()
     print len(data)
     for buff in data:
         print buff.shape
         toimage(buff[0]).show()
         toimage(buff[batchSz-1]).show()
+
+
+def testFrameInterp(libPath, dataPath, rootPath):
+    batchSz = 100
+    rseed = int(time.time())
+
+    samplerLib = BufferDataSamplerLibrary(libPath)
+    sampler = BufferDataSampler(
+        samplerLib, dataPath, rootPath, np.array([batchSz, 256, 256, 0.75, 0], dtype=np.float32), rseed)
+    data = sampler.getDataBuffers()
+    print len(data)
+    for b in range(batchSz):
+        i = 0
+        for buff in data:
+            imName = "TestSample#" + str(i)
+            i += 1
+            print buff.shape
+            cv.imshow(imName, cv.cvtColor(buff[b], cv.COLOR_RGB2BGR))
+        cv.waitKey(0)
 
 
 if __name__ == "__main__":
@@ -32,4 +55,5 @@ if __name__ == "__main__":
         "rootPath", help="root directory of the data")
 
     args = parser.parse_args()
-    test(args.libPath, args.dbPath, args.rootPath)
+    #testSupRes(args.libPath, args.dbPath, args.rootPath)
+    testFrameInterp(args.libPath, args.dbPath, args.rootPath)

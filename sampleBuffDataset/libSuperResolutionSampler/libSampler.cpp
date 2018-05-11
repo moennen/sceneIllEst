@@ -58,7 +58,7 @@ struct Sampler final
       std::ifstream ifs( dataSetPath );
       if ( ifs.is_open() )
       {
-         _paths.reserve( 25000 );
+         _paths.reserve( 75000 );
          std::string line;
          while ( ifs.good() )
          {

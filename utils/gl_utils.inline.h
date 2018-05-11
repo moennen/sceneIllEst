@@ -101,6 +101,8 @@ bool gl_utils::Texture<fmt>::create( const glm::uvec2 size )
        glTextureType<fmt>(),
        nullptr );
 
+   glBindTexture( GL_TEXTURE_2D, 0 );
+
    return id != -1;
 }
 
@@ -133,6 +135,8 @@ bool gl_utils::uploadToTexture( Texture<fmt>& tex, const unsigned char* buff )
        glTextureType<fmt>(),
        reinterpret_cast<const GLvoid*>( buff ) );
 
+   glBindTexture( GL_TEXTURE_2D, 0 );
+
    return true;
 }
 
@@ -158,6 +162,8 @@ bool gl_utils::uploadToTexture(
        glTextureType<fmt>(),
        reinterpret_cast<const GLvoid*>( buff ) );
 
+   glBindTexture( GL_TEXTURE_2D, 0 );
+
    return true;
 }
 
@@ -174,6 +180,8 @@ bool gl_utils::readbackTexture( const Texture<fmt>& tex, unsigned char* buff )
        glTextureFormat<fmt>(),
        glTextureType<fmt>(),
        reinterpret_cast<GLvoid*>( buff ) );
+
+   glBindTexture( GL_TEXTURE_2D, 0 );
 
    return false;
 }

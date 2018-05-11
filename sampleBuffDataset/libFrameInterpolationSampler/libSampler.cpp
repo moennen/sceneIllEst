@@ -40,6 +40,7 @@ struct Sampler final
    boost::random::mt19937 _rng;
    boost::random::uniform_int_distribution<> _dataGen;
    boost::random::uniform_real_distribution<> _transGen;
+   boost::random::uniform_real_distribution<> _ldAsBlendGen;
 
    struct Data
    {
@@ -48,7 +49,11 @@ struct Sampler final
       const std::string _pathB;
       const std::string _pathC;
 
-      inline Data( const float alpha, const std::string& fA, const std::string& fB, const std::string& fC )
+      inline Data(
+          const float alpha,
+          const std::string& fA,
+          const std::string& fB,
+          const std::string& fC )
           : _alpha( alpha ), _pathA( fA ), _pathB( fB ), _pathC( fC )
       {
       }
@@ -56,14 +61,29 @@ struct Sampler final
    std::vector<Data> _data;
    const ivec3 _sampleSz;
    const float _downsample;
+   const float _ldAsBlendFreq;
+   enum
+   {
+      DefaultMode = 0,
+      PrevIsClosestMode = 1
+   };
+   const int _mode;
 
    Sampler(
        const char* dataSetPath,
        const char* dataPath,
        const float downsampleFactor,
+       const float ldAsBlendFreq,
+       const int mode,
        const ivec3 sampleSz,
        const int seed )
-       : _rng( seed ), _transGen( 0.0, 1.0 ), _sampleSz( sampleSz ), _downsample( downsampleFactor )
+       : _rng( seed ),
+         _transGen( 0.0, 1.0 ),
+         _ldAsBlendGen( 0.0, 1.0 ),
+         _sampleSz( sampleSz ),
+         _downsample( downsampleFactor ),
+         _ldAsBlendFreq( ldAsBlendFreq ),
+         _mode( mode )
    {
       HOP_PROF_FUNC();
 
@@ -71,7 +91,7 @@ struct Sampler final
       std::ifstream ifs( dataSetPath );
       if ( ifs.is_open() )
       {
-         _data.reserve( 50000 );
+         _data.reserve( 100000 );
          vector<string> splitLine;
          splitLine.reserve( 4 );
          std::string line;
@@ -95,31 +115,49 @@ struct Sampler final
                   if ( boost::filesystem::is_regular_file( fA ) &&
                        boost::filesystem::is_regular_file( fB ) &&
                        boost::filesystem::is_regular_file( fC ) )
+                  {
                      _data.emplace_back( alpha, fA.string(), fB.string(), fC.string() );
+                     // cout << alpha << " " << fA.string() << " " << fB.string() << " " <<
+                     // fC.string() << endl;
+                  }
                }
-               catch ( ... ) {}
+               catch ( ... )
+               {
+               }
             }
          }
          _data.shrink_to_fit();
+         std::cout << "Read dataset " << dataSetPath << " (" << _data.size() << ") "
+                   << ldAsBlendFreq << " " << downsampleFactor << std::endl;
       }
       _dataGen = boost::random::uniform_int_distribution<>( 0, _data.size() - 1 );
-   } 
+   }
 
    bool sample( float* buff )
    {
       HOP_PROF_FUNC();
 
       const unsigned buffSz = _sampleSz.z * _sampleSz.y * 3;
-      float* currBuffHD = buff;
-      float* currBuffLD = buff + buffSz * _sampleSz.x;
+      const unsigned batchBuffSz = buffSz * _sampleSz.x;
+
+      float* currBuffGTHD = buff;
+      float* currBuffGTLD = buff + batchBuffSz;
+      float* currBuffBlend = buff + 2 * batchBuffSz;
+      float* currBuffPrev = buff + 3 * batchBuffSz;
+      float* currBuffNext = buff + 4 * batchBuffSz;
 
       for ( size_t s = 0; s < _sampleSz.x; ++s )
       {
          const Data& data = _data[_dataGen( _rng )];
-         const std::string& iname = data._pathA;
 
-         Mat inputImg = cv_utils::imread32FC3( iname, true );
-         ivec2 imgSz( inputImg.cols, inputImg.rows );
+         const bool swapPrevNext = ( data._alpha > 0.5 ) && ( _mode == PrevIsClosestMode );
+         const float alpha = swapPrevNext ? 1.0 - data._alpha : data._alpha;
+
+         Mat prevImg = cv_utils::imread32FC3( swapPrevNext ? data._pathC : data._pathA, true );
+         Mat currImg = cv_utils::imread32FC3( data._pathB, true );
+         Mat nextImg = cv_utils::imread32FC3( swapPrevNext ? data._pathA : data._pathC, true );
+
+         ivec2 imgSz( currImg.cols, currImg.rows );
 
          // ignore too small samples
          if ( ( imgSz.x < _sampleSz.y ) || ( imgSz.y < _sampleSz.z ) )
@@ -128,13 +166,20 @@ struct Sampler final
             continue;
          }
 
+         // bad dataset : the 3 sample image have to be of the same size
+         if ( ( prevImg.cols != imgSz.x ) || ( prevImg.rows != imgSz.y ) ||
+              ( nextImg.cols != imgSz.x ) || ( nextImg.rows != imgSz.y ) )
+            return false;
+
          // random rescale
          const float ds =
              mix( 1.0f,
                   std::max( (float)_sampleSz.z / imgSz.y, (float)_sampleSz.y / imgSz.x ),
                   _transGen( _rng ) );
-         resize( inputImg, inputImg, Size(), ds, ds, CV_INTER_AREA );
-         imgSz = ivec2( inputImg.cols, inputImg.rows );
+         resize( prevImg, prevImg, Size(), ds, ds, CV_INTER_AREA );
+         resize( currImg, currImg, Size(), ds, ds, CV_INTER_AREA );
+         resize( nextImg, nextImg, Size(), ds, ds, CV_INTER_AREA );
+         imgSz = ivec2( currImg.cols, currImg.rows );
 
          // random translate
          const ivec2 trans(
@@ -142,23 +187,62 @@ struct Sampler final
              std::floor( _transGen( _rng ) * ( imgSz.y - _sampleSz.z ) ) );
 
          // crop
-         inputImg = inputImg( Rect( trans.x, trans.y, _sampleSz.y, _sampleSz.z ) );
+         prevImg = prevImg( Rect( trans.x, trans.y, _sampleSz.y, _sampleSz.z ) );
+         currImg = currImg( Rect( trans.x, trans.y, _sampleSz.y, _sampleSz.z ) );
+         nextImg = nextImg( Rect( trans.x, trans.y, _sampleSz.y, _sampleSz.z ) );
 
          // random small blur to remove artifacts
-         GaussianBlur( inputImg, inputImg, Size( 3, 3 ), 0.5 * _transGen( _rng ) );
+         const float blur = 0.5 * _transGen( _rng );
+         GaussianBlur( prevImg, prevImg, Size( 3, 3 ), blur );
+         GaussianBlur( currImg, currImg, Size( 3, 3 ), blur );
+         GaussianBlur( nextImg, nextImg, Size( 3, 3 ), blur );
 
-         // bgr 2 rgb
-         Mat sampleImg( _sampleSz.z, _sampleSz.y, CV_32FC3, currBuffHD );
-         cvtColor( inputImg, sampleImg, COLOR_BGR2RGB );
+         // For initial estimate we need to use the blend image as the LD
+         // --> sample
+         const bool blendInLD( _ldAsBlendGen( _rng ) < _ldAsBlendFreq );
 
-         // downsample / upsample
-         Mat sampleDsImg( _sampleSz.z, _sampleSz.y, CV_32FC3, currBuffLD );
-         Mat tmpDsImg;
-         resize( sampleImg, tmpDsImg, Size(), _downsample, _downsample, CV_INTER_AREA );
-         resize( tmpDsImg, sampleDsImg, Size( _sampleSz.y, _sampleSz.z ), 0, 0, CV_INTER_CUBIC );
+         // currBuffGTHD / currBuffGTLD
+         {
+            Mat sple( _sampleSz.z, _sampleSz.y, CV_32FC3, currBuffGTHD );
+            cvtColor( currImg, sple, COLOR_BGR2RGB );
+            // downsample / upsample
+            if ( !blendInLD )
+            {
+               Mat tmp;
+               resize( sple, tmp, Size(), _downsample, _downsample, CV_INTER_AREA );
+               sple = Mat( _sampleSz.z, _sampleSz.y, CV_32FC3, currBuffGTLD );
+               resize( tmp, sple, Size( _sampleSz.y, _sampleSz.z ), 0, 0, CV_INTER_LINEAR );
+            }
+         }
 
-         currBuffHD += buffSz;
-         currBuffLD += buffSz;
+         // prev / next
+         {
+            Mat sple( _sampleSz.z, _sampleSz.y, CV_32FC3, currBuffPrev );
+            cvtColor( prevImg, sple, COLOR_BGR2RGB );
+            sple = Mat( _sampleSz.z, _sampleSz.y, CV_32FC3, currBuffNext );
+            cvtColor( nextImg, sple, COLOR_BGR2RGB );
+         }
+
+         // blend
+         {
+            Mat tmp = alpha * prevImg + ( 1.0 - alpha ) * nextImg;
+            Mat sple( _sampleSz.z, _sampleSz.y, CV_32FC3, currBuffBlend );
+            cvtColor( tmp, sple, COLOR_BGR2RGB );
+            // downsample / upsample
+            if ( blendInLD )
+            {
+               Mat tmp;
+               resize( sple, tmp, Size(), _downsample, _downsample, CV_INTER_AREA );
+               sple = Mat( _sampleSz.z, _sampleSz.y, CV_32FC3, currBuffGTLD );
+               resize( tmp, sple, Size( _sampleSz.y, _sampleSz.z ), 0, 0, CV_INTER_LINEAR );
+            }
+         }
+
+         currBuffGTHD += buffSz;
+         currBuffGTLD += buffSz;
+         currBuffBlend += buffSz;
+         currBuffPrev += buffSz;
+         currBuffNext += buffSz;
       }
 
       return true;
@@ -179,13 +263,15 @@ extern "C" int getBuffersDim( const int sidx, float* dims )
 
    if ( !g_samplers[sidx].get() ) return ERROR_UNINIT;
 
-   ivec3 sz = g_samplers[sidx]->sampleSizes();
-   dims[0] = sz.y;
-   dims[1] = sz.z;
-   dims[2] = 3;
-   dims[3] = sz.y;
-   dims[4] = sz.z;
-   dims[5] = 3;
+   const ivec3 sz = g_samplers[sidx]->sampleSizes();
+   float* d = dims;
+   for ( size_t i = 0; i < 5; ++i )
+   {
+      d[0] = sz.y;
+      d[1] = sz.z;
+      d[2] = 3;
+      d += 3;
+   }
 
    return SUCCESS;
 }
@@ -201,12 +287,15 @@ extern "C" int initBuffersDataSampler(
    HOP_PROF_FUNC();
 
    // check input
-   if ( ( nParams < 4 ) || ( sidx > g_samplers.size() ) ) return ERROR_BAD_ARGS;
+   if ( ( nParams < 6 ) || ( sidx > g_samplers.size() ) ) return ERROR_BAD_ARGS;
 
    // parse params
    const ivec3 sz( params[0], params[1], params[2] );
    const float downsampleFactor = params[3];
-   g_samplers[sidx].reset( new Sampler( datasetPath, dataPath, downsampleFactor, sz, seed ) );
+   const float ldAsBlendFreq = params[4];
+   const int mode = static_cast<int>( params[5] );
+   g_samplers[sidx].reset(
+       new Sampler( datasetPath, dataPath, downsampleFactor, ldAsBlendFreq, mode, sz, seed ) );
 
    return g_samplers[sidx]->nSamples() ? SUCCESS : ERROR_BAD_DB;
 }
