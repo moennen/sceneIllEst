@@ -75,22 +75,21 @@ struct TriMeshBuffer final
    bool load(
        const size_t nvtx,
        const glm::vec3* vtx,
-       const glm::vec2* uvs,
-       const glm::vec3* normals,
        const size_t nfaces,
        const glm::uvec3* idx );
 
-   void draw( const bool wireframe = false ) const;
+   bool loadAttrib(
+       const size_t dim,
+       const float* data );
+
+   void draw(const bool wireframe = false) const;
    void reset();
 
    size_t _nvtx = 0;
    size_t _nfaces = 0;
 
-   const GLuint undef_id = -1;
-
-   GLuint vao_id = undef_id;
-
-   std::array<GLuint, 4> vbo_ids = {{undef_id, undef_id, undef_id, undef_id}};
+   GLuint vao_id = -1;
+   std::vector<GLuint> vbo_ids;
 };
 
 bool loadTriangleMesh(
@@ -98,7 +97,18 @@ bool loadTriangleMesh(
     std::vector<glm::uvec3>& idx,
     std::vector<glm::vec3>& vtx,
     std::vector<glm::vec2>& uvs,
-    std::vector<glm::vec3>& normals );
+    std::vector<glm::vec3>& normals,
+    std::vector<glm::vec4>& vcolors );
+
+bool saveTriangleMesh(
+    const char* filename,
+    const size_t nfaces,
+    const glm::uvec3* idx,
+    const size_t nvtx,
+    const glm::vec3* vtx,
+    const glm::vec2* uvs,
+    const glm::vec3* normals,
+    const glm::vec3* vcolors );
 
 struct RenderProgram final
 {

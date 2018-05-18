@@ -62,6 +62,8 @@ struct Sampler final
    const ivec3 _sampleSz;
    const float _downsample;
    const float _ldAsBlendFreq;
+   const float _minPrevNextSqDiff;
+   const float _maxPrevNextSqDiff;
    enum
    {
       DefaultMode = 0,
@@ -74,6 +76,8 @@ struct Sampler final
        const char* dataPath,
        const float downsampleFactor,
        const float ldAsBlendFreq,
+       const float minPrevNextSqDiff,
+       const float maxPrevNextSqDiff,
        const int mode,
        const ivec3 sampleSz,
        const int seed )
@@ -83,6 +87,8 @@ struct Sampler final
          _sampleSz( sampleSz ),
          _downsample( downsampleFactor ),
          _ldAsBlendFreq( ldAsBlendFreq ),
+         _minPrevNextSqDiff( minPrevNextSqDiff ),
+         _maxPrevNextSqDiff( maxPrevNextSqDiff ),
          _mode( mode )
    {
       HOP_PROF_FUNC();
@@ -197,6 +203,14 @@ struct Sampler final
          GaussianBlur( currImg, currImg, Size( 3, 3 ), blur );
          GaussianBlur( nextImg, nextImg, Size( 3, 3 ), blur );
 
+         // filter samples on differences :
+         const double sqDiff = norm( prevImg, nextImg ) / buffSz;
+         if ( ( sqDiff > _maxPrevNextSqDiff ) || ( sqDiff < _minPrevNextSqDiff ) )
+         {
+            --s;
+            continue;
+         }
+
          // For initial estimate we need to use the blend image as the LD
          // --> sample
          const bool blendInLD( _ldAsBlendGen( _rng ) < _ldAsBlendFreq );
@@ -287,15 +301,25 @@ extern "C" int initBuffersDataSampler(
    HOP_PROF_FUNC();
 
    // check input
-   if ( ( nParams < 6 ) || ( sidx > g_samplers.size() ) ) return ERROR_BAD_ARGS;
+   if ( ( nParams < 8 ) || ( sidx > g_samplers.size() ) ) return ERROR_BAD_ARGS;
 
    // parse params
    const ivec3 sz( params[0], params[1], params[2] );
    const float downsampleFactor = params[3];
    const float ldAsBlendFreq = params[4];
-   const int mode = static_cast<int>( params[5] );
-   g_samplers[sidx].reset(
-       new Sampler( datasetPath, dataPath, downsampleFactor, ldAsBlendFreq, mode, sz, seed ) );
+   const float minPrevNextSqDiff = params[5];
+   const float maxPrevNextSqDiff = params[6];
+   const int mode = static_cast<int>( params[7] );
+   g_samplers[sidx].reset( new Sampler(
+       datasetPath,
+       dataPath,
+       downsampleFactor,
+       ldAsBlendFreq,
+       minPrevNextSqDiff,
+       maxPrevNextSqDiff,
+       mode,
+       sz,
+       seed ) );
 
    return g_samplers[sidx]->nSamples() ? SUCCESS : ERROR_BAD_DB;
 }

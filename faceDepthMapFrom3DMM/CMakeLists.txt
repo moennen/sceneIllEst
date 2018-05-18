@@ -13,6 +13,9 @@ if (OPENMP_FOUND)
     set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
 endif()
 
+# GL_UTILS IMPORT/EXPORT
+ADD_DEFINITIONS( -DWITH_ASSIMP )
+
 # PREFORMANCES
 #ADD_DEFINITIONS( -DHOP_ENABLED )
 
@@ -29,6 +32,8 @@ SET(PROJROOT ../.)
 SET(UTILS ${PROJROOT}/utils/)
 SET(EXTERNALS ${PROJROOT}/externals)
 SET(FACE ${EXTERNALS}/face)
+SET(FACEMM ${FACE}/MMFaceModel)
+SET(FACEMM_PRIV ${FACEMM}/MM_Restricted)
 
 
 INCLUDE_DIRECTORIES(
@@ -45,6 +50,15 @@ LINK_DIRECTORIES(
 	${CUDA}/lib64
 )
 
-ADD_EXECUTABLE(createFaceMap faceDepthMapFrom3D_main.cpp ${FACE}/faceDetector.C ${UTILS}/gl_utils.C)
+ADD_EXECUTABLE(createFaceMap faceDepthMapFrom3D_main.cpp 
+	            ${FACE}/faceDetector.C 
+	            ${FACE}/bFaceMModel.C
+	            ${FACEMM}/face3dMLModelTracker.C
+	            ${FACEMM_PRIV}/FileHandler.cpp
+					${FACEMM_PRIV}/FileLoader.cpp
+					${FACEMM_PRIV}/FileWriter.cpp
+					${FACEMM_PRIV}/MultilinearModel.cpp
+					${FACEMM_PRIV}/MultilinearModelHandler.cpp
+	            ${UTILS}/gl_utils.C)
 
 TARGET_LINK_LIBRARIES( createFaceMap GLEW GL SDL2 dlib openblas assimp opencv_world )

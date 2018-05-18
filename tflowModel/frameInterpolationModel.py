@@ -23,21 +23,24 @@ sys.path.append(os.path.abspath(
 from sampleBuffDataset import *
 
 # Parameters
-numSteps = 50000
+numSteps = 35000
 logStep = 150
 logTrSteps = 1
 logTsSteps = 1
 logShowFirstTraining = False
 
-pyrScaleFactor = 0.7
+pyrScaleFactor = 0.75
 interpolationMode = 0
 
-trainBlendInLDFreq = 0.5
+minPrevNextSqDiff = 0.0001    # minimum value of frame difference
+maxPrevNextSqDiff = 0.0005    # maximum value ""
+
+trainBlendInLDFreq = 1.0
 
 baseLearningRate = 0.00005
 
-batchSz = 48
-imgSz = [96, 96]
+batchSz = 64
+imgSz = [48, 48]
 imgSzTst = [256, 256]
 
 # logging
@@ -55,7 +58,7 @@ class DatasetTF(object):
 
     def __init__(self, dbPath, imgRootDir, batchSz, imgSz, scaleFactor, blendInLDFreq, mode, seed):
         params = np.array([batchSz, imgSz[0], imgSz[1],
-                           scaleFactor, blendInLDFreq, mode], dtype=np.float32)
+                           scaleFactor, blendInLDFreq, minPrevNextSqDiff, maxPrevNextSqDiff, mode], dtype=np.float32)
         self.__ds = BufferDataSampler(
             DatasetTF.__lib, dbPath, imgRootDir, params, seed)
         self.data = tf.data.Dataset.from_generator(
@@ -487,9 +490,9 @@ def evalModel(modelPath, imgRootDir, imgLst, minPyrSize):
     inBlend = tf.add(tf.multiply(inPrev, interpFactor),
                      tf.multiply(inNext, 1.0-interpFactor))
 
-    inPrevRes = tf.subtract(inBlend, inPrev)
-    inNextRes = tf.subtract(inBlend, inNext)
-    inBlendRes = tf.subtract(inCurrLD, inBlend)
+    inPrevRes = tf.subtract(inPrev, inCurrLD)
+    inNextRes = tf.subtract(inNext, inCurrLD)
+    inBlendRes = tf.subtract(inBlend, inCurrLD)
 
     # Model
     outCurrRes = model(
@@ -598,7 +601,7 @@ def testDataset(imgRootDir, trainPath):
     tf.set_random_seed(rseed)
 
     trDs = DatasetTF(trainPath, imgRootDir, batchSz,
-                     imgSz, pyrScaleFactor, 1.0,  # trainBlendInLDFreq,'
+                     imgSz, pyrScaleFactor, 1.0,
                      interpolationMode, rseed)
 
     dsIt = tf.data.Iterator.from_structure(
@@ -622,16 +625,16 @@ def testDataset(imgRootDir, trainPath):
             cv.imshow('prevSple', cv.cvtColor(prevSple[0], cv.COLOR_RGB2BGR))
             cv.imshow('nextSple', cv.cvtColor(nextSple[0], cv.COLOR_RGB2BGR))
 
-            cv.waitKey(3000)
+            cv.waitKey(0)
 
-            cv.imshow('currHD', cv.cvtColor(currHD[-1], cv.COLOR_RGB2BGR))
-            cv.imshow('currLD', cv.cvtColor(currLD[-1], cv.COLOR_RGB2BGR))
-            cv.imshow('blendSple', cv.cvtColor(
-                blendSple[-1], cv.COLOR_RGB2BGR))
-            cv.imshow('prevSple', cv.cvtColor(prevSple[-1], cv.COLOR_RGB2BGR))
-            cv.imshow('nextSple', cv.cvtColor(nextSple[-1], cv.COLOR_RGB2BGR))
+            # cv.imshow('currHD', cv.cvtColor(currHD[-1], cv.COLOR_RGB2BGR))
+            # cv.imshow('currLD', cv.cvtColor(currLD[-1], cv.COLOR_RGB2BGR))
+            # cv.imshow('blendSple', cv.cvtColor(
+            #     blendSple[-1], cv.COLOR_RGB2BGR))
+            # cv.imshow('prevSple', cv.cvtColor(prevSple[-1], cv.COLOR_RGB2BGR))
+            # cv.imshow('nextSple', cv.cvtColor(nextSple[-1], cv.COLOR_RGB2BGR))
 
-            cv.waitKey(300)
+            # cv.waitKey(300)
 
 
 #-----------------------------------------------------------------------------------------------------
@@ -675,9 +678,9 @@ def testModel(modelPath, imgRootDir, testPath, nbTests):
     inBlend = preprocess(inBlendi)
 
     # Residuals
-    inPrevRes = tf.subtract(inBlend, inPrev)
-    inNextRes = tf.subtract(inBlend, inNext)
-    inBlendRes = tf.subtract(inCurrLD, inBlend)
+    inPrevRes = tf.subtract(inPrev, inCurrLD)
+    inNextRes = tf.subtract(inNext, inCurrLD)
+    inBlendRes = tf.subtract(inBlend, inCurrLD)
     inCurrRes = tf.subtract(inCurr, inCurrLD)
 
     # Model
@@ -773,9 +776,9 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath):
     inBlend = preprocess(inBlendi)
 
     # Residuals
-    inPrevRes = tf.subtract(inBlend, inPrev)
-    inNextRes = tf.subtract(inBlend, inNext)
-    inBlendRes = tf.subtract(inCurrLD, inBlend)
+    inPrevRes = tf.subtract(inPrev, inCurrLD)
+    inNextRes = tf.subtract(inNext, inCurrLD)
+    inBlendRes = tf.subtract(inBlend, inCurrLD)
     inCurrRes = tf.subtract(inCurr, inCurrLD)
 
     # Model
@@ -786,20 +789,22 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath):
     outCurr = tf.add(inCurrLD, outCurrRes)
 
     # Features
-    inFeat = loadVGG16(inCurr, vggFile, 3, sess)
-    outFeat = loadVGG16(outCurr, vggFile, 3, sess)
+    #inFeat = loadVGG16(inCurr, vggFile, 3, sess)
+    #outFeat = loadVGG16(outCurr, vggFile, 3, sess)
 
     # Costs
     resCost = tf.reduce_mean(
         tf.square(tf.subtract(outCurrRes, inCurrRes)))
-    resGCost = tf.square(tf.subtract(
-        tf.sqrt(tf.reduce_mean(tf.square(tf.subtract(outCurrRes, inBlendRes)))),
-        tf.sqrt(tf.reduce_mean(tf.square(tf.subtract(inCurrRes, inBlendRes))))))
+    # resGCost = tf.square(tf.subtract(
+    #    tf.sqrt(tf.reduce_mean(tf.square(tf.subtract(outCurrRes, inBlendRes)))),
+    #    tf.sqrt(tf.reduce_mean(tf.square(tf.subtract(inCurrRes, inBlendRes))))))
     imCost = tf.reduce_mean(
         tf.square(tf.subtract(outCurr, inCurr)))
-    featCost = tf.reduce_mean(tf.square(tf.subtract(outFeat[2], inFeat[2])))
+    #featCost = tf.reduce_mean(tf.square(tf.subtract(outFeat[2], inFeat[2])))
 
-    cost = 0.35 * resCost + 0.3 * imCost + 0.2 * resGCost + 0.15 * featCost
+    #cost = 0.35 * resCost + 0.3 * imCost + 0.25 * featCost + 0.1 * resGCost
+
+    cost = 0.65 * resCost + 0.35 * imCost
 
     # Optimizer
     globalStep = tf.Variable(0, trainable=False)
@@ -942,8 +947,8 @@ if __name__ == "__main__":
 
     #------------------------------------------------------------------------------------------------
 
-    #testModel(args.modelPath, args.imgRootDir, args.testLstPath, 100)
+    testModel(args.modelPath, args.imgRootDir, args.testLstPath, 100)
 
     #------------------------------------------------------------------------------------------------
 
-    evalModel(args.modelPath, args.imgRootDir, args.testLstPath, 64.0)
+    #evalModel(args.modelPath, args.imgRootDir, args.testLstPath, 64.0)

@@ -6,8 +6,11 @@
  *   *****************************************************************************/
 #include <utils/gl_utils.h>
 
+#ifdef WITH_ASSIMP
 #include <assimp/Importer.hpp>
+#include <assimp/Exporter.hpp>
 #include <assimp/scene.h>
+#endif
 
 #include <fstream>
 #include <iostream>
@@ -65,12 +68,15 @@ GLuint createShader( const char* shader_file_path, const GLenum shaderType )
 }
 }
 
+#ifdef WITH_ASSIMP
+
 bool gl_utils::loadTriangleMesh(
     const char* filename,
     std::vector<glm::uvec3>& idx,
     std::vector<glm::vec3>& vtx,
     std::vector<glm::vec2>& uvs,
-    std::vector<glm::vec3>& normals )
+    std::vector<glm::vec3>& normals,
+    std::vector<glm::vec4>& vcolors )
 {
    Assimp::Importer importer;
 
@@ -113,6 +119,17 @@ bool gl_utils::loadTriangleMesh(
       }
    }
 
+   // Fill vertices colours
+   if ( mesh->HasVertexColors( 0 ) )
+   {
+      vcolors.reserve( mesh->mNumVertices );
+      for ( unsigned int i = 0; i < mesh->mNumVertices; i++ )
+      {
+         const aiColor4D& RGBA = mesh->mColors[0][i];
+         vcolors.emplace_back( RGBA.r, RGBA.g, RGBA.b, RGBA.a );
+      }
+   }
+
    // Fill face indices
    // face are assumed to be triangles
    if ( mesh->HasFaces() )
@@ -129,16 +146,133 @@ bool gl_utils::loadTriangleMesh(
    return true;
 }
 
+bool gl_utils::saveTriangleMesh(
+    const char* filename,
+    const size_t nfaces,
+    const glm::uvec3* idx,
+    const size_t nvtx,
+    const glm::vec3* vtx,
+    const glm::vec2* uvs,
+    const glm::vec3* normals,
+    const glm::vec3* vcolors )
+{
+   if ( ( nvtx == 0 ) || ( vtx == nullptr ) ) return false;
+
+   aiScene scene;
+
+   scene.mRootNode = new aiNode();
+
+   scene.mMaterials = new aiMaterial*[1];
+   scene.mMaterials[0] = nullptr;
+   scene.mNumMaterials = 1;
+   scene.mMaterials[0] = new aiMaterial();
+
+   scene.mMeshes = new aiMesh*[1];
+   scene.mMeshes[0] = nullptr;
+   scene.mNumMeshes = 1;
+
+   scene.mMeshes[0] = new aiMesh();
+   scene.mMeshes[0]->mMaterialIndex = 0;
+
+   scene.mRootNode->mMeshes = new unsigned int[1];
+   scene.mRootNode->mMeshes[0] = 0;
+   scene.mRootNode->mNumMeshes = 1;
+
+   auto pMesh = scene.mMeshes[0];
+
+   pMesh->mVertices = new aiVector3D[nvtx];
+   pMesh->mNumVertices = nvtx;
+   for ( size_t i = 0; i < nvtx; ++i )
+   {
+      pMesh->mVertices[i] = aiVector3D( vtx[i].x, vtx[i].y, vtx[i].z );
+   }
+
+   if ( normals != nullptr )
+   {
+      pMesh->mNormals = new aiVector3D[nvtx];
+      for ( size_t i = 0; i < nvtx; ++i )
+      {
+         pMesh->mNormals[i] = aiVector3D( normals[i].x, normals[i].y, normals[i].z );
+      }
+   }
+
+   if ( uvs != nullptr )
+   {
+      pMesh->mTextureCoords[0] = new aiVector3D[nvtx];
+      pMesh->mNumUVComponents[0] = 2;
+      for ( size_t i = 0; i < nvtx; ++i )
+      {
+         pMesh->mTextureCoords[0][i] = aiVector3D( uvs[i].x, uvs[i].y, 0.0f );
+      }
+   }
+
+   if ( vcolors != nullptr )
+   {
+      pMesh->mColors[0] = new aiColor4D[nvtx];
+      for ( size_t i = 0; i < nvtx; ++i )
+      {
+         pMesh->mColors[0][i] = aiColor4D( vcolors[i].r, vcolors[i].g, vcolors[i].b, 1.0 );
+      }
+   }
+
+   //pMesh->mPrimitiveTypes = aiPrimitiveType_TRIANGLE;
+   if ( ( nfaces > 0 ) && ( idx != nullptr ) )
+   {
+      pMesh->mFaces = new aiFace[nfaces];
+      pMesh->mNumFaces = nfaces;
+      for ( size_t i = 0; i < nfaces; ++i )
+      {
+         aiFace& face = pMesh->mFaces[i];
+         face.mIndices = new unsigned int[3];
+         face.mNumIndices = 3;
+         face.mIndices[0] = idx[i].x;
+         face.mIndices[1] = idx[i].y;
+         face.mIndices[2] = idx[i].z;
+      }
+   }
+
+   // mExportFormatDesc->id is "collada"  and mFilePath is
+   // "C:/Users/kevin/Desktop/myColladaFile.dae"
+   Assimp::Exporter exporter;
+   const std::string fname( filename );
+   const std::string extFormat = fname.substr( fname.find_last_of( "." ) + 1 );
+   return exporter.Export( &scene, extFormat.c_str(), filename ) == AI_SUCCESS;
+}
+
+#else
+
+bool gl_utils::loadTriangleMesh(
+    const char*,
+    std::vector<glm::uvec3>&,
+    std::vector<glm::vec3>&,
+    std::vector<glm::vec2>&,
+    std::vector<glm::vec3>&,
+    std::vector<glm::vec4>& )
+{
+   return false;
+}
+
+bool gl_utils::saveTriangleMesh(
+    const char*,
+    const std::vector<glm::uvec3>&,
+    const std::vector<glm::vec3>&,
+    const std::vector<glm::vec2>&,
+    const std::vector<glm::vec3>&,
+    const std::vector<glm::vec4>& )
+{
+   return false;
+}
+
+#endif
+
 void gl_utils::TriMeshBuffer::reset()
 {
    if ( vao_id != -1 ) glDeleteVertexArrays( 1, &vao_id );
    vao_id = -1;
 
    for ( auto& vboid : vbo_ids )
-   {
       if ( vboid != -1 ) glDeleteBuffers( 1, &vboid );
-      vboid = -1;
-   }
+   vbo_ids.clear();
 
    _nvtx = 0;
    _nfaces = 0;
@@ -151,7 +285,7 @@ void gl_utils::TriMeshBuffer::draw( const bool wireframe ) const
    if ( wireframe ) glPolygonMode( GL_FRONT_AND_BACK, GL_LINE );
    if ( _nfaces )
    {
-      glBindBuffer( GL_ELEMENT_ARRAY_BUFFER, vbo_ids[3] );
+      glBindBuffer( GL_ELEMENT_ARRAY_BUFFER, vbo_ids[1] );
       glDrawElements( GL_TRIANGLES, _nfaces * sizeof( uvec3 ), GL_UNSIGNED_INT, (void*)0 );
       glBindBuffer( GL_ELEMENT_ARRAY_BUFFER, 0 );
    }
@@ -164,60 +298,55 @@ void gl_utils::TriMeshBuffer::draw( const bool wireframe ) const
 bool gl_utils::TriMeshBuffer::load(
     const size_t nvtx,
     const glm::vec3* vtx,
-    const glm::vec2* uvs,
-    const glm::vec3* normals,
     const size_t nfaces,
     const glm::uvec3* idx )
 {
-   // reset();
+   //reset();
 
-   if ( nvtx == 0 ) return true;
+   if ( ( nvtx == 0 ) || ( vtx == nullptr ) ) return false;
 
-   if ( vtx != nullptr )
-   {
-      glGenVertexArrays( 1, &vao_id );
-      glBindVertexArray( vao_id );
-      glGenBuffers( 1, &vbo_ids[0] );
-      glBindBuffer( GL_ARRAY_BUFFER, vbo_ids[0] );
-      glBufferData( GL_ARRAY_BUFFER, nvtx * sizeof( vec3 ), value_ptr( vtx[0] ), GL_STATIC_DRAW );
-      glVertexAttribPointer( 0, 3, GL_FLOAT, GL_FALSE, 0, NULL );
-      glEnableVertexAttribArray( 0 );
-      glBindBuffer( GL_ARRAY_BUFFER, 0 );
-      _nvtx = nvtx;
-   }
-   else
-      return false;
+   vbo_ids.resize( 2, -1 );
 
-   if ( normals != nullptr )
-   {
-      glGenBuffers( 1, &vbo_ids[1] );
-      glBindBuffer( GL_ARRAY_BUFFER, vbo_ids[1] );
-      glBufferData(
-          GL_ARRAY_BUFFER, nvtx * sizeof( vec3 ), value_ptr( normals[0] ), GL_STATIC_DRAW );
-      glVertexAttribPointer( 1, 3, GL_FLOAT, GL_FALSE, 0, NULL );
-      glEnableVertexAttribArray( 1 );
-      glBindBuffer( GL_ARRAY_BUFFER, 0 );
-   }
-
-   if ( uvs != nullptr )
-   {
-      glGenBuffers( 1, &vbo_ids[2] );
-      glBindBuffer( GL_ARRAY_BUFFER, vbo_ids[2] );
-      glBufferData( GL_ARRAY_BUFFER, nvtx * sizeof( vec2 ), value_ptr( uvs[0] ), GL_STATIC_DRAW );
-      glVertexAttribPointer( 2, 2, GL_FLOAT, GL_FALSE, 0, NULL );
-      glEnableVertexAttribArray( 2 );
-      glBindBuffer( GL_ARRAY_BUFFER, 0 );
-   }
+   glGenVertexArrays( 1, &vao_id );
+   glBindVertexArray( vao_id );
+   glGenBuffers( 1, &vbo_ids[0] );
+   glBindBuffer( GL_ARRAY_BUFFER, vbo_ids[0] );
+   glBufferData( GL_ARRAY_BUFFER, nvtx * sizeof( vec3 ), value_ptr( vtx[0] ), GL_STATIC_DRAW );
+   glVertexAttribPointer( 0, 3, GL_FLOAT, GL_FALSE, 0, NULL );
+   glEnableVertexAttribArray( 0 );
+   glBindBuffer( GL_ARRAY_BUFFER, 0 );
+   _nvtx = nvtx;
 
    if ( nfaces > 0 )
    {
-      glGenBuffers( 1, &vbo_ids[3] );
-      glBindBuffer( GL_ELEMENT_ARRAY_BUFFER, vbo_ids[3] );
+      glGenBuffers( 1, &vbo_ids[1] );
+      glBindBuffer( GL_ELEMENT_ARRAY_BUFFER, vbo_ids[1] );
       glBufferData(
           GL_ELEMENT_ARRAY_BUFFER, nfaces * sizeof( uvec3 ), value_ptr( idx[0] ), GL_STATIC_DRAW );
       _nfaces = nfaces;
       glBindBuffer( GL_ELEMENT_ARRAY_BUFFER, 0 );
    }
+
+   glBindVertexArray( 0 );
+
+   return true;
+}
+
+bool gl_utils::TriMeshBuffer::loadAttrib( const size_t dim, const float* data )
+{
+   if ( ( _nvtx == 0 ) || ( data == nullptr ) ) return false;
+
+   glBindVertexArray( vao_id );
+
+   GLuint attribIndex = vbo_ids.size() - 1;  // faces data is not an attrib
+   vbo_ids.push_back( -1 );
+
+   glGenBuffers( 1, &vbo_ids.back() );
+   glBindBuffer( GL_ARRAY_BUFFER, vbo_ids.back() );
+   glBufferData( GL_ARRAY_BUFFER, _nvtx * sizeof( float ) * dim, data, GL_STATIC_DRAW );
+   glVertexAttribPointer( attribIndex, dim, GL_FLOAT, GL_FALSE, 0, NULL );
+   glEnableVertexAttribArray( attribIndex );
+   glBindBuffer( GL_ARRAY_BUFFER, 0 );
 
    glBindVertexArray( 0 );
 
