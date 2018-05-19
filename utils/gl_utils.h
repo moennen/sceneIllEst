@@ -42,11 +42,11 @@ struct Texture final
    Texture( GLuint i, glm::uvec2 size ) : id( i ), sz( size ) {}
    ~Texture() { reset(); }
 
-   void swap( Texture<fmt>& tex ) 
+   void swap( Texture<fmt>& tex )
    {
-      std::swap(id,tex.id);
-      std::swap(sz,tex.sz);
-   } 
+      std::swap( id, tex.id );
+      std::swap( sz, tex.sz );
+   }
 
    bool create( const glm::uvec2 size );
    void reset();
@@ -80,14 +80,17 @@ struct TriMeshBuffer final
        const size_t nfaces,
        const glm::uvec3* idx );
 
-   void draw(const bool wireframe = false) const;
+   void draw( const bool wireframe = false ) const;
    void reset();
 
    size_t _nvtx = 0;
    size_t _nfaces = 0;
 
-   GLuint vao_id = -1;
-   std::array<GLuint, 4> vbo_ids = {{-1, -1, -1, -1}};
+   const GLuint undef_id = -1;
+
+   GLuint vao_id = undef_id;
+
+   std::array<GLuint, 4> vbo_ids = {{undef_id, undef_id, undef_id, undef_id}};
 };
 
 bool loadTriangleMesh(
@@ -106,7 +109,7 @@ struct RenderProgram final
    void reset();
 
    bool activate();
-   bool deactivate() { glUseProgram(0); }
+   bool deactivate() { glUseProgram( 0 ); }
    GLint getUniform( const char* );
 
    GLuint _id;

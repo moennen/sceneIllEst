@@ -31,14 +31,6 @@ using namespace std;
 using namespace cv;
 using namespace glm;
 
-const string keys =
-    "{help h usage ? |         | print this message   }"
-    "{@faceModel     |         | face detection model }"
-    "{@faceKpModel   |         | face key points detection model }"
-    "{@imageA        |         | image   }"
-    "{@modelA        |         | model   }"
-    "{@fragmentA     |         | fshader }";
-
 static ivec2 windowSz( 1024, 768 );
 
 void init()
@@ -103,12 +95,13 @@ void drawFaceModel( const gl_utils::TriMeshBuffer& mdFace )
 {
    glColor4f( 0.0, 0.0, 1.0, 1.0 );
 
-   glMatrixMode(GL_MODELVIEW);
-   glPushMatrix();
-   glTranslatef(0.5 * windowSz.x, 0.5 * windowSz.y,0.0);
-   glScalef(2.0,2.0,0.0);
-   mdFace.draw(true);
-   glPopMatrix();
+   // glMatrixMode( GL_MODELVIEW );
+   // glPushMatrix();
+   // glTranslatef( 0.5 * windowSz.x, 0.5 * windowSz.y, 0.0 );
+   // glScalef( 1.0, 1.0, 0.0 );
+   // glDisable( GL_CULL_FACE );
+   mdFace.draw( false );
+   // glPopMatrix();
    glColor4f( 1.0, 1.0, 1.0, 1.0 );
 }
 
@@ -130,14 +123,7 @@ void draw( GLuint tex, size_t w, size_t h )
                          (float)0 + (float)h,
                          0};
    GLfloat TexCoord[] = {
-       0,
-       0,
-       1,
-       0,
-       1,
-       1,
-       0,
-       1,
+       0, 0, 1, 0, 1, 1, 0, 1,
    };
    GLubyte indices[] = {0,
                         1,
@@ -159,6 +145,14 @@ void draw( GLuint tex, size_t w, size_t h )
 
    glBindTexture( GL_TEXTURE_2D, 0 );
 }
+
+const string keys =
+    "{help h usage ? |         | print this message   }"
+    "{@faceModel     |         | face detection model }"
+    "{@faceKpModel   |         | face key points detection model }"
+    "{@imageA        |         | image   }"
+    "{@modelA        |         | model   }"
+    "{@fragmentA     |         | fshader }";
 
 int main( int argc, char* argv[] )
 {
@@ -215,7 +209,7 @@ int main( int argc, char* argv[] )
 
    // Face detector
    cv::Mat img = cv::imread( imgFilenameA.c_str() );
-   cv::cvtColor( img, img, cv::COLOR_BGR2RGB );
+   /*cv::cvtColor( img, img, cv::COLOR_BGR2RGB );
    FaceDetector faceEngine;
    faceEngine.init(
        parser.get<string>( "@faceModel" ).c_str(), parser.get<string>( "@faceKpModel" ).c_str() );
@@ -225,11 +219,11 @@ int main( int argc, char* argv[] )
    if ( !imgFaces.empty() )
    {
       faceEngine.getFacesLandmarks( img, imgFaces.size(), &imgFaces[0], &imgFacesKps[0] );
-   }
+   }*/
 
    // Load 3d model
    gl_utils::TriMeshBuffer mdFaceA;
-   {
+   /*{
       vector<uvec3> vecIdx;
       vector<vec3> vecVtx;
       vector<vec2> vecUvs;
@@ -247,42 +241,44 @@ int main( int argc, char* argv[] )
           vecNormals.empty() ? nullptr : &vecNormals[0],
           vecIdx.size(),
           vecIdx.empty() ? nullptr : &vecIdx[0] );
-      vec3 maxVtx(-1.0,-1.0,-1.0);
-      vec3 minVtx(100000.0,100000.0,1000000.0);
-      for (auto v : vecVtx)
+      vec3 maxVtx( -1.0, -1.0, -1.0 );
+      vec3 minVtx( 100000.0, 100000.0, 1000000.0 );
+      for ( auto v : vecVtx )
       {
-        maxVtx = max(maxVtx,v);
-        minVtx = min(minVtx,v);
+         maxVtx = max( maxVtx, v );
+         minVtx = min( minVtx, v );
       }
-      std::cout << maxVtx.x << "," << maxVtx.y << "," << maxVtx.z  << endl;
-      std::cout << minVtx.x << "," << minVtx.y << "," << minVtx.z  << endl;
-   }
-   /*{
-    vec3 vtx[4] = { {(float)0,(float)0,(float)0,}, {(float)0 + windowSz.x,(float)0,(float)0},
-                    {(float)0 + (float)windowSz.x, (float)0 + (float)windowSz.y,(float)0},
-                    {(float)0,(float)0 + (float)windowSz.y,(float)0}};
-    uvec3 indices[2] = { {0u,1u,2u},  // first triangle (bottom left - top left - top right)
-                       {0u,2u,3u} }; 
-
-    mdFaceA.load(4, &vtx[0],nullptr,nullptr,2,&indices[0]);
+      std::cout << maxVtx.x << "," << maxVtx.y << "," << maxVtx.z << endl;
+      std::cout << minVtx.x << "," << minVtx.y << "," << minVtx.z << endl;
+      std::cout << vecIdx.size() << endl;
    }*/
+   {
+      vec3 vtx[4] = {{
+                         (float)0, (float)0, (float)0,
+                     },
+                     {(float)0 + windowSz.x, (float)0, (float)0},
+                     {(float)0 + (float)windowSz.x, (float)0 + (float)windowSz.y, (float)0},
+                     {(float)0, (float)0 + (float)windowSz.y, (float)0}};
+      uvec3 indices[2] = {{0u, 1u, 2u},  // first triangle (bottom left - top left - top right)
+                          {0u, 2u, 3u}};
 
-
+      mdFaceA.load( 4, &vtx[0], nullptr, nullptr, 2, &indices[0] );
+   }
 
    /*string fragFilenameA = parser.get<string>( "@fragmentA" );
    gl_utils::RenderProgram renderN;
-   if (!renderN.load(fragFilenameA.c_str())) 
+   if (!renderN.load(fragFilenameA.c_str()))
    {
       std::cerr << "Cannot load shaders : " << fragFilenameA << std::endl;
       return -1;
    }
-   if (!renderN.activate()) 
+   if (!renderN.activate())
    {
       std::cerr << "Cannot use program : " << fragFilenameA << std::endl;
       return -1;
    }
    renderN.deactivate();*/
-   
+
    bool running = true;
    Uint32 start;
    SDL_Event event;
@@ -349,15 +345,15 @@ int main( int argc, char* argv[] )
          }
       }
       glClear( GL_COLOR_BUFFER_BIT );
-      glMatrixMode(GL_MODELVIEW);
+      /*glMatrixMode( GL_MODELVIEW );
       glPushMatrix();
       glLoadIdentity();
       draw( texA.id, texA.sz.x, texA.sz.y );
-      drawFaces( imgFaces, imgFacesKps );
-      glPopMatrix();
-      
+      // drawFaces( imgFaces, imgFacesKps );
+      glPopMatrix();*/
+
       drawFaceModel( mdFaceA );
-      
+
       SDL_GL_SwapWindow( window );
       if ( 1000 / 60 > ( SDL_GetTicks() - start ) )
          SDL_Delay( 1000 / 60 - ( SDL_GetTicks() - start ) );
