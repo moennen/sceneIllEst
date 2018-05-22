@@ -16,9 +16,11 @@
 
 #include <opencv2/opencv.hpp>
 #include <Eigen/Dense>
-#include <libFace3d/3dFaceModel01/MM_Restricted/MultilinearModelHandler.h>
+#include <MM_Restricted/MultilinearModelHandler.h>
 #include <GL/gl.h>
 #include <vector>
+
+#include <glm/glm.hpp>
 
 class Face3dMLModelTracker
 {
@@ -45,15 +47,20 @@ class Face3dMLModelTracker
        float alpha,
        TImg& faceTexture );
 
-   bool getVerticesFromParams( const TFaceParams&, std::vector<float>& );
-   const std::vector<GLuint>& getFaces() const { return _modelFaces; }
+   bool getVerticesFromParams( const TFaceParams&, std::vector<glm::vec3>& );
+   bool getVerticesFromNormParams( const TFaceParams&, std::vector<glm::vec3>& );
+   
+   const std::vector<glm::uvec3>& getFaces() const { return _modelFaces; }
    const std::vector<float>& getUVs() const { return _modelUVs; }
+
+   inline size_t getShapeNCoeffs() const  {return _multilinearModelHandler.getTruncDim(1);}
+   inline size_t getExprNCoeffs() const  {return _multilinearModelHandler.getTruncDim(2);}
 
    static std::array<size_t, 13> getLandmarksIdx() { return _landmarksIdx; }
 
   protected:
    MultilinearModelHandler _multilinearModelHandler;
-   std::vector<GLuint> _modelFaces;
+   std::vector<glm::uvec3> _modelFaces;
    std::vector<float> _modelUVs;
    static const std::array<size_t, 13> _landmarksIdx;
 };

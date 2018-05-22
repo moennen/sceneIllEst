@@ -12,13 +12,13 @@
 // the prior written consent of Autodesk, Inc.
 //*****************************************************************************/
 
-#include <protoFace3d/face3dMLModelTracker.h>
+#include <face/face3dMLModelTracker.h>
 
-#include <libFace3d/3dFaceModel01/MM_Restricted/FileLoader.h>
-#include <libFace3d/3dFaceModel01/MM_Restricted/FileWriter.h>
-#include <libFace3d/3dFaceModel01/MM_Restricted/DataContainer.h>
+#include <MM_Restricted/FileLoader.h>
+#include <MM_Restricted/FileWriter.h>
+#include <MM_Restricted/DataContainer.h>
 
-const std::array<size_t, 13> Face3dMLModelTracker::_landmarksIdx[13] = {
+const std::array<size_t, 13> Face3dMLModelTracker::_landmarksIdx = {
     3973,  // left eye left corner
     2319,  // left eye right corner
     4889,  // right eye left corner
@@ -58,12 +58,12 @@ Face3dMLModelTracker::Face3dMLModelTracker(
    }
    else
    {
-      _modelFaces.resize( meanFaceMesh.getNumFaces() * 3 );
+      _modelFaces.resize( meanFaceMesh.getNumFaces() );
       for ( int i = 0; i < meanFaceMesh.getNumFaces(); ++i )
       {
-         _modelFaces[i * 3] = ( *( meanFaceMesh.getVertexIndexList()[i] ) )[0];
-         _modelFaces[i * 3 + 1] = ( *( meanFaceMesh.getVertexIndexList()[i] ) )[1];
-         _modelFaces[i * 3 + 2] = ( *( meanFaceMesh.getVertexIndexList()[i] ) )[2];
+         _modelFaces[i].x = ( *( meanFaceMesh.getVertexIndexList()[i] ) )[0];
+         _modelFaces[i].y = ( *( meanFaceMesh.getVertexIndexList()[i] ) )[1];
+         _modelFaces[i].z = ( *( meanFaceMesh.getVertexIndexList()[i] ) )[2];
       }
    }
 }
@@ -100,9 +100,34 @@ bool Face3dMLModelTracker::updateFaceTexture(
 
 bool Face3dMLModelTracker::getVerticesFromParams(
     const TFaceParams& params,
-    std::vector<float>& vertices )
+    std::vector<glm::vec3>& vertices )
 {
+   std::vector<float> vtx;
    _multilinearModelHandler.reconstructForWeights(
-       static_cast<const double*>( params.data() ), vertices );
+       static_cast<const double*>( params.data() ), vtx );
+   vertices.resize(vtx.size()/3);
+   for( size_t v=0;v<vertices.size();++v)
+   {
+      vertices[v].x = vtx[v*3];
+      vertices[v].y = vtx[v*3 + 1];
+      vertices[v].z = vtx[v*3 + 2];
+   }
+   return true;
+}
+
+bool Face3dMLModelTracker::getVerticesFromNormParams(
+    const TFaceParams& params,
+    std::vector<glm::vec3>& vertices )
+{
+   std::vector<float> vtx;
+   _multilinearModelHandler.reconstructForVariations(
+       static_cast<const double*>( params.data() ), vtx );
+   vertices.resize(vtx.size()/3);
+   for( size_t v=0;v<vertices.size();++v)
+   {
+      vertices[v].x = vtx[v*3];
+      vertices[v].y = vtx[v*3 + 1];
+      vertices[v].z = vtx[v*3 + 2];
+   }
    return true;
 }

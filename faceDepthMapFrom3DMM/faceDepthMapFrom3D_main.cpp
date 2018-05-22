@@ -23,7 +23,7 @@
 // face detector / models
 #include "externals/face/faceDetector.h"
 #include "externals/face/bFaceMModel.h"
-#include "externals/face/MMFaceModel/face3dMLModelTracker.h"
+#include "externals/face/face3dMLModelTracker.h"
 
 #include <memory>
 #include <random>

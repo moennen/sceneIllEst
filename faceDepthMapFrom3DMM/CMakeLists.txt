@@ -19,10 +19,10 @@ ADD_DEFINITIONS( -DWITH_ASSIMP )
 # PREFORMANCES
 #ADD_DEFINITIONS( -DHOP_ENABLED )
 
-SET(MOENNEN_LOCAL /usr/local)
-SET(MOENNEN_WKSPCE /home/moennen)
-#SET(MOENNEN_LOCAL /mnt/p4/favila/moennen/local)
-#SET(MOENNEN_WKSPCE /mnt/p4/avila/moennen_wkspce)
+#SET(MOENNEN_LOCAL /usr/local)
+#SET(MOENNEN_WKSPCE /home/moennen)
+SET(MOENNEN_LOCAL /mnt/p4/favila/moennen/local)
+SET(MOENNEN_WKSPCE /mnt/p4/avila/moennen_wkspce)
 SET(CUDA /usr/local/cuda)
 SET(M_INC ${MOENNEN_LOCAL}/include)
 SET(M_LIBS ${MOENNEN_LOCAL}/lib)
@@ -32,9 +32,7 @@ SET(PROJROOT ../.)
 SET(UTILS ${PROJROOT}/utils/)
 SET(EXTERNALS ${PROJROOT}/externals)
 SET(FACE ${EXTERNALS}/face)
-SET(FACEMM ${FACE}/MMFaceModel)
-SET(FACEMM_PRIV ${FACEMM}/MM_Restricted)
-
+SET(FACEMM /mnt/p4/flameBGD/MMFaceModel)
 
 INCLUDE_DIRECTORIES(
 	${MOENNEN_WKSPCE}/sceneIllEst
@@ -43,6 +41,7 @@ INCLUDE_DIRECTORIES(
 	${M_INC}/eigen3
 	${PROJROOT}
 	${EXTERNALS}
+	${FACEMM}
 )
 LINK_DIRECTORIES(
 	${M_LIBS}
@@ -53,12 +52,12 @@ LINK_DIRECTORIES(
 ADD_EXECUTABLE(createFaceMap faceDepthMapFrom3D_main.cpp 
 	            ${FACE}/faceDetector.C 
 	            ${FACE}/bFaceMModel.C
-	            ${FACEMM}/face3dMLModelTracker.C
-	            ${FACEMM_PRIV}/FileHandler.cpp
-					${FACEMM_PRIV}/FileLoader.cpp
-					${FACEMM_PRIV}/FileWriter.cpp
-					${FACEMM_PRIV}/MultilinearModel.cpp
-					${FACEMM_PRIV}/MultilinearModelHandler.cpp
+	            ${FACE}/face3dMLModelTracker.C
+	            ${FACEMM}/MM_Restricted/FileHandler.cpp
+					${FACEMM}/MM_Restricted/FileLoader.cpp
+					${FACEMM}/MM_Restricted/FileWriter.cpp
+					${FACEMM}/MM_Restricted/MultilinearModel.cpp
+					${FACEMM}/MM_Restricted/MultilinearModelHandler.cpp
 	            ${UTILS}/gl_utils.C)
 
-TARGET_LINK_LIBRARIES( createFaceMap GLEW GL SDL2 dlib openblas assimp opencv_world )
+TARGET_LINK_LIBRARIES( createFaceMap GLEW GL SDL2 cudnn cusolver curand cudart cublas dlib openblas assimp opencv_world )
