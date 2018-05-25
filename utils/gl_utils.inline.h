@@ -177,13 +177,13 @@ bool gl_utils::readbackTexture( const Texture<fmt>& tex, unsigned char* buff )
    glGetTexImage(
        GL_TEXTURE_2D,
        0,
-       glTextureFormat<fmt>(),
+       glTextureInputFormat<fmt>(),
        glTextureType<fmt>(),
        reinterpret_cast<GLvoid*>( buff ) );
 
    glBindTexture( GL_TEXTURE_2D, 0 );
 
-   return false;
-}
+   return true;
+ }
 
 #endif  // _UTILS_GL_UTILS_INLINE_H

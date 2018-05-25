@@ -254,11 +254,13 @@ bool gl_utils::loadTriangleMesh(
 
 bool gl_utils::saveTriangleMesh(
     const char*,
-    const std::vector<glm::uvec3>&,
-    const std::vector<glm::vec3>&,
-    const std::vector<glm::vec2>&,
-    const std::vector<glm::vec3>&,
-    const std::vector<glm::vec4>& )
+    const size_t,
+    const glm::uvec3*,
+    const size_t,
+    const glm::vec3*,
+    const glm::vec2*,
+    const glm::vec3*,
+    const glm::vec3* )
 {
    return false;
 }

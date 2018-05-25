@@ -55,8 +55,8 @@ void init()
    glLoadIdentity();
    glOrtho( 0.0, windowSz.x, windowSz.y, 0.0, -10000.0, 10000.0 );
    glEnable( GL_BLEND );
-   //glEnable( GL_DEPTH_TEST );
-   //glEnable( GL_CULL_FACE );
+   // glEnable( GL_DEPTH_TEST );
+   // glEnable( GL_CULL_FACE );
    glFrontFace( GL_CW );
    glEnable( GL_TEXTURE_2D );
    glBlendFunc( GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA );
@@ -111,28 +111,18 @@ void drawFaces( const vector<vec4>& faces, const vector<vector<vec2> >& facesKp 
 
 void drawFaceModel( const gl_utils::TriMeshBuffer& mdFace, float ts )
 {
-   glColor4f( 0.0, 0.1, 0.85, 1.0 );
-
-   glMatrixMode( GL_MODELVIEW );
-   // glEnable( GL_LIGHTING );
-   // glEnable( GL_LIGHT0 );
-   // glLightfv(GL_LIGHT0,GL_AMBIENT,value_ptr(vec4(10.0,10.0,10.0,1.0)));
-   float ambientLight[] = {0.2f, 0.2f, 0.2f, 1.0f};
-   float diffuseLight[] = {0.8f, 0.8f, 0.8, 1.0f};
-   float specularLight[] = {0.5f, 0.5f, 0.5f, 1.0f};
-   float position[] = {-1.5f, 1.0f, -4.0f, 1.0f};
-
    // Assign created components to GL_LIGHT0
    glLightfv( GL_LIGHT0, GL_AMBIENT, ambientLight );
    glLightfv( GL_LIGHT0, GL_DIFFUSE, diffuseLight );
    glLightfv( GL_LIGHT0, GL_SPECULAR, specularLight );
    glLightfv( GL_LIGHT0, GL_POSITION, position );
+
    glPushMatrix();
    glTranslatef( 0.5 * windowSz.x, 0.5 * windowSz.y, 0.0 );
    glScalef( 2.0, 2.0, 0.0 );
    glRotatef( 180.0, 0.0, 0.0, 1.0 );
    glRotatef( ts, 0.0, 1.0, 0.0 );
-   mdFace.draw( true );
+   mdFace.draw();
    glPopMatrix();
    glColor4f( 1.0, 1.0, 1.0, 1.0 );
 }
@@ -155,7 +145,14 @@ void draw( GLuint tex, size_t w, size_t h )
                          (float)0 + (float)h,
                          0};
    GLfloat TexCoord[] = {
-       0, 0, 1, 0, 1, 1, 0, 1,
+       0,
+       0,
+       1,
+       0,
+       1,
+       1,
+       0,
+       1,
    };
    GLubyte indices[] = {0,
                         1,
@@ -369,19 +366,20 @@ int main( int argc, char* argv[] )
     mdFaceA.load(4, &vtx[0],nullptr,nullptr,2,&indices[0]);
    }*/
 
-   /*string fragFilenameA = parser.get<string>( "@fragmentA" );
+   string fragFilenameA = "face_frag.glsl";  // parser.get<string>( "@fragmentA" );
+   string vtxFilenameA = "face_vtx.glsl";    // parser.get<string>( "@fragmentA" );
    gl_utils::RenderProgram renderN;
-   if (!renderN.load(fragFilenameA.c_str()))
+   if ( !renderN.load( fragFilenameA.c_str(), vtxFilenameA.c_str() ) )
    {
       std::cerr << "Cannot load shaders : " << fragFilenameA << std::endl;
       return -1;
    }
-   if (!renderN.activate())
+   if ( !renderN.activate() )
    {
       std::cerr << "Cannot use program : " << fragFilenameA << std::endl;
       return -1;
    }
-   renderN.deactivate();*/
+   // renderN.deactivate();
 
    bool running = true;
    bool changed = true;
@@ -545,7 +543,7 @@ int main( int argc, char* argv[] )
 
       drawFaceModel( mdFaceA, ts );
 
-      if (faceModel==1)
+      if ( faceModel == 1 )
       {
          const auto colour = vec4( 0.0, 1.0, 0.0, 0.85 );
          glColor4f( 0.0, 0.1, 0.85, 1.0 );
@@ -557,7 +555,7 @@ int main( int argc, char* argv[] )
          glRotatef( ts, 0.0, 1.0, 0.0 );
          for ( const auto& fps : BFaceMModel::getLandmarksIdx() )
          {
-            const float r = 3.0;
+            const float r = 1.25;
             auto pos = vecVtx[fps];
             glBegin( GL_TRIANGLE_FAN );
             glColor4fv( glm::value_ptr( colour * 0.5f ) );
@@ -565,8 +563,8 @@ int main( int argc, char* argv[] )
             glColor4fv( value_ptr( colour ) );
             for ( int n = 0; n <= 128; ++n )
             {
-              float const t = 2 * M_PI * (float)n / (float)128;
-              glVertex3f( pos.x + sin( t ) * r, pos.y + cos( t ) * r, pos.z );
+               float const t = 2 * M_PI * (float)n / (float)128;
+               glVertex3f( pos.x + sin( t ) * r, pos.y + cos( t ) * r, pos.z );
             }
             glEnd();
          }
@@ -574,7 +572,7 @@ int main( int argc, char* argv[] )
          glColor4f( 1.0, 1.0, 1.0, 1.0 );
       }
 
-      if (!pause) ts += tsInc;
+      if ( !pause ) ts += tsInc;
 
       SDL_GL_SwapWindow( window );
       if ( 1000 / 60 > ( SDL_GetTicks() - start ) )

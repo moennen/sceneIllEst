@@ -1,10 +1,10 @@
 /*!
-* *****************************************************************************
-*   \file depthMapCreationHSBS_main.cpp
-*   \author moennen
-*   \brief
-*   \date 2018-02-19
-*   *****************************************************************************/
+ * *****************************************************************************
+ *   \file depthMapCreationHSBS_main.cpp
+ *   \author moennen
+ *   \brief
+ *   \date 2018-02-19
+ *   *****************************************************************************/
 
 #include "utils/gl_utils.h"
 #include "utils/gl_utils.inline.h"
@@ -24,7 +24,6 @@
 #include <glm/gtc/matrix_transform.hpp>
 using namespace glm;
 
-
 #include <iostream>
 
 using namespace std;
@@ -36,8 +35,7 @@ using namespace glm;
 
 static ivec2 windowSz( 1024, 768 );
 
-
-void init(const int w, const int h)
+void init( const int w, const int h )
 {
    glMatrixMode( GL_PROJECTION );
    glLoadIdentity();
@@ -111,13 +109,13 @@ void drawTex( GLuint tex, size_t w, size_t h )
                          (float)0 + (float)h,
                          0};
    GLfloat TexCoord[] = {
+       0,
+       1,
+       1,
        1,
        1,
        0,
-       1,
        0,
-       0,
-       1,
        0,
    };
    GLubyte indices[] = {0,
@@ -141,67 +139,66 @@ void drawTex( GLuint tex, size_t w, size_t h )
    glBindTexture( GL_TEXTURE_2D, 0 );
 }
 
-void splitTexHSBS(GLuint currTex, GLuint currLeftTex, GLuint currRightTex, size_t w, size_t h )
-{ 
+void splitTexHSBS( GLuint currTex, GLuint currLeftTex, GLuint currRightTex, size_t w, size_t h )
+{
    static gl_utils::RenderProgram splitShader;
-   if (splitShader._id==-1)
+   if ( splitShader._id == -1 )
    {
-      splitShader.load("shaders/splitHSBS.glsl");
+      splitShader.load( "shaders/splitHSBS.glsl" );
    }
-   
+
    splitShader.activate();
-   
-   glActiveTexture(GL_TEXTURE0);
-   
-   glBindTexture(GL_TEXTURE_2D, currTex);
+
+   glActiveTexture( GL_TEXTURE0 );
+
+   glBindTexture( GL_TEXTURE_2D, currTex );
    glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
-   glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );  
+   glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
    glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
    glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR );
-   
-   gl_utils::RenderTarget renderTarget( uvec2(w/2,h) );
+
+   gl_utils::RenderTarget renderTarget( uvec2( w / 2, h ) );
    GLuint lrTex[2] = {currLeftTex, currRightTex};
    renderTarget.bind( 2, &lrTex[0] );
-   
-   drawTex(currTex,w/2,h);
-   
+
+   drawTex( currTex, w / 2, h );
+
    renderTarget.unbind();
-   
-   glBindTexture(GL_TEXTURE_2D, 0);
-   
+
+   glBindTexture( GL_TEXTURE_2D, 0 );
+
    splitShader.deactivate();
 }
 
-void ofColorTransform(GLuint inTex, GLuint outTex, size_t w, size_t h )
-{ 
+void ofColorTransform( GLuint inTex, GLuint outTex, size_t w, size_t h )
+{
    static gl_utils::RenderProgram ofCtShader;
-   if (ofCtShader._id==-1)
+   if ( ofCtShader._id == -1 )
    {
-      ofCtShader.load("shaders/ofColourTransform.glsl");
+      ofCtShader.load( "shaders/ofColourTransform.glsl" );
    }
-   
+
    ofCtShader.activate();
-   
-   glActiveTexture(GL_TEXTURE0);
-   
-   glBindTexture(GL_TEXTURE_2D, inTex);
+
+   glActiveTexture( GL_TEXTURE0 );
+
+   glBindTexture( GL_TEXTURE_2D, inTex );
    glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE );
-   glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );  
+   glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
    glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
    glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR );
-   
-   gl_utils::RenderTarget renderTarget( uvec2(w,h) );
+
+   gl_utils::RenderTarget renderTarget( uvec2( w, h ) );
    renderTarget.bind( 1, &outTex );
-   
-   drawTex(inTex,w,h);
-   
+
+   drawTex( inTex, w, h );
+
    renderTarget.unbind();
-   
-   glBindTexture(GL_TEXTURE_2D, 0);
-   
+
+   glBindTexture( GL_TEXTURE_2D, 0 );
+
    ofCtShader.deactivate();
 }
-
 
 void gotoFrame( VideoCapture& in, int frame ) { in.set( CV_CAP_PROP_POS_FRAMES, frame ); }
 
@@ -229,6 +226,17 @@ const string keys =
     "{help h usage ? |         | print this message   }"
     "{@videoFile     |         | inpunt file          }";
 
+enum
+{
+   DisplayMode_Right,
+   DisplayMode_Left,
+   DisplayMode_RightLeft_Right,
+   DisplayMode_RightLeft_Left,
+   DisplayMode_Disparity,
+   DisplayMode_Motion,
+   DisplayMode_Num
+};
+
 int main( int argc, char* argv[] )
 {
    CommandLineParser parser( argc, argv, keys );
@@ -253,9 +261,9 @@ int main( int argc, char* argv[] )
       return -1;
    }
 
-   windowSz.x = currFrame.cols/2;
+   windowSz.x = currFrame.cols / 2;
    windowSz.y = currFrame.rows;
-   
+
    // SDL init
    SDL_Init( SDL_INIT_EVERYTHING );
    SDL_Window* window = SDL_CreateWindow(
@@ -267,7 +275,14 @@ int main( int argc, char* argv[] )
        SDL_WINDOW_OPENGL );
    SDL_GLContext glCtx = SDL_GL_CreateContext( window );
 
+   /*SDL_GL_SetAttribute(SDL_GL_RED_SIZE, 8);
+   SDL_GL_SetAttribute(SDL_GL_GREEN_SIZE, 8);
+   SDL_GL_SetAttribute(SDL_GL_BLUE_SIZE, 8);
+   SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 16);
+   SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);*/
+
    const bool wait = argc > 1;
+   int displayMode = DisplayMode_RightLeft_Right;
 
    bool running = true;
    Uint32 start;
@@ -280,20 +295,22 @@ int main( int argc, char* argv[] )
       return -1;
    }
 
-   init(windowSz.x,windowSz.y);
-
-   bool drawRight = false;
+   init( windowSz.x, windowSz.y );
 
    gl_utils::Texture<gl_utils::RGBA_32FP> currTex( glm::uvec2( currFrame.cols, currFrame.rows ) );
-   gl_utils::Texture<gl_utils::RGBA_32FP> currLeftTex( glm::uvec2( currFrame.cols/2, currFrame.rows ) );
-   gl_utils::Texture<gl_utils::RGBA_32FP> currRightTex( glm::uvec2( currFrame.cols/2, currFrame.rows ) );
-   
-   gl_utils::uploadToTexture( currTex, currFrame.ptr() ); 
+   gl_utils::Texture<gl_utils::RGBA_32FP> currLeftTex(
+       glm::uvec2( currFrame.cols / 2, currFrame.rows ) );
+   gl_utils::Texture<gl_utils::RGBA_32FP> currRightTex(
+       glm::uvec2( currFrame.cols / 2, currFrame.rows ) );
 
-   splitTexHSBS(currTex.id, currLeftTex.id, currRightTex.id, windowSz.x*2, windowSz.y );
-   
-   gl_utils::Texture<gl_utils::RGBA_32FP> currOfTex( glm::uvec2( currFrame.cols/2, currFrame.rows ) );
-   gl_utils::Texture<gl_utils::RGBA_32FP> prevOfTex( glm::uvec2( currFrame.cols/2, currFrame.rows ) );
+   gl_utils::uploadToTexture( currTex, currFrame.ptr() );
+
+   splitTexHSBS( currTex.id, currLeftTex.id, currRightTex.id, windowSz.x * 2, windowSz.y );
+
+   gl_utils::Texture<gl_utils::RGBA_32FP> currOfTex(
+       glm::uvec2( currFrame.cols / 2, currFrame.rows ) );
+   gl_utils::Texture<gl_utils::RGBA_32FP> prevOfTex(
+       glm::uvec2( currFrame.cols / 2, currFrame.rows ) );
 
    gl_utils::RenderTarget renderTarget( currOfTex.sz );
    renderTarget.bind( 1, &currOfTex.id );
@@ -304,7 +321,15 @@ int main( int argc, char* argv[] )
    prevOfTex.swap( currOfTex );
 
    // Create the optical flow estimator
-   OclVarOpticalFlow ofEstimator( windowSz.x, windowSz.y, false );
+   OclVarOpticalFlow::params_t ofParams = OclVarOpticalFlow::getDefaultParams();
+   ofParams.nonLinearIter = 9;
+   ofParams.robustIter = 4;
+   ofParams.solverIter = 7;
+   ofParams.gamma = 1.0;                               // gradients weight
+   ofParams.lambda = 0.1;                             // smoothness
+   ofParams.opts = OclVarOpticalFlow::OptsDoDisparity;  // see ParamsOpts
+
+   OclVarOpticalFlow ofEstimator( windowSz.x, windowSz.y, false, ofParams );
 
    while ( running )
    {
@@ -317,6 +342,22 @@ int main( int argc, char* argv[] )
             case SDL_QUIT:
                running = false;
                break;
+            case SDL_KEYDOWN:
+               /* Check the SDLKey values and move change the coords */
+               switch ( event.key.keysym.sym )
+               {
+                  case SDLK_0:
+                     break;
+                  case SDLK_2:
+                     break;
+                  case SDLK_SPACE:
+                     displayMode = ( displayMode + 1 ) % DisplayMode_Num;
+                     displayMode = displayMode < DisplayMode_RightLeft_Right
+                                       ? DisplayMode_RightLeft_Right
+                                       : displayMode;
+                     break;
+               }
+               break;
          }
       }
       if ( running )
@@ -326,28 +367,55 @@ int main( int argc, char* argv[] )
             gotoFrame( inputVid, 0 );
             continue;
          }
-         gl_utils::uploadToTexture( currTex, currFrame.ptr() ); 
-         splitTexHSBS(currTex.id, currLeftTex.id, currRightTex.id, windowSz.x*2, windowSz.y );
-   
-         //prevOfTex.swap( currOfTex );
+         gl_utils::uploadToTexture( currTex, currFrame.ptr() );
+         splitTexHSBS( currTex.id, currLeftTex.id, currRightTex.id, windowSz.x * 2, windowSz.y );
+
+         // prevOfTex.swap( currOfTex );
          ofEstimator.compute(
              currLeftTex.id,
              currRightTex.id,
              currLeftTex.sz.x,
              currLeftTex.sz.y,
              currOfTex.id,
-             -1, //prevOfTex.id,
+             -1,  // prevOfTex.id,
              1.0,
              1.0 );
 
-         //color transform the optical flow 
-         ofColorTransform(currOfTex.id, prevOfTex.id, prevOfTex.sz.x, prevOfTex.sz.y );
+         // color transform the optical flow
+         ofColorTransform( currOfTex.id, prevOfTex.id, prevOfTex.sz.x, prevOfTex.sz.y );
 
-         draw( prevOfTex.id, prevOfTex.sz.x, prevOfTex.sz.y );
-         /*if (drawRight)  draw( currRightTex.id, currRightTex.sz.x, currRightTex.sz.y );
-         else draw( currLeftTex.id, currLeftTex.sz.x, currLeftTex.sz.y );*/
-         drawRight = !drawRight;
-         //draw( currTex.id, currTex.sz.x, currTex.sz.y );
+         switch ( displayMode )
+         {
+            case DisplayMode_Motion:
+               draw( currOfTex.id, currOfTex.sz.x, currOfTex.sz.y );
+               break;
+            case DisplayMode_Disparity:
+            {
+               draw( prevOfTex.id, prevOfTex.sz.x, prevOfTex.sz.y );
+               // save
+               Mat savedFrame( prevOfTex.sz.y, prevOfTex.sz.x, CV_32FC4 );
+               Mat savedDepth( currRightTex.sz.y, currRightTex.sz.x, CV_32FC4 );
+               if ( gl_utils::readbackTexture( prevOfTex, savedDepth.data ) && 
+                    gl_utils::readbackTexture( currRightTex, savedFrame.data )  )
+               {
+                  cvtColor( savedFrame, savedFrame, cv::COLOR_RGBA2BGR );
+                  imwrite( "/tmp/rightMapCV.exr", savedFrame );
+                  cvtColor( savedDepth, savedDepth, cv::COLOR_RGBA2BGR );
+                  imwrite( "/tmp/depthMapCV.exr", savedDepth );
+               }
+            }
+            break;
+            case DisplayMode_RightLeft_Right:
+               displayMode = DisplayMode_RightLeft_Left;
+            case DisplayMode_Right:
+               draw( currRightTex.id, currRightTex.sz.x, currRightTex.sz.y );
+               break;
+            case DisplayMode_RightLeft_Left:
+               displayMode = DisplayMode_RightLeft_Right;
+            case DisplayMode_Left:
+               draw( currLeftTex.id, currLeftTex.sz.x, currLeftTex.sz.y );
+               break;
+         }
 
          SDL_GL_SwapWindow( window );
          if ( 1000 / 60 > ( SDL_GetTicks() - start ) )

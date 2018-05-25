@@ -11,8 +11,6 @@ import itertools
 from matplotlib import pyplot as plt
 from scipy.misc import toimage
 from PIL import Image
-import OpenEXR
-import Imath
 import numpy as np
 
 sys.path.append('/mnt/p4/favila/moennen/local/lib/python2.7/site-packages')
@@ -465,13 +463,22 @@ def test_model(layer):
         return layer
 
 
+# def pix2pix_model(input, train):
+
+
 def model(imgs):
 
     return base_model(imgs)
 
-#-----------------------------------------------------------------------------------------------------
-# EVAL
-#-----------------------------------------------------------------------------------------------------
+
+# def pix2pix_gmodel(input, train):
+
+
+# def gmodel():
+
+    #-----------------------------------------------------------------------------------------------------
+    # EVAL
+    #-----------------------------------------------------------------------------------------------------
 
 
 def evalModel(modelPath, imgRootDir, imgLst, minPyrSize):
@@ -789,8 +796,8 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath):
     outCurr = tf.add(inCurrLD, outCurrRes)
 
     # Features
-    #inFeat = loadVGG16(inCurr, vggFile, 3, sess)
-    #outFeat = loadVGG16(outCurr, vggFile, 3, sess)
+    # inFeat = loadVGG16(inCurr, vggFile, 3, sess)
+    # outFeat = loadVGG16(outCurr, vggFile, 3, sess)
 
     # Costs
     resCost = tf.reduce_mean(
@@ -800,9 +807,9 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath):
     #    tf.sqrt(tf.reduce_mean(tf.square(tf.subtract(inCurrRes, inBlendRes))))))
     imCost = tf.reduce_mean(
         tf.square(tf.subtract(outCurr, inCurr)))
-    #featCost = tf.reduce_mean(tf.square(tf.subtract(outFeat[2], inFeat[2])))
+    # featCost = tf.reduce_mean(tf.square(tf.subtract(outFeat[2], inFeat[2])))
 
-    #cost = 0.35 * resCost + 0.3 * imCost + 0.25 * featCost + 0.1 * resGCost
+    # cost = 0.35 * resCost + 0.3 * imCost + 0.25 * featCost + 0.1 * resGCost
 
     cost = 0.65 * resCost + 0.35 * imCost
 
@@ -938,7 +945,7 @@ if __name__ == "__main__":
 
     #------------------------------------------------------------------------------------------------
 
-    #testDataset(args.imgRootDir, args.trainLstPath)
+    # testDataset(args.imgRootDir, args.trainLstPath)
 
     #------------------------------------------------------------------------------------------------
 
@@ -951,4 +958,4 @@ if __name__ == "__main__":
 
     #------------------------------------------------------------------------------------------------
 
-    #evalModel(args.modelPath, args.imgRootDir, args.testLstPath, 64.0)
+    # evalModel(args.modelPath, args.imgRootDir, args.testLstPath, 64.0)
