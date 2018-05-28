@@ -17,8 +17,6 @@ import itertools
 #from matplotlib import pyplot as plt
 from scipy.misc import toimage
 from PIL import Image
-import OpenEXR
-import Imath
 import numpy as np
 
 sys.path.append('/mnt/p4/favila/moennen/local/lib/python2.7/site-packages')
