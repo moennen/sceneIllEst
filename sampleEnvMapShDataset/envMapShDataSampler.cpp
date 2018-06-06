@@ -348,7 +348,7 @@ bool EnvMapShDataSampler::sample( float* imgData, const uvec3 sz, float* shData,
       Quaterniond quat( rot.transpose() );
 
       // sample the fov in radians
-      float camFoV = 70.0; //_fovGen();
+      float camFoV = _fovGen();
       while ( ( camFoV < 20.0 ) || ( camFoV > 120.0 ) ) camFoV = _fovGen();
       camFoV *= M_PI / 180.0;
 

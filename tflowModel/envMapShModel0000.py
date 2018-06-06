@@ -29,11 +29,11 @@ from sampleEnvMapShDataset import *
 
 # Parameters
 # numSteps = 140000
-numSteps = 100000
-logStep = 250
+numSteps = 75000
+logStep = 150
 logTrSteps = 1
 logTsSteps = 1
-batchSz = 128
+batchSz = 32
 shOrder = 4
 doLinearCS = 1
 imgSz = [108, 192]
@@ -41,10 +41,17 @@ imgSz = [108, 192]
 envMapSz = [256, 512]
 # imgSz = envMapSz
 pixMean = [0.5, 0.5, 0.5]
-shCoeffsMean8 = [1.62535, 1.59993, 1.52873, -0.129034, -0.229063, -0.370292, 0.00808474, 0.00664647, 0.00937933, -0.000757816, -0.00102151, -0.00121659, 0.000707051, 0.000757851, 0.00084574, 0.00244401, 0.0023705, -3.71057e-05, -0.00725334, -0.0203365, -0.0511394, 0.000540162, 0.000259493, -3.54734e-05, -0.0141541, -0.0365667, -0.0914037, -0.0337918, -0.0471127, -0.0681103, 0.000125685, 0.000102473, 0.000561678, -0.0243074, -0.0345659, -0.0506261, 0.00374988, 0.0020202, 0.00125083, 0.000341624,
-                 0.000130869, -0.000197295, 0.0064905, 0.0063412, 0.0062002, -0.00141026, -0.00159163, -0.001749, 0.000723703, 0.00061244, 0.000979724, -0.0014188, -0.0013961, -0.00209469, 0.00024993, 0.000391279, 0.000524354, -0.00097943, 0.000288477, 0.0018179, -0.00940844, -0.0132097, -0.0214507, -4.10496e-05, -6.45817e-05, -0.000133848, -0.0212887, -0.0274884, -0.0410339, 0.000122876, -3.21022e-05, -0.000388814, -0.0250338, -0.032921, -0.0499909, -0.0142551, -0.016832, -0.020492, -0.000367205, -0.000425947, -0.000473871]
-shCoeffsStd8 = [0.429219, 0.429304, 0.501215, 0.322748, 0.292984, 0.33602, 0.144528, 0.144469, 0.156821, 0.131678, 0.129134, 0.138005, 0.132425, 0.117658, 0.114917, 0.137179, 0.125416, 0.127194, 0.139252, 0.134759, 0.142759, 0.0912928, 0.0881598, 0.0907393, 0.190757, 0.183104, 0.196036, 0.119776, 0.116046, 0.135213, 0.0661479, 0.0619696, 0.067106, 0.10324, 0.0980564, 0.11241, 0.075825, 0.0716308, 0.0735666, 0.0599346, 0.0581499,
-                0.0613524, 0.0828133, 0.0766802, 0.0771773, 0.0881641, 0.0802417, 0.0787247, 0.0601254, 0.0566595, 0.0619334, 0.0568282, 0.0544685, 0.0605963, 0.0476382, 0.0457157, 0.0499598, 0.0587511, 0.0565128, 0.0624207, 0.0658961, 0.0646426, 0.0695578, 0.0473787, 0.0467925, 0.0500343, 0.076179, 0.074809, 0.0810718, 0.0496845, 0.0469973, 0.0505273, 0.0915342, 0.0895412, 0.0977202, 0.0627302, 0.0623561, 0.0720656, 0.0399477, 0.038154, 0.0421067]
+# shCoeffsMean8 = [1.62535, 1.59993, 1.52873, -0.129034, -0.229063, -0.370292, 0.00808474, 0.00664647, 0.00937933, -0.000757816, -0.00102151, -0.00121659, 0.000707051, 0.000757851, 0.00084574, 0.00244401, 0.0023705, -3.71057e-05, -0.00725334, -0.0203365, -0.0511394, 0.000540162, 0.000259493, -3.54734e-05, -0.0141541, -0.0365667, -0.0914037, -0.0337918, -0.0471127, -0.0681103, 0.000125685, 0.000102473, 0.000561678, -0.0243074, -0.0345659, -0.0506261, 0.00374988, 0.0020202, 0.00125083, 0.000341624,
+#                 0.000130869, -0.000197295, 0.0064905, 0.0063412, 0.0062002, -0.00141026, -0.00159163, -0.001749, 0.000723703, 0.00061244, 0.000979724, -0.0014188, -0.0013961, -0.00209469, 0.00024993, 0.000391279, 0.000524354, -0.00097943, 0.000288477, 0.0018179, -0.00940844, -0.0132097, -0.0214507, -4.10496e-05, -6.45817e-05, -0.000133848, -0.0212887, -0.0274884, -0.0410339, 0.000122876, -3.21022e-05, -0.000388814, -0.0250338, -0.032921, -0.0499909, -0.0142551, -0.016832, -0.020492, -0.000367205, -0.000425947, -0.000473871]
+# shCoeffsStd8 = [0.429219, 0.429304, 0.501215, 0.322748, 0.292984, 0.33602, 0.144528, 0.144469, 0.156821, 0.131678, 0.129134, 0.138005, 0.132425, 0.117658, 0.114917, 0.137179, 0.125416, 0.127194, 0.139252, 0.134759, 0.142759, 0.0912928, 0.0881598, 0.0907393, 0.190757, 0.183104, 0.196036, 0.119776, 0.116046, 0.135213, 0.0661479, 0.0619696, 0.067106, 0.10324, 0.0980564, 0.11241, 0.075825, 0.0716308, 0.0735666, 0.0599346, 0.0581499,
+#                0.0613524, 0.0828133, 0.0766802, 0.0771773, 0.0881641, 0.0802417, 0.0787247, 0.0601254, 0.0566595, 0.0619334, 0.0568282, 0.0544685, 0.0605963, 0.0476382, 0.0457157, 0.0499598, 0.0587511, 0.0565128, 0.0624207, 0.0658961, 0.0646426, 0.0695578, 0.0473787, 0.0467925, 0.0500343, 0.076179, 0.074809, 0.0810718, 0.0496845, 0.0469973, 0.0505273, 0.0915342, 0.0895412, 0.0977202, 0.0627302, 0.0623561, 0.0720656, 0.0399477, 0.038154, 0.0421067]
+shCoeffsMean8 = [0.902903, 0.875094, 0.896489, -0.162082, -0.252774, -0.406744, 0.00337894, 0.00172557, 0.00311243, 0.000909537, 0.000695117, -4.90672e-05, -0.00128019, -0.00102835, -0.000301714, 0.002949, 0.00374928, 0.00226501, -0.00952863, -0.0208408, -0.0508576, -0.000182751, -0.000320935, -0.000347464, -0.0185872, -0.0366991, -0.0886874, -0.0410145, -0.0560474, -0.0794013, -0.000163254, -4.07888e-05, -2.79235e-05, -0.0313884, -0.0427534, -0.0605482, 0.00334514, 0.00201432, 0.000809579, -7.04794e-05, -0.000115991, -
+                 0.000284364, 0.00531681, 0.00525261, 0.00461419, -0.00017454, -0.000219352, -0.000313192, -0.000728616, -0.000451431, 5.66945e-05, -0.000715351, -0.000834947, -0.00157328, -0.000165865, -2.45795e-05, 0.000226656, -0.000148126, 0.000878715, 0.00207265, -0.00715132, -0.0107122, -0.0205379, -6.46675e-05, -8.40424e-05, -0.000117739, -0.0194614, -0.0248351, -0.0394562, 0.000269648, 0.000203064, 1.16736e-05, -0.0216183, -0.0284543, -0.0478178, -0.0137995, -0.0180241, -0.0228328, -6.30815e-06, -5.03176e-05, -0.000133641]
+
+shCoeffsStd8 = [0.396919, 0.3877, 0.446635, 0.329931, 0.31224, 0.353571, 0.142876, 0.142675, 0.152221, 0.131147, 0.129519, 0.135236, 0.135648, 0.129224, 0.124978, 0.140774, 0.135626, 0.13652, 0.137738, 0.133197, 0.138377, 0.0921217, 0.0883874, 0.0877252, 0.186394, 0.181423, 0.192694, 0.12275, 0.121771, 0.141144, 0.0720004, 0.0689185, 0.0716978, 0.106684, 0.103984, 0.117957, 0.0773083, 0.0739887, 0.0748107, 0.0610265, 0.0578222,
+                0.0592729, 0.0835063, 0.0797521, 0.079296, 0.0892349, 0.08521, 0.0832717, 0.0643495, 0.060952, 0.0640418, 0.0604189, 0.058079, 0.0623505, 0.0511543, 0.04894, 0.0520293, 0.0628388, 0.0605339, 0.0650797, 0.0653313, 0.063549, 0.0674159, 0.0475521, 0.0454968, 0.0472838, 0.0756618, 0.073626, 0.0784726, 0.051918, 0.0494255, 0.0514637, 0.0911271, 0.0892432, 0.0961533, 0.0650854, 0.0648895, 0.0739945, 0.0417161, 0.0398853, 0.0426519]
+
+
 tf.logging.set_verbosity(tf.logging.INFO)
 
 
@@ -120,7 +127,7 @@ def printVarTF(sess):
         print var.eval(sess)
 
 
-def conv_layer(x, filter_size, step, scope, training, padding='VALID'):
+def conv_layer(x, filter_size, step, scope, padding='VALID'):
     # tf.random_normal(filter_size))
     initializer = tf.contrib.layers.xavier_initializer()
     layer_w = tf.Variable(initializer(filter_size))
@@ -128,30 +135,303 @@ def conv_layer(x, filter_size, step, scope, training, padding='VALID'):
     layer = tf.nn.conv2d(x, layer_w, strides=[
         1, step, step, 1], padding=padding)
     layer = tf.nn.bias_add(layer, layer_b)
-    layer = tf.contrib.layers.batch_norm(
-        layer, center=True, scale=True, is_training=training, name=scope)
     layer = tf.nn.relu(layer, name=scope)
     return layer
 
 
-def dense_layer(x, out_size, initializer, scope, dropout, training):
-    layer = tf.layers.dense(x, out_size, kernel_initializer=initializer,
-                            bias_initializer=initializer)
-    layer = tf.contrib.layers.batch_norm(
-        layer, center=True, scale=True, is_training=training)
-    layer = tf.nn.relu(layer, name=scope)
-    return layer
+def envMapShModel0000_1(imgs, outputSz, dropout):
+
+    with tf.variable_scope('EnvMapShModel00001'):
+
+        # -----> preprocessing
+        with tf.name_scope('preprocess') as scope:
+            img_mean = tf.constant(pixMean, dtype=tf.float32, shape=[
+                1, 1, 1, 3], name='img_mean')
+            layer0 = imgs-img_mean
+        # layer0 = imgs
+
+        # ----> 90x48x32
+        with tf.name_scope('layer1_1') as scope:
+            layer1 = conv_layer(layer0, [7, 7, 3, 32], 2, scope)
+        # ----> 41x20x64
+        with tf.name_scope('layer2_1') as scope:
+            layer2 = conv_layer(layer1, [5, 5, 32, 64], 2, scope)
+        with tf.name_scope('layer2_2') as scope:
+            layer2 = conv_layer(layer2, [5, 5, 64, 96], 1, scope, 'SAME')
+        # with tf.name_scope('layer2_2') as scope:
+        #    layer2 = conv_layer(layer2, [5, 5, 64, 96], 1, scope)
+        # ----> 18x8x128
+        with tf.name_scope('layer3_1') as scope:
+            layer3 = conv_layer(layer2, [3, 3, 96, 128], 2, scope)
+        with tf.name_scope('layer3_2') as scope:
+            layer3 = conv_layer(layer3, [3, 3, 128, 256], 1, scope, 'SAME')
+        # ----> 18x8x128
+        with tf.name_scope('layer4_1') as scope:
+            layer4 = conv_layer(layer3, [3, 3, 256, 256], 1, scope)
+        # ----> 7x2x256
+        with tf.name_scope('layer5_1') as scope:
+            layer5 = conv_layer(layer4, [3, 3, 256, 512], 2, scope)
+        # ----> 1x1x512
+        with tf.name_scope('layer6_1') as scope:
+            layer6 = conv_layer(layer5, [3, 3, 512, 1024], 2, scope)
+
+        #
+        layer6f = tf.contrib.layers.flatten(layer6)
+        initializer = tf.contrib.layers.xavier_initializer()
+        # with tf.name_scope('layer7_0') as scope:
+        #    layer7 = tf.layers.dense(layer6f, 4096, activation=tf.nn.relu, kernel_initializer=initializer,
+        #                             bias_initializer=initializer, name=scope)
+        #    layer7d = tf.layers.dropout(layer7, rate=dropout)
+        with tf.name_scope('layer7_1') as scope:
+            layer7 = tf.layers.dense(layer6f, 2048, activation=tf.nn.relu, kernel_initializer=initializer,
+                                     bias_initializer=initializer, name=scope)
+            layer7d = tf.layers.dropout(layer7, rate=dropout)
+        with tf.name_scope('layer7_2') as scope:
+            layer7 = tf.layers.dense(layer7d, 1024, activation=tf.nn.relu, kernel_initializer=initializer,
+                                     bias_initializer=initializer, name=scope)
+            layer7d = tf.layers.dropout(layer7, rate=dropout)
+        with tf.name_scope('layer8_1') as scope:
+            outputLayer = tf.layers.dense(layer7d, outputSz, kernel_initializer=initializer,
+                                          bias_initializer=initializer, name=scope)
+
+        return outputLayer
 
 
-def dense_layer_final(x, out_size, initializer, scope, dropout, training):
-    layer = tf.layers.dense(x, out_size, kernel_initializer=initializer,
-                            bias_initializer=initializer)
-    layer = tf.contrib.layers.batch_norm(
-        layer, center=True, scale=True, is_training=training, name=scope)
-    return layer
+def envMapShModel0000_0(imgs, outputSz, dropout):
+
+    with tf.variable_scope('EnvMapShModel00001'):
+
+        # -----> preprocessing
+        with tf.name_scope('preprocess') as scope:
+            img_mean = tf.constant(pixMean, dtype=tf.float32, shape=[
+                1, 1, 1, 3], name='img_mean')
+            layer0 = imgs-img_mean
+        # layer0 = imgs
+
+        # ----> 90x48x32
+        with tf.name_scope('layer1_1') as scope:
+            layer1 = conv_layer(layer0, [7, 7, 3, 32], 2, scope)
+        # ----> 41x20x64
+        with tf.name_scope('layer2_1') as scope:
+            layer2 = conv_layer(layer1, [5, 5, 32, 64], 2, scope)
+        # ----> 18x8x128
+        with tf.name_scope('layer3_1') as scope:
+            layer3 = conv_layer(layer2, [3, 3, 64, 128], 2, scope)
+        # ----> 18x8x128
+        with tf.name_scope('layer4_1') as scope:
+            layer4 = conv_layer(layer3, [3, 3, 128, 256], 1, scope)
+        # ----> 7x2x256
+        with tf.name_scope('layer5_1') as scope:
+            layer5 = conv_layer(layer4, [3, 3, 256, 512], 2, scope)
+        # ----> 1x1x512
+        with tf.name_scope('layer6_1') as scope:
+            layer6 = conv_layer(layer5, [3, 3, 512, 1024], 2, scope)
+
+        #
+        layer6f = tf.contrib.layers.flatten(layer6)
+        initializer = tf.contrib.layers.xavier_initializer()
+        with tf.name_scope('layer7_1') as scope:
+            layer7 = tf.layers.dense(layer6f, 1024, activation=tf.nn.relu, kernel_initializer=initializer,
+                                     bias_initializer=initializer, name=scope)
+            layer7d = tf.layers.dropout(layer7, rate=dropout)
+        with tf.name_scope('layer8_1') as scope:
+            outputLayer = tf.layers.dense(layer7d, outputSz, kernel_initializer=initializer,
+                                          bias_initializer=initializer, name=scope)
+
+        return outputLayer
+
+# Base model extract a set of filters from the input image and have dense layer above of it
 
 
-def envMapShDeep9C7DModel(imgs, outputSz, dropout, training):
+def envMapShBaseModel(imgs, outputSz, dropout):
+
+    with tf.variable_scope('envMapShBaseModel'):
+
+        # -----> preprocessing
+        with tf.name_scope('preprocess') as scope:
+            img_mean = tf.constant(pixMean, dtype=tf.float32, shape=[
+                1, 1, 1, 3], name='img_mean')
+            layer0 = imgs-img_mean
+        # layer0 = imgs
+
+        # ----> 90x48x32
+        with tf.name_scope('layer1_1') as scope:
+            layer1 = conv_layer(layer0, [7, 7, 3, 32], 2, scope)
+        # ----> 41x20x64
+        with tf.name_scope('layer2_1') as scope:
+            layer2 = conv_layer(layer1, [5, 5, 32, 64], 2, scope)
+        # ----> 18x8x128
+        with tf.name_scope('layer3_1') as scope:
+            layer3 = conv_layer(layer2, [3, 3, 64, 128], 2, scope)
+        # ----> 18x8x128
+        with tf.name_scope('layer4_1') as scope:
+            layer4 = conv_layer(layer3, [3, 3, 128, 256], 2, scope)
+
+        #
+        layer6f = tf.contrib.layers.flatten(layer4)
+        initializer = tf.contrib.layers.xavier_initializer()
+        with tf.name_scope('layer7_1') as scope:
+            layer7 = tf.layers.dense(layer6f, 1024, activation=tf.nn.relu, kernel_initializer=initializer,
+                                     bias_initializer=initializer, name=scope)
+            layer7d = tf.layers.dropout(layer7, rate=dropout)
+        with tf.name_scope('layer7_2') as scope:
+            layer7 = tf.layers.dense(layer7d, 512, activation=tf.nn.relu, kernel_initializer=initializer,
+                                     bias_initializer=initializer, name=scope)
+            layer7d = tf.layers.dropout(layer7, rate=dropout)
+        with tf.name_scope('layer7_3') as scope:
+            layer7 = tf.layers.dense(layer7d, 256, activation=tf.nn.relu, kernel_initializer=initializer,
+                                     bias_initializer=initializer, name=scope)
+            layer7d = tf.layers.dropout(layer7, rate=dropout)
+        with tf.name_scope('layer8_1') as scope:
+            outputLayer = tf.layers.dense(layer7d, outputSz, kernel_initializer=initializer,
+                                          bias_initializer=initializer, name=scope)
+
+        return outputLayer
+
+
+def base_model(imgs, output_channels, dropout):
+
+    # -----> preprocessing
+    with tf.name_scope('preprocess') as scope:
+        img_mean = tf.constant(pixMean, dtype=tf.float32, shape=[
+            1, 1, 1, 3], name='img_mean')
+        layer0 = imgs-img_mean
+
+    n = 32
+
+    xinit = tf.contrib.layers.xavier_initializer()
+
+    with tf.variable_scope('layer_1'):
+        layer_1 = tf.layers.conv2d(layer0, n, [7, 7], 2, padding='same',
+                                   bias_initializer=xinit, kernel_initializer=xinit, activation=tf.nn.relu)
+
+    with tf.variable_scope('layer_2'):
+        layer_2 = tf.layers.conv2d(layer_1, n*2, [5, 5], 2, padding='same',
+                                   bias_initializer=xinit, kernel_initializer=xinit, activation=tf.nn.relu)
+
+    with tf.variable_scope('layer_3'):
+        layer_3 = tf.layers.conv2d(layer_2, n*4, [3, 3], 2, padding='same',
+                                   bias_initializer=xinit, kernel_initializer=xinit, activation=tf.nn.relu)
+
+    layer_4 = tf.layers.flatten(layer_3)
+    with tf.variable_scope("layer_4"):
+        layer_4 = tf.layers.dense(layer_4, n*8, activation=tf.nn.relu, kernel_initializer=xinit,
+                                  bias_initializer=xinit)
+        layer_4 = tf.nn.dropout(layer_4, keep_prob=1.0 - dropout)
+
+    with tf.variable_scope("layer_5"):
+        layer_5 = tf.layers.dense(layer_4, output_channels, activation=None, kernel_initializer=xinit,
+                                  bias_initializer=xinit)
+
+    return layer_5
+
+
+def envMapShSimplerBaseModel(imgs, outputSz, dropout):
+
+    with tf.variable_scope('envMapShSimplerBaseModel'):
+
+        # -----> preprocessing
+        with tf.name_scope('preprocess') as scope:
+            img_mean = tf.constant(pixMean, dtype=tf.float32, shape=[
+                1, 1, 1, 3], name='img_mean')
+            layer0 = imgs-img_mean
+        # layer0 = imgs
+
+        # ----> 90x48x32
+        with tf.name_scope('layer1_1') as scope:
+            layer1 = conv_layer(layer0, [7, 7, 3, 32], 2, scope)
+        # ----> 41x20x64
+        with tf.name_scope('layer2_1') as scope:
+            layer2 = conv_layer(layer1, [5, 5, 32, 64], 2, scope)
+        # ----> 18x8x128
+        with tf.name_scope('layer3_1') as scope:
+            layer3 = conv_layer(layer2, [3, 3, 64, 128], 2, scope)
+
+        #
+        layer6f = tf.contrib.layers.flatten(layer3)
+        initializer = tf.contrib.layers.xavier_initializer()
+        with tf.name_scope('layer7_2') as scope:
+            layer7 = tf.layers.dense(layer6f, 512, activation=tf.nn.relu, kernel_initializer=initializer,
+                                     bias_initializer=initializer, name=scope)
+            layer7d = tf.layers.dropout(layer7, rate=dropout, training=True)
+        with tf.name_scope('layer7_3') as scope:
+            layer7 = tf.layers.dense(layer7d, 256, activation=tf.nn.relu, kernel_initializer=initializer,
+                                     bias_initializer=initializer, name=scope)
+            layer7d = tf.layers.dropout(layer7, rate=dropout, training=True)
+        with tf.name_scope('layer8_1') as scope:
+            outputLayer = tf.layers.dense(layer7d, outputSz, kernel_initializer=initializer,
+                                          bias_initializer=initializer, name=scope)
+
+        return outputLayer
+
+
+def envMapShDeep9C6DModel(imgs, outputSz, dropout):
+
+    with tf.variable_scope('EnvMapShDeep9C6DModel'):
+
+        # -----> preprocessing
+        with tf.name_scope('preprocess') as scope:
+            img_mean = tf.constant(pixMean, dtype=tf.float32, shape=[
+                1, 1, 1, 3], name='img_mean')
+            layer0 = imgs-img_mean
+        # layer0 = imgs
+
+        # ----> 90x48x32
+        with tf.name_scope('layer1_1') as scope:
+            layer1 = conv_layer(layer0, [7, 7, 3, 32], 2, scope)
+        # ----> 41x20x64
+        with tf.name_scope('layer2_1') as scope:
+            layer2 = conv_layer(layer1, [5, 5, 32, 64], 2, scope)
+        with tf.name_scope('layer2_2') as scope:
+            layer2 = conv_layer(layer2, [5, 5, 64, 96], 1, scope, 'SAME')
+        with tf.name_scope('layer2_2') as scope:
+            layer2 = conv_layer(layer2, [5, 5, 96, 96], 1, scope)
+        # ----> 18x8x128
+        with tf.name_scope('layer3_1') as scope:
+            layer3 = conv_layer(layer2, [3, 3, 96, 128], 2, scope)
+        with tf.name_scope('layer3_2') as scope:
+            layer3 = conv_layer(layer3, [3, 3, 128, 256], 1, scope, 'SAME')
+        # ----> 18x8x128
+        with tf.name_scope('layer4_1') as scope:
+            layer4 = conv_layer(layer3, [3, 3, 256, 256], 1, scope)
+        # ----> 7x2x256
+        with tf.name_scope('layer5_1') as scope:
+            layer5 = conv_layer(layer4, [3, 3, 256, 512], 2, scope)
+        # ----> 1x1x512
+        with tf.name_scope('layer6_1') as scope:
+            layer6 = conv_layer(layer5, [3, 3, 512, 1024], 2, scope)
+
+        #
+        layer6f = tf.contrib.layers.flatten(layer6)
+        initializer = tf.contrib.layers.xavier_initializer()
+        with tf.name_scope('layer7_1') as scope:
+            layer7 = tf.layers.dense(layer6f, 2048, activation=tf.nn.relu, kernel_initializer=initializer,
+                                     bias_initializer=initializer, name=scope)
+            layer7d = tf.layers.dropout(layer7, rate=dropout)
+        with tf.name_scope('layer7_2') as scope:
+            layer7 = tf.layers.dense(layer7d, 1024, activation=tf.nn.relu, kernel_initializer=initializer,
+                                     bias_initializer=initializer, name=scope)
+            layer7d = tf.layers.dropout(layer7, rate=dropout)
+        with tf.name_scope('layer7_2') as scope:
+            layer7 = tf.layers.dense(layer7d, 512, activation=tf.nn.relu, kernel_initializer=initializer,
+                                     bias_initializer=initializer, name=scope)
+            layer7d = tf.layers.dropout(layer7, rate=dropout)
+        with tf.name_scope('layer7_2') as scope:
+            layer7 = tf.layers.dense(layer7d, 256, activation=tf.nn.relu, kernel_initializer=initializer,
+                                     bias_initializer=initializer, name=scope)
+            layer7d = tf.layers.dropout(layer7, rate=dropout)
+        with tf.name_scope('layer7_2') as scope:
+            layer7 = tf.layers.dense(layer7d, 128, activation=tf.nn.relu, kernel_initializer=initializer,
+                                     bias_initializer=initializer, name=scope)
+            layer7d = tf.layers.dropout(layer7, rate=dropout)
+        with tf.name_scope('layer8_1') as scope:
+            outputLayer = tf.layers.dense(layer7d, outputSz, kernel_initializer=initializer,
+                                          bias_initializer=initializer, name=scope)
+
+        return outputLayer
+
+
+def envMapShDeep9C7DModel(imgs, outputSz, dropout):
 
     with tf.variable_scope('EnvMapShDeep9C7DModel'):
 
@@ -221,9 +501,89 @@ def envMapShDeep9C7DModel(imgs, outputSz, dropout, training):
         return outputLayer
 
 
-def envMapShModel(imgs, outputSz, dropout, training):
+def envMapShDeep9C9DModel(imgs, outputSz, dropout):
 
-    return envMapShDeep9C7DModel(imgs, outputSz, dropout, training)
+    with tf.variable_scope('EnvMapShDeep9C9DModel'):
+
+        # -----> preprocessing
+        with tf.name_scope('preprocess') as scope:
+            img_mean = tf.constant(pixMean, dtype=tf.float32, shape=[
+                1, 1, 1, 3], name='img_mean')
+            layer0 = imgs-img_mean
+        # layer0 = imgs
+
+        # ----> 90x48x32
+        with tf.name_scope('layer1_1') as scope:
+            layer1 = conv_layer(layer0, [7, 7, 3, 32], 2, scope)
+        # ----> 41x20x64
+        with tf.name_scope('layer2_1') as scope:
+            layer2 = conv_layer(layer1, [5, 5, 32, 64], 2, scope)
+        with tf.name_scope('layer2_2') as scope:
+            layer2 = conv_layer(layer2, [5, 5, 64, 96], 1, scope, 'SAME')
+        with tf.name_scope('layer2_2') as scope:
+            layer2 = conv_layer(layer2, [5, 5, 96, 96], 1, scope)
+        # ----> 18x8x128
+        with tf.name_scope('layer3_1') as scope:
+            layer3 = conv_layer(layer2, [3, 3, 96, 128], 2, scope)
+        with tf.name_scope('layer3_2') as scope:
+            layer3 = conv_layer(layer3, [3, 3, 128, 256], 1, scope, 'SAME')
+        # ----> 18x8x128
+        with tf.name_scope('layer4_1') as scope:
+            layer4 = conv_layer(layer3, [3, 3, 256, 256], 1, scope)
+        # ----> 7x2x256
+        with tf.name_scope('layer5_1') as scope:
+            layer5 = conv_layer(layer4, [3, 3, 256, 512], 2, scope)
+        # ----> 1x1x512
+        with tf.name_scope('layer6_1') as scope:
+            layer6 = conv_layer(layer5, [3, 3, 512, 1024], 2, scope)
+
+        #
+        layer6f = tf.contrib.layers.flatten(layer6)
+        initializer = tf.contrib.layers.xavier_initializer()
+        with tf.name_scope('layer7_1') as scope:
+            layer7 = tf.layers.dense(layer6f, 2048, activation=tf.nn.relu, kernel_initializer=initializer,
+                                     bias_initializer=initializer, name=scope)
+            layer7d = tf.layers.dropout(layer7, rate=dropout)
+        with tf.name_scope('layer7_2') as scope:
+            layer7 = tf.layers.dense(layer7d, 1536, activation=tf.nn.relu, kernel_initializer=initializer,
+                                     bias_initializer=initializer, name=scope)
+            layer7d = tf.layers.dropout(layer7, rate=dropout)
+        with tf.name_scope('layer7_3') as scope:
+            layer7 = tf.layers.dense(layer7d, 1024, activation=tf.nn.relu, kernel_initializer=initializer,
+                                     bias_initializer=initializer, name=scope)
+            layer7d = tf.layers.dropout(layer7, rate=dropout)
+        with tf.name_scope('layer7_4') as scope:
+            layer7 = tf.layers.dense(layer7d, 768, activation=tf.nn.relu, kernel_initializer=initializer,
+                                     bias_initializer=initializer, name=scope)
+            layer7d = tf.layers.dropout(layer7, rate=dropout)
+        with tf.name_scope('layer7_5') as scope:
+            layer7 = tf.layers.dense(layer7d, 512, activation=tf.nn.relu, kernel_initializer=initializer,
+                                     bias_initializer=initializer, name=scope)
+            layer7d = tf.layers.dropout(layer7, rate=dropout)
+        with tf.name_scope('layer7_6') as scope:
+            layer7 = tf.layers.dense(layer7d, 374, activation=tf.nn.relu, kernel_initializer=initializer,
+                                     bias_initializer=initializer, name=scope)
+            layer7d = tf.layers.dropout(layer7, rate=dropout)
+        with tf.name_scope('layer7_7') as scope:
+            layer7 = tf.layers.dense(layer7d, 256, activation=tf.nn.relu, kernel_initializer=initializer,
+                                     bias_initializer=initializer, name=scope)
+            layer7d = tf.layers.dropout(layer7, rate=dropout)
+        with tf.name_scope('layer7_8') as scope:
+            layer7 = tf.layers.dense(layer7d, 128, activation=tf.nn.relu, kernel_initializer=initializer,
+                                     bias_initializer=initializer, name=scope)
+            layer7d = tf.layers.dropout(layer7, rate=dropout)
+        with tf.name_scope('layer8_1') as scope:
+            outputLayer = tf.layers.dense(layer7d, outputSz, kernel_initializer=initializer,
+                                          bias_initializer=initializer, name=scope)
+
+        return outputLayer
+
+
+def envMapShModel(imgs, outputSz, dropout):
+
+    # return envMapShBaseModel(imgs, outputSz, dropout)
+    return base_model(imgs, outputSz, dropout)
+    # return envMapShSimplerBaseModel(imgs, outputSz, dropout)
 
 
 class EnvMapShDatasetTF(object):
@@ -386,8 +746,8 @@ def trainEnvMapShModel(modelPath, imgRootDir, trainPath, testPath, linearCS):
     tbLogsPath = modelPath + "/tbLogs"
     modelFilename = modelPath + "/tfData"
 
-    rseed = int(time.time())
-    print "SEED : " + str(rseed)
+    #rseed = int(time.time())
+    rseed = 20160704
 
     tf.set_random_seed(rseed)
 
@@ -414,26 +774,39 @@ def trainEnvMapShModel(modelPath, imgRootDir, trainPath, testPath, linearCS):
 
     # NormoutputSh
     outputShMean = tf.constant(shCoeffsMean, dtype=tf.float32, shape=[
-        1, 1, 1, nbShCoeffs], name='shCoeffs_mean')
+        1, nbShCoeffs], name='shCoeffs_mean')
     outputShStd = tf.constant(shCoeffsStd, dtype=tf.float32, shape=[
-        1, 1, 1, nbShCoeffs], name='shCoeffs_mean')
+        1, nbShCoeffs], name='shCoeffs_mean')
     outputShNorm = (outputSh-outputShMean) / outputShStd
-    # outputShNorm = (outputSh-outputShMean)
+    #outputShNorm = (outputSh-outputShMean)
     # outputShNorm=outputSh
+    #outputSh = (outputSh-outputShMean) / outputShStd
+
+    # Test
+    # outputSh2 = tf.placeholder(
+    #    tf.float32, shape=outputShape, name="output_sh2")
+    # outStd = tf.sqrt(tf.reduce_mean(
+    #    tf.square(tf.subtract(outputSh2, outputShNorm))))
 
     # Graph
     computedSh = envMapShModel(inputView, nbShCoeffs, dropoutProb)
 
     # Optimizer
-    cost = tf.reduce_mean(tf.square(tf.subtract(computedSh, outputSh)))
+    costAll = tf.reduce_mean(
+        tf.square(tf.subtract(computedSh, outputSh)), 0)
+    # tf.square(tf.subtract(computedSh, outputShNorm)), 0)
+    accuracyAll = tf.reduce_mean(
+        tf.square(tf.subtract(computedSh, outputSh)), 0)
+    # tf.square(tf.subtract(computedSh*outputShStd+outputShMean,
+    #                      outputSh)), 0)
+    # tf.square(tf.subtract(computedSh+outputShMean, outputSh)), 0)
+    cost = tf.reduce_mean(costAll)
+    accuracy = tf.reduce_mean(accuracyAll)
     globalStep = tf.Variable(0, trainable=False)
     learningRate = tf.train.polynomial_decay(0.001, globalStep, numSteps, 0.0,
                                              power=0.7)
-
-    update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
-    with tf.control_dependencies(update_ops):
-        optEngine = tf.train.AdamOptimizer(learning_rate=learningRate)
-        optimizer = optEngine.minimize(cost, global_step=globalStep)
+    optEngine = tf.train.AdamOptimizer(learning_rate=learningRate)
+    optimizer = optEngine.minimize(cost, global_step=globalStep)
 
     # Persistency
     persistency = tf.train.Saver(pad_step_number=True, keep_checkpoint_every_n_hours=3,
@@ -448,16 +821,29 @@ def trainEnvMapShModel(modelPath, imgRootDir, trainPath, testPath, linearCS):
     for grad, var in grads:
         tf.summary.histogram(var.name + '/gradient', grad)
     merged_summary_op = tf.summary.merge_all()
+    tf.summary.scalar("test_loss", cost)
+    test_summary_op = tf.summary.merge_all()
+
+    # Metrics : Mean
+    meanOutputSh, meanOutputShUpdateOp = tf.contrib.metrics.streaming_mean_tensor(
+        outputSh)
+
+    currentMeanOutputSh = tf.placeholder(
+        tf.float32, shape=outputShape, name="output_sh")
+    outStdAll = tf.reshape(tf.reduce_mean(
+        currentMeanOutputSh, 0), [1, nbShCoeffs])
+    outStdAll = tf.tile(outStdAll, [batchSz, 1])
+    outStdAll = tf.sqrt(tf.reduce_mean(
+        tf.square(tf.subtract(outStdAll, outputSh)), 0))
+    outStd = tf.reduce_mean(outStdAll)
 
     # Params Initializer
     varInit = tf.global_variables_initializer()
 
-    with tf.Session(config=tf.ConfigProto(device_count={'GPU': 1}, allow_soft_placement=True, log_device_placement=False)) as sess:
+    with tf.Session(config=tf.ConfigProto(device_count={'GPU': 0})) as sess:
         # with tf.Session() as sess:
 
-        train_summary_writer = tf.summary.FileWriter(
-            tbLogsPath + "/Train", graph=sess.graph)
-        test_summary_writer = tf.summary.FileWriter(tbLogsPath + "/Test")
+        summary_writer = tf.summary.FileWriter(tbLogsPath, graph=sess.graph)
 
         # initialize params
         sess.run(varInit)
@@ -480,9 +866,9 @@ def trainEnvMapShModel(modelPath, imgRootDir, trainPath, testPath, linearCS):
             coeffs, imgs = sess.run(dsView)
 
             # Run optimization op (backprop)
-            sess.run(optimizer, feed_dict={dropoutProb: 0.2,
-                                           inputView: imgs,
-                                           outputSh: coeffs})
+            _, currMean = sess.run([optimizer, meanOutputShUpdateOp], feed_dict={dropoutProb: 0.2,
+                                                                                 inputView: imgs,
+                                                                                 outputSh: coeffs})
             # Log
             if step % logStep == 0:
 
@@ -490,41 +876,59 @@ def trainEnvMapShModel(modelPath, imgRootDir, trainPath, testPath, linearCS):
                 summary = sess.run(merged_summary_op, feed_dict={dropoutProb: 0.0,
                                                                  inputView: imgs,
                                                                  outputSh: coeffs})
-                train_summary_writer.add_summary(
-                    summary, globalStep.eval(sess))
+                summary_writer.add_summary(summary, globalStep.eval(sess))
 
                 # Sample train accuracy
                 sess.run(trInit)
-                trCost = 0
+                trAccuracy = 0
                 trStd = 0
                 for logTrStep in range(logTrSteps):
                     coeffs, imgs = sess.run(dsView)
-                    trC = sess.run(cost, feed_dict={dropoutProb: 0.0,
-                                                    inputView: imgs,
-                                                    outputSh:  coeffs})
-                    trCost += trC
+                    trAcc = sess.run(accuracy, feed_dict={dropoutProb: 0.0,
+                                                          inputView: imgs,
+                                                          outputSh:  coeffs})
+                    trAccuracy += trAcc
+                    # trAccuracyAll += trAccAll
+                    # coeffs2, imgs2 = sess.run(dsView)
+                    # trStd += sess.run(outStd, feed_dict={outputSh:  coeffs,
+                    #                                     outputSh2: coeffs2})
 
-                # Sample test accuracy
+                # print "------------------------------------------"
+                # print imgs
+                # print "------------------------------------------"
+                # print coeffs
+                # print "------------------------------------------"
+                # print computedSh.eval(feed_dict={dropoutProb: 0.0,
+                #                                 inputView: imgs,
+                #                                 outputSh:  coeffs})
+                # print "------------------------------------------"
+
+            # Sample test accuracy
                 sess.run(tsInit)
-                tsCost = 0
+                tsAccuracy = 0
+                stdAccuracy = 0
                 for logTsStep in range(logTsSteps):
                     coeffs, imgs = sess.run(dsView)
-                    tsC = sess.run(cost, feed_dict={dropoutProb: 0.0,
-                                                    inputView: imgs,
-                                                    outputSh:  coeffs,
-                                                    currentMeanOutputSh: currMean})
-                    tsCost += tsC
+                    tsAcc, stdAcc = sess.run([accuracy, outStd], feed_dict={dropoutProb: 0.0,
+                                                                            inputView: imgs,
+                                                                            outputSh:  coeffs,
+                                                                            currentMeanOutputSh: currMean})
+                    tsAccuracy += tsAcc
+                    stdAccuracy += stdAcc
 
                 # summary
                 summary = sess.run(test_summary_op, feed_dict={dropoutProb: 0.0,
                                                                inputView: imgs,
                                                                outputSh: coeffs})
-                test_summary_writer.add_summary(summary, globalStep.eval(sess))
+                summary_writer.add_summary(summary, globalStep.eval(sess))
 
                 print("{:08d}".format(globalStep.eval(sess)) +
                       " | lr = " + "{:.8f}".format(learningRate.eval()) +
-                      " | trCost  = " + "{:.5f}".format(trCost/logTrSteps) +
-                      " | tsCost  = " + "{:.5f}".format(tsCost/logTsSteps))
+                      " | trAcc  = " + "{:.5f}".format(trAccuracy/logTrSteps) +
+                      " | tsAcc  = " + "{:.5f}".format(tsAccuracy/logTsSteps) +
+                      " | stdAcc  = " + "{:.5f}".format(stdAccuracy/logTsSteps))
+                # print(" trAcc :")
+                # print trAccAll
 
                 # step
                 persistency.save(sess, modelFilename, global_step=globalStep)
@@ -545,11 +949,11 @@ if __name__ == "__main__":
         "testDbPath", help="path to the Testing EnvMapDataset levelDb path")
     args = parser.parse_args()
 
-    # trainEnvMapShModel(args.modelPath, args.imgRootDir, args.trainDbPath,
-    #                   args.testDbPath, doLinearCS)
+    trainEnvMapShModel(args.modelPath, args.imgRootDir, args.trainDbPath,
+                       args.testDbPath, doLinearCS)
 
-    testEnvMapShModel(args.modelPath, args.imgRootDir,
-                      args.testDbPath, 30, doLinearCS)
+    # testEnvMapShModel(args.modelPath, args.imgRootDir,
+    #                  args.testDbPath, 30, doLinearCS)
 
     # evalEnvMapShModel(args.modelPath,  args.trainDbPath,
     #                   args.testDbPath, envMapSz, doLinearCS)

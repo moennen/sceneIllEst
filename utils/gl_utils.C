@@ -215,7 +215,7 @@ bool gl_utils::saveTriangleMesh(
       }
    }
 
-   //pMesh->mPrimitiveTypes = aiPrimitiveType_TRIANGLE;
+   // pMesh->mPrimitiveTypes = aiPrimitiveType_TRIANGLE;
    if ( ( nfaces > 0 ) && ( idx != nullptr ) )
    {
       pMesh->mFaces = new aiFace[nfaces];
@@ -303,7 +303,7 @@ bool gl_utils::TriMeshBuffer::load(
     const size_t nfaces,
     const glm::uvec3* idx )
 {
-   //reset();
+   // reset();
 
    if ( ( nvtx == 0 ) || ( vtx == nullptr ) ) return false;
 
@@ -369,7 +369,7 @@ bool gl_utils::RenderProgram::load( const char* fragment_file_path, const char* 
    GLuint vtxId = createShader( vertex_file_path, GL_VERTEX_SHADER );
    GLuint fragId = createShader( fragment_file_path, GL_FRAGMENT_SHADER );
 
-   if ( ( vtxId == -1 ) && ( fragId == -1 ) ) return false;
+   if ( ( ( vertex_file_path != nullptr ) && ( vtxId == -1 ) ) || ( fragId == -1 ) ) return false;
 
    // Link the program
    _id = glCreateProgram();

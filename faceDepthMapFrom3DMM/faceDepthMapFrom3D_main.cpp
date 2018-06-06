@@ -22,7 +22,7 @@
 
 // face detector / models
 #include "externals/face/faceDetector.h"
-#include "externals/face/bFaceMModel.h"
+#include "externals/face/beFaceMModel.h"
 #include "externals/face/face3dMLModelTracker.h"
 
 #include <memory>
@@ -53,9 +53,9 @@ void init()
    glClearColor( 0.0, 0.0, 0.0, 0.0 );
    glMatrixMode( GL_PROJECTION );
    glLoadIdentity();
-   glOrtho( 0.0, windowSz.x, windowSz.y, 0.0, -10000.0, 10000.0 );
-   glEnable( GL_BLEND );
-   // glEnable( GL_DEPTH_TEST );
+   // glOrtho( 0.0, windowSz.x, windowSz.y, 0.0, -10000.0, 10000.0 );
+   // glEnable( GL_BLEND );
+   glEnable( GL_DEPTH_TEST );
    // glEnable( GL_CULL_FACE );
    glFrontFace( GL_CW );
    glEnable( GL_TEXTURE_2D );
@@ -109,22 +109,29 @@ void drawFaces( const vector<vec4>& faces, const vector<vector<vec2> >& facesKp 
    glColor4f( 1.0, 1.0, 1.0, 1.0 );
 }
 
-void drawFaceModel( const gl_utils::TriMeshBuffer& mdFace, float ts )
+void drawFaceModel( const gl_utils::TriMeshBuffer& mdFace, const glm::mat4& proj, float ts )
 {
-   // Assign created components to GL_LIGHT0
-   glLightfv( GL_LIGHT0, GL_AMBIENT, ambientLight );
-   glLightfv( GL_LIGHT0, GL_DIFFUSE, diffuseLight );
-   glLightfv( GL_LIGHT0, GL_SPECULAR, specularLight );
-   glLightfv( GL_LIGHT0, GL_POSITION, position );
+   static gl_utils::RenderProgram faceShader;
+   static GLint uniMVP = -1;
+   if ( faceShader._id == -1 )
+   {
+      faceShader.load( "./shaders/face_frag.glsl", "./shaders/face_vtx.glsl" );
+      uniMVP = faceShader.getUniform( "mvp" );
+   }
 
-   glPushMatrix();
-   glTranslatef( 0.5 * windowSz.x, 0.5 * windowSz.y, 0.0 );
-   glScalef( 2.0, 2.0, 0.0 );
-   glRotatef( 180.0, 0.0, 0.0, 1.0 );
-   glRotatef( ts, 0.0, 1.0, 0.0 );
+   faceShader.activate();
+
+   mat4 mv;
+   mv = translate( mv, vec3( 0.5 * windowSz.x, 0.5 * windowSz.y, 0.0 ) );
+   mv = rotate( mv, (float)( ts * M_PI / 180.0 ), vec3( 0.0, 1.0, 0.0 ) );
+
+   const mat4 mvp = proj * mv;
+
+   glUniformMatrix4fv( uniMVP, 1, 0, value_ptr( mvp ) );
+
    mdFace.draw();
-   glPopMatrix();
-   glColor4f( 1.0, 1.0, 1.0, 1.0 );
+
+   faceShader.deactivate();
 }
 
 void draw( GLuint tex, size_t w, size_t h )
@@ -182,7 +189,7 @@ const string keys =
     "{@imageA        |         | image   }"
     "{@MMfaceModelMean |         | mean face model }"
     "{@MMfaceModelBin  |         | bin face model }"
-    "{@BfaceModelBin  |         | bin face model 2 }";
+    "{@BEfaceModelBin  |         | bin face model 2 }";
 
 int main( int argc, char* argv[] )
 {
@@ -195,7 +202,7 @@ int main( int argc, char* argv[] )
    string imgFilenameA = parser.get<string>( "@imageA" );
    string MMfaceModelMean = parser.get<string>( "@MMfaceModelMean" );
    string MMfaceModelBin = parser.get<string>( "@MMfaceModelBin" );
-   string BfaceModelBin = parser.get<string>( "@BfaceModelBin" );
+   string BEfaceModelBin = parser.get<string>( "@BEfaceModelBin" );
 
    // load and setup the input image
    cv::Mat inputA = cv::imread( imgFilenameA.c_str() );
@@ -263,12 +270,12 @@ int main( int argc, char* argv[] )
       return -1;
    }
 
-   BFaceMModel bFaceMMd( BfaceModelBin.c_str() );
-   Eigen::VectorXf bFaceParams =
-       Eigen::VectorXf::Zero( BFaceMModel::NumCoeffs + BFaceMModel::NumCoeffs );
-   if ( !bFaceMMd.initialized() )
+   BEFaceMModel beFaceMMd( BEfaceModelBin.c_str() );
+   Eigen::VectorXf beFaceParams =
+       Eigen::VectorXf::Zero( 2 * BEFaceMModel::NumCoeffs + BEFaceMModel::NumExpCoeffs );
+   if ( !beFaceMMd.initialized() )
    {
-      std::cerr << "Cannot import model : " << BfaceModelBin << std::endl;
+      std::cerr << "Cannot import model : " << BEfaceModelBin << std::endl;
       return -1;
    }
    gl_utils::TriMeshBuffer mdFaceA;
@@ -307,54 +314,74 @@ int main( int argc, char* argv[] )
                    << std::endl;
          return -1;
       }
-      const std::vector<glm::uvec3>& vecIdx = mmMdFace.getFaces();
+      const std::vector<glm::uvec3> vecIdx = mmMdFace.getFaces();
+      if ( !gl_utils::saveTriangleMesh(
+               "/tmp/FaceBEMean.obj",
+               vecIdx.size(),
+               vecIdx.empty() ? nullptr : &vecIdx[0],
+               vecVtx.size(),
+               &vecVtx[0],
+               nullptr,
+               nullptr,
+               nullptr ) )
+      {
+         std::cerr << "Cannot exportt model : " << BEfaceModelBin << std::endl;
+         return -1;
+      }
       mdFaceA.load(
           vecVtx.size(),
           vecVtx.empty() ? nullptr : &vecVtx[0],
           vecIdx.size(),
           vecIdx.empty() ? nullptr : &vecIdx[0] );
 
-      vecVtx.resize( BFaceMModel::NumVertices, vec3( 0.0f ) );
-      std::vector<vec3> vtxCol( BFaceMModel::NumVertices, vec3( 0.0f ) );
-      if ( !bFaceMMd.get(
-               bFaceParams.data(),
-               bFaceParams.data() + BFaceMModel::NumCoeffs,
+      vecVtx.resize( BEFaceMModel::NumVertices, vec3( 0.0f ) );
+      std::vector<vec3> vtxCol( BEFaceMModel::NumVertices, vec3( 0.0f ) );
+      if ( !beFaceMMd.get(
+               beFaceParams.data(),
+               beFaceParams.data() + BEFaceMModel::NumCoeffs,
+               beFaceParams.data() + BEFaceMModel::NumCoeffs + BEFaceMModel::NumExpCoeffs,
                glm::value_ptr( vecVtx[0] ),
                glm::value_ptr( vtxCol[0] ) ) )
       {
-         std::cerr << "Cannot get model geom : " << BfaceModelBin << std::endl;
+         std::cerr << "Cannot get model geom : " << BEfaceModelBin << std::endl;
          return -1;
       }
       vector<vec2> vecUvs;
       vector<vec3> vecNormals;
-      if ( !gl_utils::saveTriangleMesh(
-               "/tmp/baselMean.obj",
-               BFaceMModel::NumFaces,
-               bFaceMMd.getFaces(),
+      /*if ( !gl_utils::saveTriangleMesh(
+               "/tmp/FaceAMean.3ds",
+               BEFaceMModel::NumFaces,
+               beFaceMMd.getFaces(),
                vecVtx.size(),
                &vecVtx[0],
                nullptr,
                nullptr,
                &vtxCol[0] ) )
       {
-         std::cerr << "Cannot exportt model : " << BfaceModelBin << std::endl;
+         std::cerr << "Cannot exportt model : " << BEfaceModelBin << std::endl;
          return -1;
-      }
+      }*/
       mdFaceA.load(
           vecVtx.size(),
           vecVtx.empty() ? nullptr : &vecVtx[0],
-          BFaceMModel::NumFaces,
-          bFaceMMd.getFaces() );
+          BEFaceMModel::NumFaces,
+          beFaceMMd.getFaces()  );
       mdFaceA.loadAttrib( 3, value_ptr( vtxCol[0] ) );
+
       vec3 maxVtx( -1.0, -1.0, -1.0 );
       vec3 minVtx( 100000.0, 100000.0, 1000000.0 );
+      vec3 meanVtx( 0.0, 0.0, 0.0 );
       for ( auto v : vecVtx )
       {
          maxVtx = max( maxVtx, v );
          minVtx = min( minVtx, v );
+         meanVtx += v;
       }
+      meanVtx = meanVtx / (float)vecVtx.size();
       std::cout << maxVtx.x << "," << maxVtx.y << "," << maxVtx.z << endl;
       std::cout << minVtx.x << "," << minVtx.y << "," << minVtx.z << endl;
+      std::cout << meanVtx.x << "," << meanVtx.y << "," << meanVtx.z << endl;
+      std::cout << vecVtx[8374].x << "," << vecVtx[8374].y << "," << vecVtx[8374].z << endl;
    }
    /*{
     vec3 vtx[4] = { {(float)0,(float)0,(float)0,}, {(float)0 + windowSz.x,(float)0,(float)0},
@@ -366,26 +393,15 @@ int main( int argc, char* argv[] )
     mdFaceA.load(4, &vtx[0],nullptr,nullptr,2,&indices[0]);
    }*/
 
-   string fragFilenameA = "face_frag.glsl";  // parser.get<string>( "@fragmentA" );
-   string vtxFilenameA = "face_vtx.glsl";    // parser.get<string>( "@fragmentA" );
-   gl_utils::RenderProgram renderN;
-   if ( !renderN.load( fragFilenameA.c_str(), vtxFilenameA.c_str() ) )
-   {
-      std::cerr << "Cannot load shaders : " << fragFilenameA << std::endl;
-      return -1;
-   }
-   if ( !renderN.activate() )
-   {
-      std::cerr << "Cannot use program : " << fragFilenameA << std::endl;
-      return -1;
-   }
-   // renderN.deactivate();
-
    bool running = true;
    bool changed = true;
-   int faceModel = 0;
+   int faceModel = 1;
    int paramMode = 0;
    bool pause = false;
+
+   const glm::mat4 camProj =  // glm::perspectiveFov( (float)(67.7 * M_PI / 180.0),
+                              // (float)windowSz.x, (float)windowSz.y, 0.01f, 10000.0f );
+       glm::ortho( 0.0f, (float)windowSz.x, 0.0f, (float)windowSz.y, -1000.0f, 1000.0f );
 
    vector<vec3> vecVtx;
 
@@ -394,8 +410,11 @@ int main( int argc, char* argv[] )
    sampleRN(
        mmMdFace.getShapeNCoeffs(), mmFaceParams.topRows( mmMdFace.getShapeNCoeffs() ).data() );
 
-   sampleRN( BFaceMModel::NumCoeffs, bFaceParams.bottomRows( BFaceMModel::NumCoeffs ).data() );
-   sampleRN( BFaceMModel::NumCoeffs, bFaceParams.topRows( BFaceMModel::NumCoeffs ).data() );
+   sampleRN( BEFaceMModel::NumCoeffs, beFaceParams.bottomRows( BEFaceMModel::NumCoeffs ).data() );
+   sampleRN(
+       BEFaceMModel::NumExpCoeffs,
+       beFaceParams.block<BEFaceMModel::NumExpCoeffs, 1>( BEFaceMModel::NumCoeffs, 0 ).data() );
+   sampleRN( BEFaceMModel::NumCoeffs, beFaceParams.topRows( BEFaceMModel::NumCoeffs ).data() );
 
    Uint32 start;
    SDL_Event event;
@@ -440,11 +459,12 @@ int main( int argc, char* argv[] )
                {
                   case SDL_BUTTON_LEFT:
                      faceModel = faceModel ? 0 : 1;
+                     paramMode = 0;
                      changed = true;
                      SDL_ShowCursor( SDL_ENABLE );
                      break;
                   case SDL_BUTTON_RIGHT:
-                     paramMode = paramMode ? 0 : 1;
+                     paramMode =(paramMode  + 1) % (faceModel == 0 ? 2 : 3 );
                      changed = true;
                      break;
                   default:
@@ -515,35 +535,43 @@ int main( int argc, char* argv[] )
             if ( paramMode == 0 )
             {
                sampleRN(
-                   BFaceMModel::NumCoeffs, bFaceParams.topRows( BFaceMModel::NumCoeffs ).data() );
+                   BEFaceMModel::NumCoeffs, beFaceParams.topRows( BEFaceMModel::NumCoeffs ).data() );
+            }
+            else if ( paramMode == 1 )
+            {
+               sampleRN(
+                   BEFaceMModel::NumExpCoeffs,
+                   beFaceParams.block<BEFaceMModel::NumExpCoeffs, 1>( BEFaceMModel::NumCoeffs, 0 )
+                       .data() );
             }
             else
             {
                sampleRN(
-                   BFaceMModel::NumCoeffs,
-                   bFaceParams.bottomRows( BFaceMModel::NumCoeffs ).data() );
+                   BEFaceMModel::NumCoeffs,
+                   beFaceParams.bottomRows( BEFaceMModel::NumCoeffs ).data() );
             }
 
-            vecVtx.resize( BFaceMModel::NumVertices, vec3( 0.0f ) );
-            std::vector<vec3> vtxCol( BFaceMModel::NumVertices, vec3( 0.0f ) );
-            bFaceMMd.get(
-                bFaceParams.data(),
-                bFaceParams.data() + BFaceMModel::NumCoeffs,
+            vecVtx.resize( BEFaceMModel::NumVertices, vec3( 0.0f ) );
+            std::vector<vec3> vtxCol( BEFaceMModel::NumVertices, vec3( 0.0f ) );
+            beFaceMMd.get(
+                beFaceParams.data(),
+                beFaceParams.data() + BEFaceMModel::NumCoeffs,
+                beFaceParams.data() + BEFaceMModel::NumCoeffs + BEFaceMModel::NumExpCoeffs,
                 glm::value_ptr( vecVtx[0] ),
                 glm::value_ptr( vtxCol[0] ) );
 
             mdFaceA.load(
                 vecVtx.size(),
                 vecVtx.empty() ? nullptr : &vecVtx[0],
-                BFaceMModel::NumFaces,
-                bFaceMMd.getFaces() );
+                BEFaceMModel::NumFaces,
+                beFaceMMd.getFaces() );
             mdFaceA.loadAttrib( 3, value_ptr( vtxCol[0] ) );
          }
       }
 
-      drawFaceModel( mdFaceA, ts );
+      drawFaceModel( mdFaceA, camProj, ts );
 
-      if ( faceModel == 1 )
+      /*if ( faceModel == 1 )
       {
          const auto colour = vec4( 0.0, 1.0, 0.0, 0.85 );
          glColor4f( 0.0, 0.1, 0.85, 1.0 );
@@ -570,7 +598,7 @@ int main( int argc, char* argv[] )
          }
          glPopMatrix();
          glColor4f( 1.0, 1.0, 1.0, 1.0 );
-      }
+      }*/
 
       if ( !pause ) ts += tsInc;
 

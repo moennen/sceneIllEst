@@ -25,6 +25,7 @@
 
 namespace gl_utils
 {
+
 enum TextureFormat
 {
    MONO_32FP,
@@ -72,17 +73,11 @@ struct TriMeshBuffer final
 {
    ~TriMeshBuffer() { reset(); }
 
-   bool load(
-       const size_t nvtx,
-       const glm::vec3* vtx,
-       const size_t nfaces,
-       const glm::uvec3* idx );
+   bool load( const size_t nvtx, const glm::vec3* vtx, const size_t nfaces, const glm::uvec3* idx );
 
-   bool loadAttrib(
-       const size_t dim,
-       const float* data );
+   bool loadAttrib( const size_t dim, const float* data );
 
-   void draw(const bool wireframe = false) const;
+   void draw( const bool wireframe = false ) const;
    void reset();
 
    size_t _nvtx = 0;

@@ -52,6 +52,8 @@ LINK_DIRECTORIES(
 ADD_EXECUTABLE(createFaceMap faceDepthMapFrom3D_main.cpp 
 	            ${FACE}/faceDetector.C 
 	            ${FACE}/bFaceMModel.C
+	            ${FACE}/beFaceMModel.C
+	            ${FACE}/beFaceModelInstance.C
 	            ${FACE}/face3dMLModelTracker.C
 	            ${FACEMM}/MM_Restricted/FileHandler.cpp
 					${FACEMM}/MM_Restricted/FileLoader.cpp
