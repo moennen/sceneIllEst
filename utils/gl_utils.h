@@ -87,6 +87,8 @@ struct TriMeshBuffer final
    std::vector<GLuint> vbo_ids;
 };
 
+TriMeshBuffer TexQuad( const glm::uvec2& sz );
+
 bool loadTriangleMesh(
     const char* filename,
     std::vector<glm::uvec3>& idx,

@@ -340,38 +340,52 @@ def pix2pix_disc(gen_inputs, gen_outputs, n, train):
     return layer_6
 
 
-def pix2pix_optimizer(imgs, targets, learning_rate, alpha_loss, global_step, dropout, train, n=64):
+def pix2pix_optimizer(imgs, targets, learning_rate, alpha_data, alpha_disc, global_step, dropout, train, n=64):
 
     output_channels = int(targets.get_shape()[-1])
+    optimizers = []
+    depends = []
 
     with tf.variable_scope("generator"):
         outputs = pix2pix_gen(imgs, output_channels, n, dropout, train)
 
-    with tf.variable_scope("discriminator"):
-        disc_targets = pix2pix_disc(imgs, targets, n, train)
-
-    with tf.variable_scope("discriminator", reuse=True):
-        disc_outputs = pix2pix_disc(imgs, outputs, n, train)
-
-    disc_loss = tf.reduce_mean(-(tf.log(disc_targets + EPS) +
-                                 tf.log(1 - disc_outputs + EPS)))
-
-    gen_loss_disc = tf.reduce_mean(-tf.log(disc_outputs + EPS))
     gen_loss_data = tf.reduce_mean(tf.sqrt(EPS + tf.square(targets - outputs)))
-    gen_loss = gen_loss_disc * (1.0-alpha_loss) + gen_loss_data * alpha_loss
+    gen_loss = alpha_data * gen_loss_data
 
-    with tf.name_scope("discriminator_train"):
-        with tf.control_dependencies(tf.get_collection(tf.GraphKeys.UPDATE_OPS)):
-            disc_tvars = [var for var in tf.trainable_variables(
-            ) if var.name.startswith("discriminator")]
-            disc_optim = tf.train.AdamOptimizer(learning_rate)
-            disc_grads_and_vars = disc_optim.compute_gradients(
-                disc_loss, var_list=disc_tvars)
-            disc_train = disc_optim.apply_gradients(
-                disc_grads_and_vars, global_step=global_step)
+    disc = alpha_disc > 0.0
+
+    if disc:
+
+        with tf.variable_scope("discriminator"):
+            disc_targets = pix2pix_disc(imgs, targets, n, train)
+
+        with tf.variable_scope("discriminator", reuse=True):
+            disc_outputs = pix2pix_disc(imgs, outputs, n, train)
+
+        disc_loss_targets = tf.reduce_mean(-tf.log(disc_targets + EPS))
+        disc_loss_outputs = tf.reduce_mean(-tf.log(1 - disc_outputs + EPS))
+        disc_loss = disc_loss_targets + disc_loss_outputs
+
+        gen_loss_disc = tf.reduce_mean(-tf.log(disc_outputs + EPS))
+        gen_loss = gen_loss + gen_loss_disc * alpha_disc
+
+        with tf.name_scope("discriminator_train"):
+            with tf.control_dependencies(tf.get_collection(tf.GraphKeys.UPDATE_OPS)):
+                disc_tvars = [var for var in tf.trainable_variables(
+                ) if var.name.startswith("discriminator")]
+                disc_optim = tf.train.AdamOptimizer(learning_rate)
+                disc_grads_and_vars = disc_optim.compute_gradients(
+                    disc_loss, var_list=disc_tvars)
+                disc_train = disc_optim.apply_gradients(
+                    disc_grads_and_vars, global_step=global_step)
+
+        optimizers.append(disc_train)
+        depends.append(disc_train)
 
     with tf.name_scope("generator_train"):
-        with tf.control_dependencies([disc_train]):
+        depends = depends if len(depends) > 0 else tf.get_collection(
+            tf.GraphKeys.UPDATE_OPS)
+        with tf.control_dependencies(depends):
             gen_tvars = [var for var in tf.trainable_variables(
             ) if var.name.startswith("generator")]
             gen_optim = tf.train.AdamOptimizer(learning_rate)
@@ -379,28 +393,41 @@ def pix2pix_optimizer(imgs, targets, learning_rate, alpha_loss, global_step, dro
                 gen_loss, var_list=gen_tvars)
             gen_train = gen_optim.apply_gradients(
                 gen_grads_and_vars, global_step=global_step)
+    optimizers.append(gen_train)
 
     trSum = []
-    trSum.append(tf.summary.scalar(
-        "discriminator_loss", disc_loss, family="lossDisc"))
     trSum.append(tf.summary.scalar(
         "generator_loss", gen_loss, family="lossGen"))
     trSum.append(tf.summary.scalar("generator_loss_data",
                                    gen_loss_data, family="lossGen"))
-    trSum.append(tf.summary.scalar("generator_loss_dis",
-                                   gen_loss_disc, family="lossGen"))
-    for var in disc_tvars:
-        trSum.append(tf.summary.histogram(var.name, var, family="varDisc"))
-    for grad, var in disc_grads_and_vars:
-        trSum.append(tf.summary.histogram(
-            var.name + '_gradient', grad, family="gradDisc"))
+    tsSum = [trSum[0], trSum[1]]
     for var in gen_tvars:
         trSum.append(tf.summary.histogram(var.name, var, family="varGen"))
     for grad, var in gen_grads_and_vars:
         trSum.append(tf.summary.histogram(
             var.name + '_gradient', grad, family="gradGen"))
 
-    tsSum = [trSum[0], trSum[1], trSum[2], trSum[3]]
+    if disc:
+
+        trSum.append(tf.summary.scalar(
+            "discriminator_loss", disc_loss, family="lossDisc"))
+        tsSum.append(trSum[-1])
+        trSum.append(tf.summary.scalar(
+            "discriminator_loss_gt", disc_loss_targets, family="lossDisc"))
+        tsSum.append(trSum[-1])
+        trSum.append(tf.summary.scalar(
+            "discriminator_loss_gen", disc_loss_outputs, family="lossDisc"))
+        tsSum.append(trSum[-1])
+        trSum.append(tf.summary.scalar("generator_loss_dis",
+                                       gen_loss_disc, family="lossGen"))
+        tsSum.append(trSum[-1])
+
+        for var in disc_tvars:
+            trSum.append(tf.summary.histogram(var.name, var, family="varDisc"))
+        for grad, var in disc_grads_and_vars:
+            trSum.append(tf.summary.histogram(
+                var.name + '_gradient', grad, family="gradDisc"))
+
     targetsSamples = tf.concat([[targets[it, :, :, :]]
                                 for it in range(16)], axis=2)
     outputSamples = tf.concat([[outputs[it, :, :, :]]
@@ -411,7 +438,7 @@ def pix2pix_optimizer(imgs, targets, learning_rate, alpha_loss, global_step, dro
     trSum = tf.summary.merge(trSum, "Train")
     tsSum = tf.summary.merge(tsSum, "Test")
 
-    return [disc_train, disc_loss, gen_train, gen_loss, trSum, tsSum]
+    return [optimizers, gen_loss, trSum, tsSum]
 
 #-----------------------------------------------------------------------------------------------------
 # IMG2VECTOR MODELS

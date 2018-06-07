@@ -355,6 +355,21 @@ bool gl_utils::TriMeshBuffer::loadAttrib( const size_t dim, const float* data )
    return true;
 }
 
+gl_utils::TriMeshBuffer gl_utils::TexQuad( const glm::uvec2& sz )
+{
+   const vec3 vtx[4] = {vec3( 0.f, 0.f, 0.f ),
+                        vec3( static_cast<float>( sz.x ), 0.f, 0.f ),
+                        vec3( static_cast<float>( sz.x ), static_cast<float>( sz.y ), 0.f ),
+                        vec3( 0.f, static_cast<float>( sz.y ), 0.f )};
+   const vec2 uvs[4] = {vec2( 0.f, 0.f ), vec2( 1.f, 0.f ), vec2( 1.f, 1.f ), vec2( 0.f, 1.f )};
+   const uvec3 idx[2] = {uvec3( 0, 1, 2 ), uvec3( 0, 2, 3 )};
+
+   TriMeshBuffer quad;
+   if (!quad.load(4, &vtx[0], 2, &idx[0] ) || !quad.loadAttrib( 2, value_ptr(uvs[0]) )) quad.reset();
+   
+   return quad;
+}
+
 void gl_utils::RenderProgram::reset()
 {
    if ( _id != -1 ) glDeleteProgram( _id );

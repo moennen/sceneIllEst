@@ -63,3 +63,11 @@ ADD_EXECUTABLE(createFaceMap faceDepthMapFrom3D_main.cpp
 	            ${UTILS}/gl_utils.C)
 
 TARGET_LINK_LIBRARIES( createFaceMap GLEW GL SDL2 cudnn cusolver curand cudart cublas dlib openblas assimp opencv_world )
+
+ADD_EXECUTABLE(createFaceMapsFromBEInst faceMapsFromBEInst_main.cpp
+	            ${FACE}/beFaceMModel.C
+	            ${FACE}/beFaceModelInstance.C
+	            ${UTILS}/gl_utils.C
+	            ${UTILS}/cv_utils.C)
+
+TARGET_LINK_LIBRARIES( createFaceMapsFromBEInst GLEW GL SDL2 assimp opencv_world )

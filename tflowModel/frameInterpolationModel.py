@@ -7,6 +7,7 @@ import os
 import sys
 import time
 import tensorflow as tf
+from tensorflow.python.client import timeline
 import itertools
 import numpy as np
 import random
@@ -123,14 +124,16 @@ def evalModel(modelPath, imgRootDir, imgLst, minPyrSize):
 def testDataset(imgRootDir, trainPath):
 
     rseed = int(time.time())
-    print "SEED : " + str(rseed)
+    minPrevNextSqDiff = 0.0001    # minimum value of frame difference # default to 0.0001
+    maxPrevNextSqDiff = 0.0003    # maximum value ""                  # default to 0.0005
+    imgSz = [256, 256]
 
     tf.set_random_seed(rseed)
 
     batchSz = 16
 
     trDs = DatasetTF(trainPath, imgRootDir, batchSz,
-                     imgSz, 0.7, 1.0, 0, rseed)
+                     imgSz, 0.7, 0.0, 0, rseed, minPrevNextSqDiff, maxPrevNextSqDiff)
 
     dsIt = tf.data.Iterator.from_structure(
         trDs.data.output_types, trDs.data.output_shapes)
@@ -155,7 +158,7 @@ def testDataset(imgRootDir, trainPath):
             cv.imshow('prevSple', cv.cvtColor(prevSple[idx], cv.COLOR_RGB2BGR))
             cv.imshow('nextSple', cv.cvtColor(nextSple[idx], cv.COLOR_RGB2BGR))
 
-            cv.waitKey(300)
+            cv.waitKey(700)
 
 #-----------------------------------------------------------------------------------------------------
 # TESTING
@@ -232,17 +235,19 @@ def testModel(modelPath, imgRootDir, testPath, nbTests):
 def trainModel(modelPath, imgRootDir, trainPath, testPath):
 
     lp = LearningParams(modelPath, 20160704)
-    lp.numSteps = 130000
-    lp.tslogStep = 150
-    lp.trlogStep = 150
-    lp.backupStep = 250
+    lp.numSteps = 250000
+    lp.tslogStep = 250
+    lp.trlogStep = 250
+    lp.backupStep = 300
     lp.imgSzTr = [64, 64]
     lp.batchSz = 64
     baseN = 32
-    alpha_loss = 0.9
+    alpha_data = 1.0
+    alpha_disc = 0.3  # 0.15
     minPrevNextSqDiff = 0.0001    # minimum value of frame difference # default to 0.0001
     maxPrevNextSqDiff = 0.0003    # maximum value ""                  # default to 0.0005
     lp.update()
+    profile = True
 
     # Datasets / Iterators
     trDs = DatasetTF(trainPath, imgRootDir, lp.batchSz,
@@ -270,10 +275,10 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath):
         tf.float32, shape=sampleShape, name="input_blend")
     inBlend = preprocess(inBlendi)
 
-    # Model
-    [optDisc, lossDisc, optGen, lossGen, trSum, tsSum] = pix2pix_optimizer(
+    # Optimizers
+    [opts, loss, trSum, tsSum] = pix2pix_optimizer(
         tf.concat([inBlend, inPrev, inNext], axis=3), inCurr,
-        lp.learningRate, alpha_loss, lp.globalStep, lp.dropoutProb, lp.isTraining, baseN)
+        lp.learningRate, alpha_data, alpha_disc, lp.globalStep, lp.dropoutProb, lp.isTraining, baseN)
 
     # Persistency
     persistency = tf.train.Saver(
@@ -285,11 +290,16 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath):
     # Params Initializer
     varInit = tf.global_variables_initializer()
 
-    with tf.Session(config=tf.ConfigProto(device_count={'GPU': 1})) as sess:
+    # with tf.Session(config=tf.ConfigProto(device_count={'GPU': 1})) as sess:
+    with tf.Session() as sess:
 
         train_summary_writer = tf.summary.FileWriter(
             lp.tbLogsPath + "/Train", graph=sess.graph)
         test_summary_writer = tf.summary.FileWriter(lp.tbLogsPath + "/Test")
+
+        # profiling
+        #run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
+        #run_metadata = tf.RunMetadata()
 
         # initialize params
         sess.run(varInit)
@@ -313,34 +323,41 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath):
                       inPrevi: prevSple, inNexti: nextSple, inBlendi: blendSple}
 
             # Run optimization
-            if step % lp.trlogStep == 0:
-                _, _, summary = sess.run(
-                    [optDisc, optGen, trSum], feed_dict=trFeed)
-                train_summary_writer.add_summary(
-                    summary, lp.globalStep.eval(sess))
-            else:
-                sess.run([optDisc, optGen], feed_dict=trFeed)
+            sess.run(opts, feed_dict=trFeed)
+
+            # if profile:
+            #     # Create the Timeline object, and write it to a json
+            #     tl = timeline.Timeline(run_metadata.step_stats)
+            #     ctf = tl.generate_chrome_trace_format()
+            #     with open('timeline.json', 'w') as f:
+            #         f.write(ctf)
 
             # SUMMARIES
+
+            if step % lp.trlogStep == 0:
+                summary = sess.run(trSum, feed_dict=trFeed)
+                train_summary_writer.add_summary(
+                    summary, lp.globalStep.eval(sess))
+
             if step % lp.tslogStep == 0:
 
                     # Sample test accuracy
                 sess.run(tsInit)
                 currHD, currLD, blendSple, prevSple, nextSple = sess.run(
                     dsView)
-                loss, summary = sess.run([lossGen, tsSum], feed_dict={lp.dropoutProb: 0.0,
-                                                                      lp.isTraining: False,
-                                                                      inCurri: currHD,
-                                                                      inPrevi: prevSple,
-                                                                      inNexti: nextSple,
-                                                                      inBlendi: blendSple})
+                tsLoss, summary = sess.run([loss, tsSum], feed_dict={lp.dropoutProb: 0.0,
+                                                                     lp.isTraining: False,
+                                                                     inCurri: currHD,
+                                                                     inPrevi: prevSple,
+                                                                     inNexti: nextSple,
+                                                                     inBlendi: blendSple})
 
                 test_summary_writer.add_summary(
                     summary, lp.globalStep.eval(sess))
 
                 print("{:08d}".format(lp.globalStep.eval(sess)) +
                       " | lr = " + "{:.8f}".format(lp.learningRate.eval()) +
-                      " | loss = " + "{:.5f}".format(loss))
+                      " | loss = " + "{:.5f}".format(tsLoss))
 
                 # reset the training iterator
                 sess.run(trInit)
@@ -375,7 +392,7 @@ if __name__ == "__main__":
 
     #------------------------------------------------------------------------------------------------
 
-    # testDataset(args.imgRootDir, args.trainLstPath)
+    #testDataset(args.imgRootDir, args.trainLstPath)
 
     #------------------------------------------------------------------------------------------------
 
