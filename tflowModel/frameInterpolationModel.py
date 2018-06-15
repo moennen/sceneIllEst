@@ -234,18 +234,18 @@ def testModel(modelPath, imgRootDir, testPath, nbTests):
 
 def trainModel(modelPath, imgRootDir, trainPath, testPath):
 
-    lp = LearningParams(modelPath, 20160704)
+    lp = LearningParams(modelPath)  # , 20160704)
     lp.numSteps = 250000
-    lp.tslogStep = 250
-    lp.trlogStep = 250
+    lp.tslogStep = 150
+    lp.trlogStep = 150
     lp.backupStep = 300
     lp.imgSzTr = [64, 64]
     lp.batchSz = 64
     baseN = 32
     alpha_data = 1.0
-    alpha_disc = 0.3  # 0.15
-    minPrevNextSqDiff = 0.0001    # minimum value of frame difference # default to 0.0001
-    maxPrevNextSqDiff = 0.0003    # maximum value ""                  # default to 0.0005
+    alpha_disc = 0.1
+    minPrevNextSqDiff = 0.000075  # minimum value of frame difference # default to 0.0001
+    maxPrevNextSqDiff = 0.001     # maximum value ""                  # default to 0.0005
     lp.update()
     profile = True
 
@@ -278,7 +278,7 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath):
     # Optimizers
     [opts, loss, trSum, tsSum] = pix2pix_optimizer(
         tf.concat([inBlend, inPrev, inNext], axis=3), inCurr,
-        lp.learningRate, alpha_data, alpha_disc, lp.globalStep, lp.dropoutProb, lp.isTraining, baseN)
+        lp.learningRate, alpha_data, alpha_disc, lp.dropoutProb, lp.isTraining, baseN)
 
     # Persistency
     persistency = tf.train.Saver(
@@ -290,8 +290,8 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath):
     # Params Initializer
     varInit = tf.global_variables_initializer()
 
-    # with tf.Session(config=tf.ConfigProto(device_count={'GPU': 1})) as sess:
-    with tf.Session() as sess:
+    with tf.Session(config=tf.ConfigProto(device_count={'GPU': 1})) as sess:
+        # with tf.Session() as sess:
 
         train_summary_writer = tf.summary.FileWriter(
             lp.tbLogsPath + "/Train", graph=sess.graph)
@@ -314,16 +314,27 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath):
         sess.run(trInit)
 
         # get each element of the training dataset until the end is reached
-        for step in range(lp.globalStep.eval(sess)+1, lp.numSteps+1):
+        while lp.globalStep.eval(sess) < lp.numSteps:
 
             # Get the next training batch
             currHD, currLD, blendSple, prevSple, nextSple = sess.run(dsView)
 
-            trFeed = {lp.dropoutProb: 0.01, lp.isTraining: True, inCurri: currHD,
-                      inPrevi: prevSple, inNexti: nextSple, inBlendi: blendSple}
+            trFeed = {lp.dropoutProb: 0.01,
+                      lp.isTraining: True,
+                      inCurri: currHD,
+                      inPrevi: prevSple,
+                      inNexti: nextSple,
+                      inBlendi: blendSple}
+
+            step = lp.globalStep.eval(sess) + 1
 
             # Run optimization
-            sess.run(opts, feed_dict=trFeed)
+            if step % lp.trlogStep == 0:
+                _, summary, _ = sess.run(
+                    [opts, trSum, lp.globalStepInc], feed_dict=trFeed)
+                train_summary_writer.add_summary(summary, step)
+            else:
+                sess.run([opts, lp.globalStepInc], feed_dict=trFeed)
 
             # if profile:
             #     # Create the Timeline object, and write it to a json
@@ -335,13 +346,16 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath):
             # SUMMARIES
 
             if step % lp.trlogStep == 0:
-                summary = sess.run(trSum, feed_dict=trFeed)
-                train_summary_writer.add_summary(
-                    summary, lp.globalStep.eval(sess))
+                summary = sess.run(tsSum, feed_dict={lp.dropoutProb: 0.0,
+                                                     lp.isTraining: False,
+                                                     inCurri: currHD,
+                                                     inPrevi: prevSple,
+                                                     inNexti: nextSple,
+                                                     inBlendi: blendSple})
+                train_summary_writer.add_summary(summary, step)
 
             if step % lp.tslogStep == 0:
 
-                    # Sample test accuracy
                 sess.run(tsInit)
                 currHD, currLD, blendSple, prevSple, nextSple = sess.run(
                     dsView)
@@ -352,10 +366,9 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath):
                                                                      inNexti: nextSple,
                                                                      inBlendi: blendSple})
 
-                test_summary_writer.add_summary(
-                    summary, lp.globalStep.eval(sess))
+                test_summary_writer.add_summary(summary, step)
 
-                print("{:08d}".format(lp.globalStep.eval(sess)) +
+                print("{:08d}".format(step-1) +
                       " | lr = " + "{:.8f}".format(lp.learningRate.eval()) +
                       " | loss = " + "{:.5f}".format(tsLoss))
 

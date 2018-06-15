@@ -115,7 +115,8 @@ class LearningParams:
         self.imgSzTr = [64, 64]
         self.imgSzTs = [256, 256]
 
-        self.globalStep = tf.Variable(0, trainable=False)
+        self.globalStep = tf.Variable(0, trainable=False, name='globalStep')
+        self.globalStepInc = tf.assign_add(self.globalStep, 1)
 
         self.baseLearningRate = 0.0001
         self.learningRate = tf.train.polynomial_decay(self.baseLearningRate, self.globalStep, self.numSteps, 0.0,
@@ -335,12 +336,12 @@ def pix2pix_disc(gen_inputs, gen_outputs, n, train):
             layer_5, 1, 4, 2, padding='valid', use_bias=True,
             kernel_initializer=xinit)
 
-        layer_6 = tf.nn.sigmoid(layer_6)
+        #layer_6 = tf.nn.sigmoid(layer_6)
 
     return layer_6
 
 
-def pix2pix_optimizer(imgs, targets, learning_rate, alpha_data, alpha_disc, global_step, dropout, train, n=64):
+def pix2pix_optimizer(imgs, targets, learning_rate, alpha_data, alpha_disc, dropout, train, n=64):
 
     output_channels = int(targets.get_shape()[-1])
     optimizers = []
@@ -356,31 +357,41 @@ def pix2pix_optimizer(imgs, targets, learning_rate, alpha_data, alpha_disc, glob
 
     if disc:
 
-        with tf.variable_scope("discriminator"):
-            disc_targets = pix2pix_disc(imgs, targets, n, train)
+        with tf.name_scope("discriminator_gt"):
+            with tf.variable_scope("discriminator"):
+                disc_targets = pix2pix_disc(imgs, targets, n, train)
 
-        with tf.variable_scope("discriminator", reuse=True):
-            disc_outputs = pix2pix_disc(imgs, outputs, n, train)
+        with tf.name_scope("discriminator_gen"):
+            with tf.variable_scope("discriminator", reuse=True):
+                disc_outputs = pix2pix_disc(imgs, outputs, n, train)
 
-        disc_loss_targets = tf.reduce_mean(-tf.log(disc_targets + EPS))
-        disc_loss_outputs = tf.reduce_mean(-tf.log(1 - disc_outputs + EPS))
+        #disc_loss_targets = tf.reduce_mean(-tf.log(disc_targets + EPS))
+        disc_loss_targets = tf.reduce_mean(
+            tf.nn.sigmoid_cross_entropy_with_logits(labels=tf.constant(1., shape=disc_targets.shape), logits=disc_targets))
+        #disc_loss_outputs = tf.reduce_mean(-tf.log(1 - disc_outputs + EPS))
+        disc_loss_outputs = tf.reduce_mean(
+            tf.nn.sigmoid_cross_entropy_with_logits(labels=tf.constant(0., shape=disc_outputs.shape), logits=disc_outputs))
         disc_loss = disc_loss_targets + disc_loss_outputs
 
-        gen_loss_disc = tf.reduce_mean(-tf.log(disc_outputs + EPS))
-        gen_loss = gen_loss + gen_loss_disc * alpha_disc
+        #gen_loss_disc = tf.reduce_mean(-tf.log(disc_outputs + EPS))
+        gen_loss_disc = tf.reduce_mean(
+            tf.nn.sigmoid_cross_entropy_with_logits(labels=tf.constant(1., shape=disc_outputs.shape), logits=disc_outputs))
+
+        #gen_loss = gen_loss + gen_loss_disc * alpha_disc
+
+        depends = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
 
         with tf.name_scope("discriminator_train"):
-            with tf.control_dependencies(tf.get_collection(tf.GraphKeys.UPDATE_OPS)):
+            with tf.control_dependencies(depends):
                 disc_tvars = [var for var in tf.trainable_variables(
                 ) if var.name.startswith("discriminator")]
                 disc_optim = tf.train.AdamOptimizer(learning_rate)
                 disc_grads_and_vars = disc_optim.compute_gradients(
                     disc_loss, var_list=disc_tvars)
-                disc_train = disc_optim.apply_gradients(
-                    disc_grads_and_vars, global_step=global_step)
+                disc_train = disc_optim.apply_gradients(disc_grads_and_vars)
 
         optimizers.append(disc_train)
-        depends.append(disc_train)
+        # depends.append(disc_train)
 
     with tf.name_scope("generator_train"):
         depends = depends if len(depends) > 0 else tf.get_collection(
@@ -391,16 +402,16 @@ def pix2pix_optimizer(imgs, targets, learning_rate, alpha_data, alpha_disc, glob
             gen_optim = tf.train.AdamOptimizer(learning_rate)
             gen_grads_and_vars = gen_optim.compute_gradients(
                 gen_loss, var_list=gen_tvars)
-            gen_train = gen_optim.apply_gradients(
-                gen_grads_and_vars, global_step=global_step)
+            gen_train = gen_optim.apply_gradients(gen_grads_and_vars)
+
     optimizers.append(gen_train)
 
     trSum = []
-    trSum.append(tf.summary.scalar(
+    tsSum = []
+    tsSum.append(tf.summary.scalar(
         "generator_loss", gen_loss, family="lossGen"))
-    trSum.append(tf.summary.scalar("generator_loss_data",
+    tsSum.append(tf.summary.scalar("generator_loss_data",
                                    gen_loss_data, family="lossGen"))
-    tsSum = [trSum[0], trSum[1]]
     for var in gen_tvars:
         trSum.append(tf.summary.histogram(var.name, var, family="varGen"))
     for grad, var in gen_grads_and_vars:
@@ -409,19 +420,14 @@ def pix2pix_optimizer(imgs, targets, learning_rate, alpha_data, alpha_disc, glob
 
     if disc:
 
-        trSum.append(tf.summary.scalar(
+        tsSum.append(tf.summary.scalar(
             "discriminator_loss", disc_loss, family="lossDisc"))
-        tsSum.append(trSum[-1])
-        trSum.append(tf.summary.scalar(
+        tsSum.append(tf.summary.scalar(
             "discriminator_loss_gt", disc_loss_targets, family="lossDisc"))
-        tsSum.append(trSum[-1])
-        trSum.append(tf.summary.scalar(
+        tsSum.append(tf.summary.scalar(
             "discriminator_loss_gen", disc_loss_outputs, family="lossDisc"))
-        tsSum.append(trSum[-1])
-        trSum.append(tf.summary.scalar("generator_loss_dis",
+        tsSum.append(tf.summary.scalar("generator_loss_dis",
                                        gen_loss_disc, family="lossGen"))
-        tsSum.append(trSum[-1])
-
         for var in disc_tvars:
             trSum.append(tf.summary.histogram(var.name, var, family="varDisc"))
         for grad, var in disc_grads_and_vars:

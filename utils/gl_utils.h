@@ -49,6 +49,13 @@ struct Texture final
       std::swap( sz, tex.sz );
    }
 
+   void generateMipmap()
+   {
+      glBindTexture(GL_TEXTURE_2D, id);
+      glGenerateMipmap(GL_TEXTURE_2D);
+      glBindTexture(GL_TEXTURE_2D, 0);
+   }
+
    bool create( const glm::uvec2 size );
    void reset();
 
@@ -67,7 +74,7 @@ bool uploadToTexture(
     const glm::uvec2 pos = glm::uvec2( 0u, 0u ) );
 
 template <TextureFormat fmt>
-bool readbackTexture( const Texture<fmt>&, unsigned char* );
+bool readbackTexture( const Texture<fmt>&, unsigned char*, const int level=0 );
 
 struct TriMeshBuffer final
 {

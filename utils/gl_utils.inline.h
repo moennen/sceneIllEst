@@ -82,6 +82,10 @@ void _check_gl_error( const char* file, int line )
 template <gl_utils::TextureFormat fmt>
 bool gl_utils::Texture<fmt>::create( const glm::uvec2 size )
 {
+   if (size == sz) return true;
+
+   reset();
+
    glGenTextures( 1, &id );
    sz = size;
 
@@ -168,7 +172,7 @@ bool gl_utils::uploadToTexture(
 }
 
 template <gl_utils::TextureFormat fmt>
-bool gl_utils::readbackTexture( const Texture<fmt>& tex, unsigned char* buff )
+bool gl_utils::readbackTexture( const Texture<fmt>& tex, unsigned char* buff, const int level )
 {
    if ( tex.id == -1 ) return false;
 
@@ -176,7 +180,7 @@ bool gl_utils::readbackTexture( const Texture<fmt>& tex, unsigned char* buff )
 
    glGetTexImage(
        GL_TEXTURE_2D,
-       0,
+       level,
        glTextureInputFormat<fmt>(),
        glTextureType<fmt>(),
        reinterpret_cast<GLvoid*>( buff ) );

@@ -3,7 +3,7 @@
 CMAKE_MINIMUM_REQUIRED(VERSION 2.6) 
 
 PROJECT(depthMapCreation)
-ADD_DEFINITIONS( -DCOMPILER_GCC -std=c++11 -O3 )
+ADD_DEFINITIONS( -DCOMPILER_GCC -std=c++11 )
 SET(CMAKE_COLOR_MAKEFILE ON)
 SET(CMAKE_VERBOSE_MAKEFILE ON)
 
@@ -44,6 +44,7 @@ LINK_DIRECTORIES(
 ADD_EXECUTABLE(createDepthMap depthMapCreation_main.cpp)
 TARGET_LINK_LIBRARIES( createDepthMap GL SDL2 opencv_world )
 
-ADD_EXECUTABLE(createDepthMapHSBS depthMapCreationHSBS_main.cpp ${UTILS}/gl_utils.C )
-TARGET_LINK_LIBRARIES( createDepthMapHSBS GL GLEW SDL2 VarOpticalFlowCL opencv_world assimp )
+ADD_EXECUTABLE(createDepthMapHSBS depthMapCreationHSBS_main.cpp ${UTILS}/gl_utils.C ${UTILS}/cv_utils.C )
+TARGET_LINK_LIBRARIES( createDepthMapHSBS GL GLEW SDL2 VarOpticalFlowCL 
+                       boost_system boost_filesystem opencv_world assimp )
 

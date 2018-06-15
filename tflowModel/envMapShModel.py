@@ -166,35 +166,35 @@ def pix2vec_model(imgs, output_channels, n, dropout, train):
 
     # encoder_2: [batch, 128, 128, n] => [batch, 64, 64, n * 2]
     encoder_2 = pix2pix_encoder_bn(
-        encoder_1, n*2, "encoder_2", train)
+        encoder_1, n*2, 4, 2, "encoder_2", train)
     # encoder_3: [batch, 64, 64, n * 2] => [batch, 32, 32, n * 4]
     encoder_3 = pix2pix_encoder_bn(
-        encoder_2, n*4, "encoder_3", train)
+        encoder_2, n*4, 4, 2, "encoder_3", train)
     # encoder_4: [batch, 32, 32, n * 4] => [batch, 16, 16, n * 8]
     encoder_4 = pix2pix_encoder_bn(
-        encoder_3, n*8, "encoder_4", train)
+        encoder_3, n*8, 4, 2, "encoder_4", train)
     # encoder_5: [batch, 16, 16, n * 8] => [batch, 8, 8, n * 8]
     encoder_5 = pix2pix_encoder_bn(
-        encoder_4, n*8, "encoder_5", train)
+        encoder_4, n*8, 4, 2, "encoder_5", train)
     # encoder_6: [batch, 8, 8, n * 8] => [batch, 4, 4, n * 8]
     encoder_6 = pix2pix_encoder_bn(
-        encoder_5, n*8, "encoder_6", train)
+        encoder_5, n*8, 4, 2, "encoder_6", train)
     # encoder_7: [batch, 4, 4, n * 8] => [batch, 2, 2, n * 8]
     encoder_7 = pix2pix_encoder_bn(
-        encoder_6, n*8, "encoder_7", train)
+        encoder_6, n*8, 4, 2, "encoder_7", train)
     # encoder_8: [batch, 2, 2, n * 8] = > [batch, 1, 1, n * 8]
     encoder_8 = pix2pix_encoder_bn(
-        encoder_7, n*8, "encoder_8", train)
+        encoder_7, n*8, 4, 2, "encoder_8", train)
 
     # decoder_8: [batch, 1, 1, ngf * 8] => [batch, 2, 2, ngf * 8 * 2]
     decoder_8 = pix2pix_decoder_skip(
-        encoder_8, encoder_7, n*8, "decoder_8", dropout, train)
+        encoder_8, encoder_7, n*8,  4, 2, "decoder_8", dropout, train)
     # decoder_7: [batch, 2, 2, ngf * 8 * 2] => [batch, 4, 4, ngf * 8 * 2]
     decoder_7 = pix2pix_decoder_skip(
-        decoder_8, encoder_6, n*8, "decoder_7", dropout, train)
+        decoder_8, encoder_6, n*8,  4, 2, "decoder_7", dropout, train)
     # decoder_6: [batch, 4, 4, ngf * 8 * 2] => [batch, 8, 8, ngf * 8 * 2]
     decoder_6 = pix2pix_decoder_skip(
-        decoder_7, encoder_5, n*8, "decoder_6", dropout, train)
+        decoder_7, encoder_5, n*8,  4, 2, "decoder_6", dropout, train)
 
     # dense
     vectorizer_0 = tf.layers.flatten(decoder_6)
@@ -212,14 +212,14 @@ def pix2vec_model(imgs, output_channels, n, dropout, train):
     return vectorizer_3
 
 
-def pix2vec_optimizer(imgs, targets, learning_rate, global_step, dropout, n=64, ):
+def pix2vec_optimizer(imgs, targets, learning_rate, global_step, dropout, train, n=64, ):
 
     output_channels = int(targets.get_shape()[-1])
 
     with tf.variable_scope("pix2vec"):
-        outputs = pix2vec_model(imgs, output_channels, n, dropout, True)
+        outputs = pix2vec_model(imgs, output_channels, n, dropout, train)
 
-    loss = tf.reduce_mean(tf.square(targets - outputs))
+    loss = tf.reduce_mean(tf.sqrt(EPS + tf.square(targets - outputs)))
 
     with tf.name_scope("pix2vec_train"):
         with tf.control_dependencies(tf.get_collection(tf.GraphKeys.UPDATE_OPS)):
@@ -231,13 +231,25 @@ def pix2vec_optimizer(imgs, targets, learning_rate, global_step, dropout, n=64, 
             p2v_train = p2v_optim.apply_gradients(
                 p2v_grads_and_vars, global_step=global_step)
 
-    tf.summary.scalar("loss", loss)
-    for var in p2v_tvars:
-        tf.summary.histogram(var.name, var)
-    for grad, var in p2v_grads_and_vars:
-        tf.summary.histogram(var.name + '_gradient', grad)
+    trSum = []
+    trSum.append(tf.summary.scalar("loss", loss, family="loss"))
+    tsSum = [trSum[0]]
 
-    return [p2v_train, loss, outputs]
+    for var in p2v_tvars:
+        trSum.append(tf.summary.histogram(var.name, var, family="var"))
+    for grad, var in p2v_grads_and_vars:
+        trSum.append(tf.summary.histogram(
+            var.name + '_gradient', grad, family="grad"))
+
+    sampleSz = [64, 64]
+    targetsSamples = tf.concat([[EnvMapShDataset.generateEnvMap(
+        shOrder, tf.make_ndarray(targets)[i], sampleSz)] for i in range(16)], axis=2)
+    outputSamples = tf.concat([[EnvMapShDataset.generateEnvMap(
+        shOrder, tf.make_ndarray(outputs)[i], sampleSz)] for i in range(16)], axis=2)
+    imgSamples = tf.concat([targetsSamples, outputSamples], axis=1)
+    tsSum.append(tf.summary.image("samples", imgSamples))
+
+    return [p2v_train, loss, trSum, tsSum]
 
 #-----------------------------------------------------------------------------------------------------
 # TRAIN
@@ -247,9 +259,12 @@ def pix2vec_optimizer(imgs, targets, learning_rate, global_step, dropout, n=64, 
 def trainModel(modelPath, imgRootDir, trainPath, testPath):
 
     lp = LearningParams(modelPath, 20160704)
-    lp.numSteps = 100000
+    lp.numSteps = 250000
     lp.imgSzTr = [256, 256]
-    lp.batchSz = 32
+    lp.batchSz = 64
+    lp.tslogStep = 150
+    lp.trlogStep = 150
+    lp.backupStep = 300
 
     trDs = DatasetTF(trainPath, imgRootDir,
                      lp.batchSz, lp.imgSzTr, lp.rseed)
@@ -279,15 +294,12 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath):
         1, nbShCoeffs], name='shCoeffs_mean')
     targetSh = (targetSh-shMean) / shStd
 
-    optimizer, loss, _ = pix2vec_optimizer(
-        inputViews, targetSh, lp.learningRate, lp.globalStep, lp.dropoutProb, 32)
+    optimizer, loss, trSum, tsSum = pix2vec_optimizer(
+        inputViews, targetSh, lp.learningRate, lp.globalStep, lp.dropoutProb, lp.isTraining, 32)
 
     # Persistency
     persistency = tf.train.Saver(pad_step_number=True, keep_checkpoint_every_n_hours=3,
                                  filename=lp.modelFilename)
-
-    # Logger
-    merged_summary_op = tf.summary.merge_all()
 
     # Params Initializer
     varInit = tf.global_variables_initializer()
@@ -311,7 +323,7 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath):
         sess.run(trInit)
 
         # get each element of the training dataset until the end is reached
-        for step in range(lp.globalStep.eval(sess), lp.numSteps):
+        for step in range(lp.globalStep.eval(sess)+1, lp.numSteps+1):
 
             # initialize the iterator on the training data
 
@@ -320,48 +332,41 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath):
 
             # Run optimization op (backprop)
             sess.run(optimizer, feed_dict={lp.dropoutProb: 0.01,
+                                           lp.isTraining: True,
                                            inputViews: imgs,
                                            targetSh: coeffs})
-            # Log
-            if step % lp.logStep == 0:
 
-                # summary
-                summary = sess.run(merged_summary_op, feed_dict={lp.dropoutProb: 0.0,
-                                                                 inputViews: imgs,
-                                                                 targetSh: coeffs})
+            if step % lp.trlogStep == 0:
+                summary = sess.run(trSum, feed_dict={lp.dropoutProb: 0.0,
+                                                     lp.isTraining: False,
+                                                     inputViews: imgs,
+                                                     targetSh: coeffs})
                 train_summary_writer.add_summary(
                     summary, lp.globalStep.eval(sess))
 
-                # Sample train accuracy
-                sess.run(trInit)
-                coeffs, imgs = sess.run(dsView)
-                trLoss = sess.run(loss, feed_dict={lp.dropoutProb: 0.0,
-                                                   inputViews: imgs,
-                                                   targetSh:  coeffs})
-                # Sample test accuracy
+            if step % lp.tslogStep == 0:
+
                 sess.run(tsInit)
                 coeffs, imgs = sess.run(dsView)
-                tsLoss = sess.run(loss, feed_dict={lp.dropoutProb: 0.0,
-                                                   inputViews: imgs,
-                                                   targetSh:  coeffs})
-                # summary
-                summary = sess.run(merged_summary_op, feed_dict={lp.dropoutProb: 0.0,
-                                                                 inputViews: imgs,
-                                                                 targetSh: coeffs})
+                tsLoss, summary = sess.run([loss, tsSum], feed_dict={lp.dropoutProb: 0.0,
+                                                                     lp.isTraining: False,
+                                                                     inputViews: imgs,
+                                                                     targetSh: coeffs})
+
                 test_summary_writer.add_summary(
                     summary, lp.globalStep.eval(sess))
 
                 print("{:08d}".format(lp.globalStep.eval(sess)) +
                       " | lr = " + "{:.8f}".format(lp.learningRate.eval()) +
-                      " | trLoss  = " + "{:.5f}".format(trLoss) +
-                      " | tsLoss  = " + "{:.5f}".format(tsLoss))
-
-                # step
-                persistency.save(sess, lp.modelFilename,
-                                 global_step=lp.globalStep)
+                      " | loss = " + "{:.5f}".format(tsLoss))
 
                 # reset the training iterator
                 sess.run(trInit)
+
+            # PERSISTENCY
+            if step % lp.backupStep == 0:
+                persistency.save(sess, lp.modelFilename,
+                                 global_step=lp.globalStep)
 
 
 if __name__ == "__main__":

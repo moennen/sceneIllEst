@@ -8,6 +8,7 @@
 #include "sampleBuffDataset/libBuffDatasetSampler.h"
 
 #include "utils/cv_utils.h"
+#include "utils/imgFileLst.h"
 #include "utils/Hop.h"
 
 #include <boost/filesystem.hpp>
@@ -42,23 +43,7 @@ struct Sampler final
    boost::random::uniform_real_distribution<> _transGen;
    boost::random::uniform_real_distribution<> _ldAsBlendGen;
 
-   struct Data
-   {
-      const float _alpha;
-      const std::string _pathA;
-      const std::string _pathB;
-      const std::string _pathC;
-
-      inline Data(
-          const float alpha,
-          const std::string& fA,
-          const std::string& fB,
-          const std::string& fC )
-          : _alpha( alpha ), _pathA( fA ), _pathB( fB ), _pathC( fC )
-      {
-      }
-   };
-   std::vector<Data> _data;
+   ImgTripletsFileLst _data;
    const ivec3 _sampleSz;
    const float _downsample;
    const float _ldAsBlendFreq;
@@ -93,51 +78,18 @@ struct Sampler final
    {
       HOP_PROF_FUNC();
 
-      const boost::filesystem::path rootPath( dataPath );
-      std::ifstream ifs( dataSetPath );
-      if ( ifs.is_open() )
+      _data.open(
+          dataSetPath, dataPath, ImgTripletsFileLst::OptsAlpha | ImgTripletsFileLst::OptsCheck );
+
+      if ( _data.size() )
       {
-         _data.reserve( 100000 );
-         vector<string> splitLine;
-         splitLine.reserve( 4 );
-         std::string line;
-         while ( ifs.good() )
-         {
-            getline( ifs, line );
-            splitLine.clear();
-            boost::split( splitLine, line, boost::is_any_of( "\t " ) );
-            if ( splitLine.size() == 4 )
-            {
-               try
-               {
-                  // first path :
-                  const boost::filesystem::path fA(
-                      rootPath / boost::filesystem::path( splitLine[0] ) );
-                  const boost::filesystem::path fB(
-                      rootPath / boost::filesystem::path( splitLine[1] ) );
-                  const boost::filesystem::path fC(
-                      rootPath / boost::filesystem::path( splitLine[2] ) );
-                  const float alpha( stof( splitLine[3] ) );
-                  if ( boost::filesystem::is_regular_file( fA ) &&
-                       boost::filesystem::is_regular_file( fB ) &&
-                       boost::filesystem::is_regular_file( fC ) )
-                  {
-                     _data.emplace_back( alpha, fA.string(), fB.string(), fC.string() );
-                     // cout << alpha << " " << fA.string() << " " << fB.string() << " " <<
-                     // fC.string() << endl;
-                  }
-               }
-               catch ( ... )
-               {
-               }
-            }
-         }
-         _data.shrink_to_fit();
          std::cout << "Read dataset " << dataSetPath << " (" << _data.size() << ") "
                    << ldAsBlendFreq << " " << downsampleFactor << std::endl;
       }
       _dataGen = boost::random::uniform_int_distribution<>( 0, _data.size() - 1 );
    }
+
+   bool write() {}
 
    bool sample( float* buff )
    {
@@ -154,14 +106,14 @@ struct Sampler final
 
       for ( size_t s = 0; s < _sampleSz.x; ++s )
       {
-         const Data& data = _data[_dataGen( _rng )];
+         const ImgTripletsFileLst::Data& data = _data[_dataGen( _rng )];
 
          const bool swapPrevNext = ( data._alpha > 0.5 ) && ( _mode == PrevIsClosestMode );
          const float alpha = swapPrevNext ? 1.0 - data._alpha : data._alpha;
 
-         Mat prevImg = cv_utils::imread32FC3( swapPrevNext ? data._pathC : data._pathA, true );
-         Mat currImg = cv_utils::imread32FC3( data._pathB, true );
-         Mat nextImg = cv_utils::imread32FC3( swapPrevNext ? data._pathA : data._pathC, true );
+         Mat prevImg = cv_utils::imread32FC3( swapPrevNext ? data._pathC : data._pathA, false );
+         Mat currImg = cv_utils::imread32FC3( data._pathB, false );
+         Mat nextImg = cv_utils::imread32FC3( swapPrevNext ? data._pathA : data._pathC, false );
 
          ivec2 imgSz( currImg.cols, currImg.rows );
 

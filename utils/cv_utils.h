@@ -95,6 +95,13 @@ inline cv::Mat imread32FC3( const std::string& imgPath, bool toLinear = false )
    return img;
 }
 
+inline cv::Mat imread32FC4( const std::string& imgPath, bool toLinear = false, bool toRGB=true  )
+{
+   cv::Mat img = imread32FC3( imgPath, toLinear ); 
+   cv::cvtColor( img, img, toRGB ? cv::COLOR_BGR2RGBA : cv::COLOR_RGB2RGBA );
+   return img;
+}
+
 inline cv::Vec3f imsample32FC3( const cv::Mat& img, const glm::vec2& in_pt )
 {
    // compute the positions

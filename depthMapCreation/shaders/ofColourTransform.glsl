@@ -12,8 +12,6 @@ vec3 hsv2rgb( in vec3 c )
     return c.z * mix(K.xxx, clamp(p - K.xxx, 0.0, 1.0), c.y);
 }
 
-const float mtBound = 50.0;
-
 void main()
 {
    vec2 uv = gl_TexCoord[0].st;
@@ -23,11 +21,4 @@ void main()
    float mag = vectorScale * length( motion );
    vec3 hsv = vec3( angle, 1.0, mag );
    gl_FragData[0] = vec4( hsv2rgb( hsv ), 1.0 );
-
-   //gl_FragData[0] = vec4(abs(motion),0.0,1.0);
-
-   //gl_FragData[0] = vec4( min(abs(motion.x), mtBound) / mtBound );   
-
-   //gl_FragData[0] =  motion.x > 0.0 ? vec4(0.0,1.0,0.0,1.0) :  vec4(0.0,0.0,1.0,1.0);
-
 }
