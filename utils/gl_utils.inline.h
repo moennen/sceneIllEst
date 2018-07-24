@@ -176,6 +176,10 @@ bool gl_utils::readbackTexture( const Texture<fmt>& tex, unsigned char* buff, co
 {
    if ( tex.id == -1 ) return false;
 
+   GLenum err = glGetError();
+
+   std::cout << "ERROR : "  << err << std::endl;
+
    glBindTexture( GL_TEXTURE_2D, tex.id );
 
    glGetTexImage(
@@ -186,6 +190,10 @@ bool gl_utils::readbackTexture( const Texture<fmt>& tex, unsigned char* buff, co
        reinterpret_cast<GLvoid*>( buff ) );
 
    glBindTexture( GL_TEXTURE_2D, 0 );
+
+   err = glGetError();
+
+   std::cout << "ERROR : "  << err << std::endl;
 
    return true;
  }

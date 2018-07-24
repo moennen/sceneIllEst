@@ -5,7 +5,7 @@
 
 #include <face/beFaceMModel.h>
 
-BEFaceMModel::BEFaceMModel( const std::string& path )
+BEFaceMModel::BEFaceMModel( const std::string& path, const bool withUVs )
     : _valid( false ),
       _shapeMU( (int)NumData, 1 ),
       _shapePC( (int)NumData, (int)NumCoeffs ),
@@ -41,10 +41,51 @@ BEFaceMModel::BEFaceMModel( const std::string& path )
                    NumData * NumExpCoeffs;
       if ( success )
          success = fread( _expEV.data(), sizeof( float ), NumExpCoeffs, inFile ) == NumExpCoeffs;
+      if ( success )
+         success = !withUVs || fread( &_uvs[0], sizeof( float ), NumVertices * 2, inFile ) == NumVertices * 2;
 
       _valid = success;
       fclose( inFile );
    }
+}
+
+BEFaceMModel::BEFaceMModel( const std::string& path, const glm::vec2* uvs ) :
+  BEFaceMModel(path, false)
+{
+  if ( _valid ) std::memcpy(&_uvs[0], uvs, sizeof(float)*NumVertices*2 );
+}
+
+bool BEFaceMModel::save( const std::string& path )
+{
+   if ( !_valid ) return false;
+   FILE* outFile = fopen( path.c_str(), "wb" );
+   if ( !outFile ) return false;
+   bool success =
+       fwrite( &_landmarksIdx[0], sizeof( unsigned int ), NumLandmarks, outFile ) == NumLandmarks;
+   if ( success )
+      success = fwrite( &_faces[0], sizeof( unsigned int ), NumFaces * 3, outFile ) == NumFaces * 3;
+   if ( success ) success = fwrite( _shapeMU.data(), sizeof( float ), NumData, outFile ) == NumData;
+   if ( success )
+      success = fwrite( _shapePC.data(), sizeof( float ), NumData * NumCoeffs, outFile ) ==
+                NumData * NumCoeffs;
+   if ( success )
+      success = fwrite( _shapeEV.data(), sizeof( float ), NumCoeffs, outFile ) == NumCoeffs;
+   if ( success ) fwrite( _texMU.data(), sizeof( float ), NumData, outFile ) == NumData;
+   if ( success )
+      success = fwrite( _texPC.data(), sizeof( float ), NumData * NumCoeffs, outFile ) ==
+                NumData * NumCoeffs;
+   if ( success )
+      success = fwrite( _texEV.data(), sizeof( float ), NumCoeffs, outFile ) == NumCoeffs;
+   if ( success ) success = fwrite( _expMU.data(), sizeof( float ), NumData, outFile ) == NumData;
+   if ( success )
+      success = fwrite( _expPC.data(), sizeof( float ), NumData * NumExpCoeffs, outFile ) ==
+                NumData * NumExpCoeffs;
+   if ( success )
+      success = fwrite( _expEV.data(), sizeof( float ), NumExpCoeffs, outFile ) == NumExpCoeffs;
+   if ( success )
+      success = fwrite( &_uvs[0], sizeof( float ), NumVertices * 2, outFile ) == NumVertices * 2;
+   fclose( outFile );
+   return success;
 }
 
 bool BEFaceMModel::get(
@@ -76,7 +117,8 @@ bool BEFaceMModel::get(
    else
    {
       shape = ( _shapeMU + _expMU + _shapePC * ( _shapeEV.asDiagonal() * sc ) +
-                _expPC * ( _expEV.asDiagonal() * ec * 0.01 )  ) * sf;
+                _expPC * ( _expEV.asDiagonal() * ec * 0.01 ) ) *
+              sf;
       tex = tex = ( _texMU + _texPC * ( _texEV.asDiagonal() * tc ) ) * sf;
    }
 

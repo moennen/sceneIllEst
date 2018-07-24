@@ -71,3 +71,10 @@ ADD_EXECUTABLE(createFaceMapsFromBEInst faceMapsFromBEInst_main.cpp
 	            ${UTILS}/cv_utils.C)
 
 TARGET_LINK_LIBRARIES( createFaceMapsFromBEInst GLEW GL SDL2 assimp opencv_world )
+
+ADD_EXECUTABLE(renderFaceMaps renderFaceMaps.cpp 
+	            ${FACE}/beFaceMModel.C
+	            ${UTILS}/gl_utils.C
+	            ${UTILS}/cv_utils.C)
+
+TARGET_LINK_LIBRARIES( renderFaceMaps GLEW GL SDL2 assimp opencv_world )

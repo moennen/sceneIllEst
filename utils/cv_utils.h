@@ -32,6 +32,13 @@ inline float toLog( float c )
    return c <= 0.0031308f ? c * 12.92f : 1.055f * std::pow( c, 1.0f / 2.4f ) - 0.055f;
 }
 
+inline void normalizeMeanStd( cv::Mat& img )
+{
+   cv::Mat mean, std;
+   cv::meanStdDev( img, mean, std );
+   img = ( img - mean ) / std;
+}
+
 inline void imToLinear( cv::Mat& img )
 {
    HOP_PROF_FUNC();
@@ -61,9 +68,31 @@ inline void imToLog( cv::Mat& img )
    }
 }
 
+inline cv::Mat imread32FC1( const std::string& imgPath )
+{
+   HOP_PROF_FUNC();
+
+   cv::Mat img;
+   {
+      HOP_PROF( "cv_imread_c1" );
+      img = cv::imread( imgPath, cv::IMREAD_UNCHANGED );
+   }
+   if ( !img.data || ( img.channels() > 1 ) )
+   {
+      std::cerr << "ERROR loading c1 image  : " << imgPath << std::endl;
+      return cv::Mat();
+   }
+   if ( img.type() != CV_32F )
+   {
+      HOP_PROF( "cv_convert" );
+      img.convertTo( img, CV_32F );
+   }
+   return img;
+}
+
 cv::Mat convert8UC3ToLinear32FC3( cv::Mat& img );
 
-inline cv::Mat imread32FC3( const std::string& imgPath, bool toLinear = false )
+inline cv::Mat imread32FC3( const std::string& imgPath, bool toLinear = false, bool toRGB = false )
 {
    HOP_PROF_FUNC();
 
@@ -77,7 +106,10 @@ inline cv::Mat imread32FC3( const std::string& imgPath, bool toLinear = false )
       std::cerr << "ERROR loading image : " << imgPath << std::endl;
       return cv::Mat();
    }
-   if ( img.channels() == 4 ) cv::cvtColor( img, img, cv::COLOR_RGBA2RGB );
+   if ( img.channels() == 4 )
+      cv::cvtColor( img, img, toRGB ? cv::COLOR_RGBA2BGR : cv::COLOR_RGBA2RGB );
+   else if ( toRGB )
+      cv::cvtColor( img, img, cv::COLOR_BGR2RGB );
    if ( ( img.type() == CV_8UC3 ) && toLinear )
    {
       img = convert8UC3ToLinear32FC3( img );
@@ -95,18 +127,19 @@ inline cv::Mat imread32FC3( const std::string& imgPath, bool toLinear = false )
    return img;
 }
 
-inline cv::Mat imread32FC4( const std::string& imgPath, bool toLinear = false, bool toRGB=true  )
+inline cv::Mat imread32FC4( const std::string& imgPath, bool toLinear = false, bool toRGB = true )
 {
-   cv::Mat img = imread32FC3( imgPath, toLinear ); 
+   cv::Mat img = imread32FC3( imgPath, toLinear );
    cv::cvtColor( img, img, toRGB ? cv::COLOR_BGR2RGBA : cv::COLOR_RGB2RGBA );
    return img;
 }
 
-inline cv::Vec3f imsample32FC3( const cv::Mat& img, const glm::vec2& in_pt )
+template <class TVec3>
+inline TVec3 imsample32FC3( const cv::Mat& img, const glm::vec2& in_pt )
 {
    // compute the positions
    const glm::vec2 max_pt( img.cols - 1, img.rows - 1 );
-   const glm::vec2 pt = glm::clamp( in_pt, glm::vec2( 0.0 ), max_pt );
+   const glm::vec2 pt = in_pt;  // glm::clamp( in_pt, glm::vec2( 0.0 ), max_pt );
    const glm::ivec2 ul_pt(
        static_cast<int>( std::floor( pt.x ) ), static_cast<int>( std::floor( pt.y ) ) );
 
@@ -122,7 +155,30 @@ inline cv::Vec3f imsample32FC3( const cv::Mat& img, const glm::vec2& in_pt )
    const glm::vec3 bgr = glm::mix(
        glm::mix( ul, ur, pt.x - ul_pt.x ), glm::mix( bl, br, pt.x - ul_pt.x ), pt.y - ul_pt.y );
 
-   return cv::Vec3f( bgr.x, bgr.y, bgr.z );
+   return TVec3( bgr.x, bgr.y, bgr.z );
+}
+
+template <class TVec>
+inline TVec imsample32F( const cv::Mat& img, const glm::vec2& in_pt )
+{
+   // compute the positions
+   const glm::vec2 max_pt( img.cols - 1, img.rows - 1 );
+   const glm::vec2 pt = glm::clamp( in_pt, glm::vec2( 0.0 ), max_pt );
+   const glm::ivec2 ul_pt(
+       static_cast<int>( std::floor( pt.x ) ), static_cast<int>( std::floor( pt.y ) ) );
+
+   // fetch the data
+   const TVec& ul = img.ptr<TVec>( ul_pt.y )[ul_pt.x];
+   const TVec& ur = ul_pt.x < max_pt.x ? img.ptr<TVec>( ul_pt.y )[ul_pt.x + 1] : ul;
+
+   const TVec& bl = ul_pt.y < max_pt.y ? img.ptr<TVec>( ul_pt.y + 1 )[ul_pt.x] : ul;
+   const TVec& br = ul_pt.y < max_pt.y
+                        ? ( ul_pt.x < max_pt.x ? img.ptr<TVec>( ul_pt.y + 1 )[ul_pt.x + 1] : bl )
+                        : ur;
+
+   // linear interpolation
+   return glm::mix(
+       glm::mix( ul, ur, pt.x - ul_pt.x ), glm::mix( bl, br, pt.x - ul_pt.x ), pt.y - ul_pt.y );
 }
 
 inline void imToBuffer( const cv::Mat& img, float* buff, const bool toRGB = false )
@@ -139,7 +195,6 @@ inline void imToBuffer( const cv::Mat& img, float* buff, const bool toRGB = fals
       memcpy( row_buff_data, row_img_data, row_size );
    }
 }
-
 }
 
 #endif  // _UTILS_CV_UTILS_H

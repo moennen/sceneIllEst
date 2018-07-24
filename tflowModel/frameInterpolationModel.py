@@ -239,11 +239,11 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath):
     lp.tslogStep = 150
     lp.trlogStep = 150
     lp.backupStep = 300
-    lp.imgSzTr = [64, 64]
+    lp.imgSzTr = [128, 128]
     lp.batchSz = 64
     baseN = 32
-    alpha_data = 1.0
-    alpha_disc = 0.1
+    alpha_data = 0.0
+    alpha_disc = 1.0
     minPrevNextSqDiff = 0.000075  # minimum value of frame difference # default to 0.0001
     maxPrevNextSqDiff = 0.001     # maximum value ""                  # default to 0.0005
     lp.update()
@@ -273,7 +273,7 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath):
     inCurr = preprocess(inCurri)
     inBlendi = tf.placeholder(
         tf.float32, shape=sampleShape, name="input_blend")
-    inBlend = preprocess(inBlendi)
+    inBlend = inCurr  # preprocess(inBlendi)
 
     # Optimizers
     [opts, loss, trSum, tsSum] = pix2pix_optimizer(
@@ -319,7 +319,7 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath):
             # Get the next training batch
             currHD, currLD, blendSple, prevSple, nextSple = sess.run(dsView)
 
-            trFeed = {lp.dropoutProb: 0.01,
+            trFeed = {lp.dropoutProb: 0.0,
                       lp.isTraining: True,
                       inCurri: currHD,
                       inPrevi: prevSple,

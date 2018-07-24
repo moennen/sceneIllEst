@@ -290,7 +290,7 @@ def pix2pix_layer_bn(inputs, n, stride, name, train, xinit):
     with tf.variable_scope(name):
 
         layer = tf.layers.conv2d(
-            inputs, n, 4, stride, padding='valid', use_bias=False,
+            inputs, n, 4, stride, padding='same', use_bias=False,
             kernel_initializer=xinit)
 
         layer = tf.layers.batch_normalization(layer,
@@ -311,46 +311,77 @@ def pix2pix_disc(gen_inputs, gen_outputs, n, train):
 
     inputs = tf.concat([gen_inputs, gen_outputs], axis=3)
 
-    # layer_1: [batch, 256, 256, in_channels * 2] => [batch, 128, 128, ndf]
-    with tf.variable_scope("layer_1"):
+    with tf.variable_scope("discriminator", reuse=tf.AUTO_REUSE):
 
-        layer_1 = tf.layers.conv2d(
-            inputs, n, 4, 2, padding='valid', use_bias=True,
-            kernel_initializer=tf.contrib.layers.xavier_initializer())
+        # layer_1: [batch, 256, 256, in_channels * 2] => [batch, 128, 128, ndf]
+        with tf.variable_scope("layer_1"):
 
-        layer_1 = tf.nn.leaky_relu(layer_1)
+            layer_1 = tf.layers.conv2d(
+                inputs, n, 4, 2, padding='same', use_bias=True,
+                kernel_initializer=tf.contrib.layers.xavier_initializer())
 
-    # layer_2: [batch, 128, 128, ndf] => [batch, 64, 64, ndf * 2]
-    layer_2 = pix2pix_layer_bn(layer_1, n*2, 2, "layer_2", train, xinit)
-    # layer_3: [batch, 64, 64, ndf * 2] => [batch, 32, 32, ndf * 4]
-    layer_3 = pix2pix_layer_bn(layer_2, n*4, 1, "layer_3", train, xinit)
-    # layer_4: [batch, 32, 32, ndf * 4] => [batch, 31, 31, ndf * 8]
-    layer_4 = pix2pix_layer_bn(layer_3, n*8, 1, "layer_4", train, xinit)
-    # layer_5: [batch, 32, 32, ndf * 4] => [batch, 31, 31, ndf * 8]
-    layer_5 = pix2pix_layer_bn(layer_4, n*8, 1, "layer_5", train, xinit)
+            layer_1 = tf.nn.leaky_relu(layer_1)
 
-    # layer_6
-    with tf.variable_scope("layer_6"):
+        # layer_2: [batch, 128, 128, ndf] => [batch, 64, 64, ndf * 2]
+        layer_2 = pix2pix_layer_bn(layer_1, n*2, 2, "layer_2", train, xinit)
+        # layer_3: [batch, 64, 64, ndf * 2] => [batch, 32, 32, ndf * 4]
+        layer_3 = pix2pix_layer_bn(
+            layer_2, n*4, 1, "layer_3", train, xinit)
+        # layer_4: [batch, 32, 32, ndf * 4] => [batch, 31, 31, ndf * 8]
+        layer_4 = pix2pix_layer_bn(
+            layer_3, n*8, 2, "layer_4", train, xinit)
+        # layer_5: [batch, 32, 32, ndf * 4] => [batch, 31, 31, ndf * 8]
+        layer_5 = pix2pix_layer_bn(
+            layer_4, n*8, 1, "layer_5", train, xinit)
 
-        layer_6 = tf.layers.conv2d(
-            layer_5, 1, 4, 2, padding='valid', use_bias=True,
-            kernel_initializer=xinit)
+        # layer_6
+        with tf.variable_scope("layer_6"):
 
-        #layer_6 = tf.nn.sigmoid(layer_6)
+            layer_6 = tf.layers.conv2d(
+                layer_5, 1, 4, 2, padding='same', use_bias=True,
+                kernel_initializer=xinit)
+
+            # layer_6 = tf.nn.sigmoid(layer_6)
 
     return layer_6
 
 
-def pix2pix_optimizer(imgs, targets, learning_rate, alpha_data, alpha_disc, dropout, train, n=64):
+def pix2pix_optimizer(imgs, targets_in, learning_rate, alpha_data, alpha_disc, dropout, train, n=64, normOutputs=False):
+
+    targets = targets_in
 
     output_channels = int(targets.get_shape()[-1])
     optimizers = []
     depends = []
 
+    gen_loss_data = 0
+
     with tf.variable_scope("generator"):
         outputs = pix2pix_gen(imgs, output_channels, n, dropout, train)
+        outputs_disp = outputs
+        if normOutputs:
+            outputs_min = tf.expand_dims(tf.expand_dims(
+                tf.reduce_min(outputs, axis=[1, 2]), axis=1), axis=2)
+            outputs_max = tf.expand_dims(tf.expand_dims(
+                tf.reduce_max(outputs, axis=[1, 2]), axis=1), axis=2)
 
-    gen_loss_data = tf.reduce_mean(tf.sqrt(EPS + tf.square(targets - outputs)))
+            # outputs_mean = tf.expand_dims(tf.expand_dims(
+            #    tf.reduce_mean(outputs, axis=[1, 2]), axis=1), axis=2)
+            #outputs_var = tf.square(tf.subtract(outputs, outputs_mean))
+            # outputs_std = tf.expand_dims(tf.expand_dims(
+            #    tf.sqrt(tf.reduce_mean(outputs_var, axis=[1, 2])), axis=1), axis=2)
+            #outputs_range = tf.subtract(outputs_max, outputs_min)
+            # gen_loss_data = gen_loss_data + 0.05 * \
+            #    tf.reduce_mean(tf.square(tf.subtract(outputs_range, 2.0)))
+            outputs = tf.divide(tf.subtract(outputs, outputs_min),
+                                tf.subtract(outputs_max, outputs_min))
+            # targets = tf.add(tf.multiply(
+            #    tf.multiply(tf.add(targets, 1.0), 0.5), outputs_range), outputs_min)
+            # outputs = tf.divide(tf.subtract(
+            #    outputs, outputs_mean), outputs_std)
+
+    gen_loss_data = gen_loss_data + \
+        tf.reduce_mean(tf.sqrt(EPS + tf.square(targets - outputs)))
     gen_loss = alpha_data * gen_loss_data
 
     disc = alpha_disc > 0.0
@@ -358,31 +389,27 @@ def pix2pix_optimizer(imgs, targets, learning_rate, alpha_data, alpha_disc, drop
     if disc:
 
         with tf.name_scope("discriminator_gt"):
-            with tf.variable_scope("discriminator"):
-                disc_targets = pix2pix_disc(imgs, targets, n, train)
+            disc_targets = pix2pix_disc(imgs, targets, n, train)
 
         with tf.name_scope("discriminator_gen"):
-            with tf.variable_scope("discriminator", reuse=True):
-                disc_outputs = pix2pix_disc(imgs, outputs, n, train)
+            disc_outputs = pix2pix_disc(imgs, outputs, n, train)
 
-        #disc_loss_targets = tf.reduce_mean(-tf.log(disc_targets + EPS))
+        # disc_loss_targets = tf.reduce_mean(-tf.log(disc_targets + EPS))
         disc_loss_targets = tf.reduce_mean(
             tf.nn.sigmoid_cross_entropy_with_logits(labels=tf.constant(1., shape=disc_targets.shape), logits=disc_targets))
-        #disc_loss_outputs = tf.reduce_mean(-tf.log(1 - disc_outputs + EPS))
+        # disc_loss_outputs = tf.reduce_mean(-tf.log(1 - disc_outputs + EPS))
         disc_loss_outputs = tf.reduce_mean(
             tf.nn.sigmoid_cross_entropy_with_logits(labels=tf.constant(0., shape=disc_outputs.shape), logits=disc_outputs))
-        disc_loss = disc_loss_targets + disc_loss_outputs
+        disc_loss = 2.0 * disc_loss_targets + disc_loss_outputs
 
-        #gen_loss_disc = tf.reduce_mean(-tf.log(disc_outputs + EPS))
+        # gen_loss_disc = tf.reduce_mean(-tf.log(disc_outputs + EPS))
         gen_loss_disc = tf.reduce_mean(
             tf.nn.sigmoid_cross_entropy_with_logits(labels=tf.constant(1., shape=disc_outputs.shape), logits=disc_outputs))
 
-        #gen_loss = gen_loss + gen_loss_disc * alpha_disc
-
-        depends = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
+        gen_loss = gen_loss + gen_loss_disc * alpha_disc
 
         with tf.name_scope("discriminator_train"):
-            with tf.control_dependencies(depends):
+            with tf.control_dependencies(tf.get_collection(tf.GraphKeys.UPDATE_OPS)):
                 disc_tvars = [var for var in tf.trainable_variables(
                 ) if var.name.startswith("discriminator")]
                 disc_optim = tf.train.AdamOptimizer(learning_rate)
@@ -390,8 +417,7 @@ def pix2pix_optimizer(imgs, targets, learning_rate, alpha_data, alpha_disc, drop
                     disc_loss, var_list=disc_tvars)
                 disc_train = disc_optim.apply_gradients(disc_grads_and_vars)
 
-        optimizers.append(disc_train)
-        # depends.append(disc_train)
+        depends.append(disc_train)
 
     with tf.name_scope("generator_train"):
         depends = depends if len(depends) > 0 else tf.get_collection(
@@ -434,12 +460,31 @@ def pix2pix_optimizer(imgs, targets, learning_rate, alpha_data, alpha_disc, drop
             trSum.append(tf.summary.histogram(
                 var.name + '_gradient', grad, family="gradDisc"))
 
-    targetsSamples = tf.concat([[targets[it, :, :, :]]
+        disc_targets_out = tf.constant(
+            1., shape=disc_targets.shape) - tf.nn.sigmoid(disc_targets)
+        targetsSamplesDisc = tf.concat([[disc_targets_out[it, :, :, :]]
+                                        for it in range(16)], axis=2)
+        disc_outputs_out = tf.constant(
+            1., shape=disc_outputs.shape) - tf.nn.sigmoid(disc_outputs)
+        outputSamplesDisc = tf.concat([[disc_outputs_out[it, :, :, :]]
+                                       for it in range(16)], axis=2)
+        imgSamples = tf.concat([targetsSamplesDisc, outputSamplesDisc], axis=1)
+        tsSum.append(tf.summary.image("samplesDisc", imgSamples))
+
+    targetsSamples = targets
+    outputSamples = outputs
+
+    targetsSamples = tf.concat([[targetsSamples[it, :, :, :]]
                                 for it in range(16)], axis=2)
-    outputSamples = tf.concat([[outputs[it, :, :, :]]
+    outputSamples = tf.concat([[outputSamples[it, :, :, :]]
                                for it in range(16)], axis=2)
+    outputDispSamples = tf.concat([[outputs_disp[it, :, :, :]]
+                                   for it in range(16)], axis=2)
     imgSamples = tf.concat([targetsSamples, outputSamples], axis=1)
     tsSum.append(tf.summary.image("samples", imgSamples))
+
+    tsSum.append(tf.summary.image("targetSamples", targetsSamples))
+    tsSum.append(tf.summary.image("outputSamples", outputDispSamples))
 
     trSum = tf.summary.merge(trSum, "Train")
     tsSum = tf.summary.merge(tsSum, "Test")

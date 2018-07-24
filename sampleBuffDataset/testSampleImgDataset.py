@@ -45,6 +45,21 @@ def testFrameInterp(libPath, dataPath, rootPath):
         cv.waitKey(0)
 
 
+def testDepthImg(libPath, dataPath, rootPath):
+    batchSz = 3
+    rseed = int(time.time())
+
+    samplerLib = BufferDataSamplerLibrary(libPath)
+    sampler = BufferDataSampler(
+        samplerLib, dataPath, rootPath, np.array([batchSz, 256, 256], dtype=np.float32), rseed)
+    data = sampler.getDataBuffers()
+    print len(data)
+    for b in range(batchSz):
+        cv.imshow("Image", cv.cvtColor(data[0][b], cv.COLOR_RGB2BGR))
+        cv.imshow("Depth", data[1][b])
+        cv.waitKey(0)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -56,4 +71,5 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
     #testSupRes(args.libPath, args.dbPath, args.rootPath)
-    testFrameInterp(args.libPath, args.dbPath, args.rootPath)
+    #testFrameInterp(args.libPath, args.dbPath, args.rootPath)
+    testDepthImg(args.libPath, args.dbPath, args.rootPath)

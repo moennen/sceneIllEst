@@ -68,6 +68,43 @@ GLuint createShader( const char* shader_file_path, const GLenum shaderType )
 }
 }
 
+void gl_utils::computeNormals(
+    const std::vector<glm::uvec3>& idx,
+    const std::vector<glm::vec3>& vtx,
+    std::vector<glm::vec3>& normals )
+{
+   normals.resize( vtx.size(), glm::vec3( 0.0 ) );
+
+#pragma omp parallel for
+   for ( size_t f = 0; f < idx.size(); ++f )
+   {
+      const uvec3& tri( idx[f] );
+      const vec3& v0( vtx[tri.x] );
+      const vec3& v1( vtx[tri.y] );
+      const vec3& v2( vtx[tri.z] );
+
+      const vec3 n0 = cross( normalize( v1 - v0 ), normalize( v2 - v0 ) );
+      const vec3 n1 = cross( normalize( v2 - v1 ), normalize( v0 - v1 ) );
+      const vec3 n2 = cross( normalize( v0 - v2 ), normalize( v1 - v2 ) );
+
+      for ( int a = 0; a < 3; ++a )
+      {
+#pragma omp atomic
+         normals[tri.x][a] += n0[a];
+#pragma omp atomic
+         normals[tri.y][a] += n1[a];
+#pragma omp atomic
+         normals[tri.z][a] += n2[a];
+      }
+   }
+
+#pragma omp parallel for
+   for ( size_t n = 0; n < normals.size(); ++n )
+   {
+      normals[n] = normalize( normals[n] );
+   }
+}
+
 #ifdef WITH_ASSIMP
 
 bool gl_utils::loadTriangleMesh(
@@ -365,8 +402,9 @@ gl_utils::TriMeshBuffer gl_utils::TexQuad( const glm::uvec2& sz )
    const uvec3 idx[2] = {uvec3( 0, 1, 2 ), uvec3( 0, 2, 3 )};
 
    TriMeshBuffer quad;
-   if (!quad.load(4, &vtx[0], 2, &idx[0] ) || !quad.loadAttrib( 2, value_ptr(uvs[0]) )) quad.reset();
-   
+   if ( !quad.load( 4, &vtx[0], 2, &idx[0] ) || !quad.loadAttrib( 2, value_ptr( uvs[0] ) ) )
+      quad.reset();
+
    return quad;
 }
 

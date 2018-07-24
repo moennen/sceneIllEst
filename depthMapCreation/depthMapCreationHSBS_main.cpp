@@ -48,8 +48,8 @@ void draw( Tex& tex, uvec2 wSz, const bool error )
 
    // set the coords
    const vec2 sz = vec2( tex.sz ) * std::min(
-                                        std::min( 1.0f, (float)tex.sz.x / wSz.x ),
-                                        std::min( 1.0f, (float)tex.sz.y / wSz.y ) );
+                                        std::min( 1.0f, (float)wSz.x / tex.sz.x ),
+                                        std::min( 1.0f, (float)wSz.y / tex.sz.y ) );
    const vec2 off = 0.5f * ( vec2( wSz.x, wSz.y ) - sz );
 
    // Bind Texture
@@ -688,6 +688,17 @@ int main( int argc, char* argv[] )
       {
          gl_utils::uploadToTexture( texs[WkFullTex], img[j-1].ptr() );
          splitTexHSBS( texs[WkFullTex], texs[j + RightTex], texs[j + LeftTex] );
+
+         Img iLeft( imgSz.y, imgSz.x/2, CV_32FC4 );
+         gl_utils::readbackTexture( texs[j + LeftTex], iLeft.data );
+         cvtColor( iLeft, iLeft, cv::COLOR_RGBA2BGR );
+         imshow("elft",iLeft);
+         waitKey();
+
+         //draw( texs[WkFullTex], windowSz, false );
+         //draw( texs[j + LeftTex], windowSz, false );
+         lastError = Errors::BadDisparity;
+         break;
 
          float valid = computeMotionDisparity(
              ofEstimator,

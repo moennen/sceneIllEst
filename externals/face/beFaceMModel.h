@@ -14,9 +14,12 @@ class BEFaceMModel final
 {
 
 public :
-   BEFaceMModel( const std::string& path );
+   BEFaceMModel( const std::string& path, const bool withUVs=true );
+   BEFaceMModel( const std::string& path, const glm::vec2* uvs );
 
    bool initialized() const {return _valid;}
+
+   bool save(const std::string& path);
 
    enum 
    {
@@ -39,6 +42,7 @@ public :
              const bool normalizedCoeffs = false  ) const;
 
    inline const glm::uvec3* getFaces() { return &_faces[0]; }
+   inline const glm::vec2* getUVs() { return &_uvs[0]; }
 
    const std::array<unsigned int,NumLandmarks>& getLandmarksIdx() {return _landmarksIdx;}
              
@@ -46,6 +50,7 @@ private:
    bool _valid;
 
    std::array<glm::uvec3,NumFaces> _faces;
+   std::array<glm::vec2,NumVertices> _uvs;
 
    Eigen::MatrixXf _shapeMU;
    Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> _shapePC;

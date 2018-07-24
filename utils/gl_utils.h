@@ -96,6 +96,12 @@ struct TriMeshBuffer final
 
 TriMeshBuffer TexQuad( const glm::uvec2& sz );
 
+void computeNormals(
+  const std::vector<glm::uvec3>& idx,
+  const std::vector<glm::vec3>& vtx,
+  std::vector<glm::vec3>& normals  
+);
+
 bool loadTriangleMesh(
     const char* filename,
     std::vector<glm::uvec3>& idx,

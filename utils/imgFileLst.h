@@ -115,15 +115,21 @@ class ImgNFileLst
             if ( splitLine.size() >= N )
             {
                Data d;
+               bool success = true;
                for (unsigned s=0;s<N;++s)
                {
-                  const filesystem::path f( rootPath / filesystem::path( splitLine[0] ) );
+                  const filesystem::path f( rootPath / filesystem::path( splitLine[s] ) );
                   if ( !doCheck || filesystem::is_regular_file( f ) )
                   {
                      d[s] = f.string();
                   }
+                  else 
+                  {
+                    success = false;
+                    break;
+                  }
                }
-               _data.push_back(d);
+               if ( success ) _data.push_back(d);
             }
          }
          _data.shrink_to_fit();
