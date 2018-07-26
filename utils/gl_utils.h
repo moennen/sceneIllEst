@@ -25,7 +25,6 @@
 
 namespace gl_utils
 {
-
 enum TextureFormat
 {
    MONO_32FP,
@@ -51,9 +50,9 @@ struct Texture final
 
    void generateMipmap()
    {
-      glBindTexture(GL_TEXTURE_2D, id);
-      glGenerateMipmap(GL_TEXTURE_2D);
-      glBindTexture(GL_TEXTURE_2D, 0);
+      glBindTexture( GL_TEXTURE_2D, id );
+      glGenerateMipmap( GL_TEXTURE_2D );
+      glBindTexture( GL_TEXTURE_2D, 0 );
    }
 
    bool create( const glm::uvec2 size );
@@ -74,7 +73,7 @@ bool uploadToTexture(
     const glm::uvec2 pos = glm::uvec2( 0u, 0u ) );
 
 template <TextureFormat fmt>
-bool readbackTexture( const Texture<fmt>&, unsigned char*, const int level=0 );
+bool readbackTexture( const Texture<fmt>&, unsigned char*, const int level = 0 );
 
 struct TriMeshBuffer final
 {
@@ -97,10 +96,11 @@ struct TriMeshBuffer final
 TriMeshBuffer TexQuad( const glm::uvec2& sz );
 
 void computeNormals(
-  const std::vector<glm::uvec3>& idx,
-  const std::vector<glm::vec3>& vtx,
-  std::vector<glm::vec3>& normals  
-);
+    const size_t ntri,
+    const glm::uvec3* idx,
+    const size_t nvtx,
+    const glm::vec3* vtx,
+    glm::vec3* normals );
 
 bool loadTriangleMesh(
     const char* filename,
@@ -148,6 +148,7 @@ struct RenderTarget final
    }
 
    GLuint id;
+   GLuint depth_id;
    glm::uvec2 sz;
 };
 }

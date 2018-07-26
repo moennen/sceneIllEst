@@ -117,7 +117,7 @@ bool BEFaceMModel::get(
    else
    {
       shape = ( _shapeMU + _expMU + _shapePC * ( _shapeEV.asDiagonal() * sc ) +
-                _expPC * ( _expEV.asDiagonal() * ec * 0.01 ) ) *
+                _expPC * ( _expEV.asDiagonal() * ec * 0.0175 ) ) *
               sf;
       tex = tex = ( _texMU + _texPC * ( _texEV.asDiagonal() * tc ) ) * sf;
    }

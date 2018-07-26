@@ -96,8 +96,8 @@ def testDataset(imgRootDir, trainPath):
 
 def trainModel(modelPath, imgRootDir, trainPath, testPath):
 
-    lp = LearningParams(modelPath, 20160704)
-    lp.numSteps = 35000
+    lp = LearningParams(modelPath)  # , 20160704)
+    lp.numSteps = 135000
     lp.tslogStep = 150
     lp.trlogStep = 150
     lp.backupStep = 300
@@ -130,7 +130,8 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath):
 
     # Optimizers
     [opts, loss, trSum, tsSum] = pix2pix_optimizer(inImg, inDepth,
-                                                   lp.learningRate, alpha_data, alpha_disc, lp.dropoutProb, lp.isTraining, baseN, False)
+                                                   lp.learningRate, alpha_data, alpha_disc, lp.dropoutProb,
+                                                   lp.isTraining, baseN, False)
 
     # Persistency
     persistency = tf.train.Saver(

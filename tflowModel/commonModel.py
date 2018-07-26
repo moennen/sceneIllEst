@@ -358,7 +358,6 @@ def pix2pix_optimizer(imgs, targets_in, learning_rate, alpha_data, alpha_disc, d
 
     with tf.variable_scope("generator"):
         outputs = pix2pix_gen(imgs, output_channels, n, dropout, train)
-        outputs_disp = outputs
         if normOutputs:
             outputs_min = tf.expand_dims(tf.expand_dims(
                 tf.reduce_min(outputs, axis=[1, 2]), axis=1), axis=2)
@@ -478,13 +477,8 @@ def pix2pix_optimizer(imgs, targets_in, learning_rate, alpha_data, alpha_disc, d
                                 for it in range(16)], axis=2)
     outputSamples = tf.concat([[outputSamples[it, :, :, :]]
                                for it in range(16)], axis=2)
-    outputDispSamples = tf.concat([[outputs_disp[it, :, :, :]]
-                                   for it in range(16)], axis=2)
     imgSamples = tf.concat([targetsSamples, outputSamples], axis=1)
     tsSum.append(tf.summary.image("samples", imgSamples))
-
-    tsSum.append(tf.summary.image("targetSamples", targetsSamples))
-    tsSum.append(tf.summary.image("outputSamples", outputDispSamples))
 
     trSum = tf.summary.merge(trSum, "Train")
     tsSum = tf.summary.merge(tsSum, "Test")

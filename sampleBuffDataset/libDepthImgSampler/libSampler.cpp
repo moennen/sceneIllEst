@@ -84,7 +84,6 @@ struct Sampler final
 
          Mat currImg = cv_utils::imread32FC3( data[0], false/*toLinear*/, true/*toRGB*/ );
          Mat currDepth = cv_utils::imread32FC1( data[1] );
-         normalize( currDepth, currDepth, 0, 1, NORM_MINMAX );
 
          ivec2 imgSz( currImg.cols, currImg.rows );
 
@@ -120,7 +119,7 @@ struct Sampler final
          Mat depthSple( _sampleSz.z, _sampleSz.y, CV_32FC1, currBuffDepth );
          GaussianBlur( currDepth, depthSple, Size( 3, 3 ), 0.5 * _tsGen( _rng ) );
          //cv_utils::normalizeMeanStd(depthSple);
-         //normalize( depthSple, depthSple, 0, 1, NORM_MINMAX );
+         normalize( depthSple, depthSple, 0, 1, NORM_MINMAX );
 
          currBuffImg += imgBuffSz;
          currBuffDepth += depthBuffSz;

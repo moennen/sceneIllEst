@@ -32,11 +32,12 @@ const std::array<std::string, 10> invertVideoIdName = {{"0010"}};
 
 //------------------------------------------------------------------------------
 //
-void split_hsbs( const Mat& img, Mat& right, Mat& left, unsigned nHStripes = 0 )
+void split_hsbs( const Mat& img, Mat& right, Mat& left, const unsigned nHStripes = 0 )
 {
+   const uvec2 off = {0, 0};
    const uvec2 hSz = {img.cols / 2, img.rows - 2 * nHStripes};
-   right = img( Rect( 0, nHStripes, hSz.x, hSz.y ) ).clone();
-   left = img( Rect( hSz.x, nHStripes, hSz.x, hSz.y ) ).clone();
+   right = img( Rect( off.x, nHStripes+off.y, hSz.x-2*off.x, hSz.y-2*off.y ) ).clone();
+   left = img( Rect( hSz.x + off.x, nHStripes+off.y, hSz.x-2*off.x, hSz.y-2*off.y ) ).clone();
 }
 
 //------------------------------------------------------------------------------
@@ -419,6 +420,9 @@ Mat flowToDisp(
    Mat lkR = flowToLk( flowR, imgFrom, imgTo );
    Mat lkL = flowToLk( flowL, imgTo, imgFrom );
 
+   //Mat flowLi( flowR.rows, flowR.cols, CV_32FC2 );
+
+
 #pragma omp parallel for
    for ( size_t y = 0; y < flowR.rows; y++ )
    {
@@ -426,6 +430,8 @@ Mat flowToDisp(
       const float* lk_r_data = lkR.ptr<float>( y );
       const float* f_row_l_data = flowL.ptr<float>( y );
       const float* lk_l_data = lkL.ptr<float>( y );
+
+      //vec2* f_row_li_data = flowLi.ptr<vec2>(y);
 
       float* d_row_data = disp.ptr<float>( y );
       float* u_row_data = undef.ptr<float>( y );
@@ -436,6 +442,7 @@ Mat flowToDisp(
          const float dispRL = -1.0 * mix( f_row_l_data[( x + (int)ceil( dispR ) ) * 2],
                                           f_row_l_data[( x + (int)floor( dispR ) ) * 2],
                                           ceil( dispR ) - dispR );
+         //f_row_li_data[x] = vec2(dispRL, 0.0);
          const float dispReg = mix( dispR, dispRL, 0.5 );
 
          u_row_data[x] =
@@ -450,6 +457,13 @@ Mat flowToDisp(
          d_row_data[x] = ( isInverted ? 1.0 : -1.0 ) * dispReg;
       }
    }
+
+   /*imshow("flowR", flowToImg(flowR));
+   imshow("flowL", flowToImg(flowL));
+   imshow("flowLi", flowToImg(flowLi));
+   imshow("lkR", lkR);
+   imshow("lkL", lkL);
+   imshow("undef", undef);*/
 
    processDepth( disp, imgFrom, undef, 1.0, 0.03, 0.21 );
 
@@ -497,11 +511,7 @@ int main( int argc, char* argv[] )
 
    // Create the optical flow estimator
    OclVarOpticalFlow::params_t ofParams = OclVarOpticalFlow::getDefaultParams();
-   ofParams.nonLinearIter = 11;
-   ofParams.robustIter = 5;
-   ofParams.solverIter = 7;
-   ofParams.gamma = 25;
-   ofParams.lambda = 0.075;
+   ofParams.lambda = 0.19;
 
    OclVarOpticalFlow ofEstimator( 512, 512, false, ofParams );
 
@@ -534,8 +544,8 @@ int main( int argc, char* argv[] )
          ofEstimator.setImgSize( right.cols, right.rows );
 
          Mat ofRight( right.rows, right.cols, CV_32FC2 );
-         ofEstimator.setOpt( OclVarOpticalFlow::OptsDoRightDisparity, true );
-         ofEstimator.setOpt( OclVarOpticalFlow::OptsDoLeftDisparity, false );
+         /*ofEstimator.setOpt( OclVarOpticalFlow::OptsDoRightDisparity, true );
+         ofEstimator.setOpt( OclVarOpticalFlow::OptsDoLeftDisparity, false );*/
          ofEstimator.compute(
              reinterpret_cast<const float*>( left.ptr() ),
              reinterpret_cast<const float*>( right.ptr() ),
@@ -547,8 +557,8 @@ int main( int argc, char* argv[] )
          if ( cv::mean( cv::abs( ofRight ) )[0] < 1.0 ) continue;
 
          Mat ofLeft( right.rows, right.cols, CV_32FC2 );
-         ofEstimator.setOpt( OclVarOpticalFlow::OptsDoRightDisparity, false );
-         ofEstimator.setOpt( OclVarOpticalFlow::OptsDoLeftDisparity, true );
+         /*ofEstimator.setOpt( OclVarOpticalFlow::OptsDoRightDisparity, false );
+         ofEstimator.setOpt( OclVarOpticalFlow::OptsDoLeftDisparity, true );*/
          ofEstimator.compute(
              reinterpret_cast<const float*>( right.ptr() ),
              reinterpret_cast<const float*>( left.ptr() ),
@@ -562,16 +572,16 @@ int main( int argc, char* argv[] )
          Mat depth = flowToDisp( ofRight, ofLeft, right, left, isInverted );
 
          // display
-         // imshow( "Full", img );
-         //imshow( "Right", right );
-         // imshow( "Left", left );
-         //imshow( "Disp", depth );
+         //imshow( "Full", img );
+         imshow( "Right", right );
+         //imshow( "Left", left );
+         imshow( "Disp", depth );
 
          const filesystem::path fRight( outBasename + string( "_i" ) + ".png" );
          const filesystem::path fDepth( outBasename + string( "_d" ) + ".exr" );
 
-         imwrite( filesystem::path( outRootPath / fRight ).string().c_str(), right * 255.0 );
-         imwrite( filesystem::path( outRootPath / fDepth ).string().c_str(), depth );
+         //imwrite( filesystem::path( outRootPath / fRight ).string().c_str(), right * 255.0 );
+         //imwrite( filesystem::path( outRootPath / fDepth ).string().c_str(), depth );
 
          cout << fRight.string() << " " << fDepth.string();
 
@@ -580,7 +590,7 @@ int main( int argc, char* argv[] )
          else
             cout << " ";
 
-         //waitKey( 0 );
+         waitKey( 0 );
       }
    }
 

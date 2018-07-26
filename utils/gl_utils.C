@@ -10,6 +10,7 @@
 #include <assimp/Importer.hpp>
 #include <assimp/Exporter.hpp>
 #include <assimp/scene.h>
+#include <assimp/postprocess.h>
 #endif
 
 #include <fstream>
@@ -69,14 +70,20 @@ GLuint createShader( const char* shader_file_path, const GLenum shaderType )
 }
 
 void gl_utils::computeNormals(
-    const std::vector<glm::uvec3>& idx,
-    const std::vector<glm::vec3>& vtx,
-    std::vector<glm::vec3>& normals )
+    const size_t ntri,
+    const glm::uvec3* idx,
+    const size_t nvtx,
+    const glm::vec3* vtx,
+    glm::vec3* normals )
 {
-   normals.resize( vtx.size(), glm::vec3( 0.0 ) );
+#pragma omp parallel for
+   for ( size_t n = 0; n < nvtx; ++n )
+   {
+      normals[n] = vec3(0.0);
+   }
 
 #pragma omp parallel for
-   for ( size_t f = 0; f < idx.size(); ++f )
+   for ( size_t f = 0; f < ntri; ++f )
    {
       const uvec3& tri( idx[f] );
       const vec3& v0( vtx[tri.x] );
@@ -99,7 +106,7 @@ void gl_utils::computeNormals(
    }
 
 #pragma omp parallel for
-   for ( size_t n = 0; n < normals.size(); ++n )
+   for ( size_t n = 0; n < nvtx; ++n )
    {
       normals[n] = normalize( normals[n] );
    }
@@ -118,8 +125,12 @@ bool gl_utils::loadTriangleMesh(
    Assimp::Importer importer;
 
    const aiScene* scene =
-       importer.ReadFile( filename, 0 /*aiProcess_JoinIdenticalVertices | aiProcess_SortByPType*/ );
-   if ( !scene ) return false;
+       importer.ReadFile( filename, 0/*aiProcess_JoinIdenticalVertices | aiProcess_SortByPType*/ );
+   if ( !scene ) 
+   {
+      std::cerr << "Cannot import " << filename << " -> " << importer.GetErrorString() << std::endl;
+      return false;
+   }
 
    // default to the first mesh
    const aiMesh* mesh = scene->mMeshes[0];
@@ -485,15 +496,17 @@ gl_utils::RenderTarget::RenderTarget( const glm::uvec2 isz )
    sz = isz;
    // The framebuffer, which regroups 0, 1, or more textures, and 0 or 1 depth buffer.
    glGenFramebuffers( 1, &id );
+   // Depth
+   glGenRenderbuffers(1, &depth_id);
+   glBindRenderbuffer(GL_RENDERBUFFER, depth_id);
+   glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT, sz.x, sz.y);
+   glBindRenderbuffer(GL_RENDERBUFFER, 0);
 }
 
 gl_utils::RenderTarget::~RenderTarget()
 {
-   if ( id != -1 )
-   {
-      glDeleteFramebuffers( 1, &id );
-      id = -1;
-   }
+   glDeleteFramebuffers( 1, &id );
+   glDeleteFramebuffers( 1, &depth_id );
 }
 
 bool gl_utils::RenderTarget::bind( const size_t natts, GLuint* atts, GLuint* depth )
@@ -530,6 +543,10 @@ bool gl_utils::RenderTarget::bind( const size_t natts, GLuint* atts, GLuint* dep
       glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE );
       glFramebufferTexture( GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, *depth, 0 );
       glBindTexture( GL_TEXTURE_2D, 0 );
+   }
+   else
+   {
+      glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, depth_id);
    }
 
    glDrawBuffers( natts, &DrawBuffers[0] );

@@ -77,4 +77,4 @@ ADD_EXECUTABLE(renderFaceMaps renderFaceMaps.cpp
 	            ${UTILS}/gl_utils.C
 	            ${UTILS}/cv_utils.C)
 
-TARGET_LINK_LIBRARIES( renderFaceMaps GLEW GL SDL2 assimp opencv_world )
+TARGET_LINK_LIBRARIES( renderFaceMaps GLEW GL SDL2 assimp opencv_world boost_system boost_filesystem )
