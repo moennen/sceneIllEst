@@ -130,7 +130,7 @@ inline cv::Mat imread32FC3( const std::string& imgPath, bool toLinear = false, b
 inline cv::Mat imread32FC4( const std::string& imgPath, bool toLinear = false, bool toRGB = true )
 {
    cv::Mat img = imread32FC3( imgPath, toLinear );
-   cv::cvtColor( img, img, toRGB ? cv::COLOR_BGR2RGBA : cv::COLOR_RGB2RGBA );
+   if ( !img.empty() ) cv::cvtColor( img, img, toRGB ? cv::COLOR_BGR2RGBA : cv::COLOR_RGB2RGBA );
    return img;
 }
 

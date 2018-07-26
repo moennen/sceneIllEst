@@ -27,8 +27,8 @@ using namespace boost;
 
 namespace
 {
-const std::array<std::string, 10> stripedVideoIdName = {{"0001", "0005", "0006", "0007", "0009"}};
-const std::array<std::string, 10> invertVideoIdName = {{"0010"}};
+const std::array<std::string, 7> stripedVideoIdName = {{"0001", "0005", "0006", "0007", "0009", "0015", "0018"}};
+const std::array<std::string, 1> invertVideoIdName = {{"0010"}};
 
 //------------------------------------------------------------------------------
 //
@@ -113,112 +113,6 @@ Mat flowToImg( const Mat& flow, const bool leg = false )
       cvtColor( hsv, bgr, COLOR_HSV2BGR );
    }
    return bgr;
-}
-
-//------------------------------------------------------------------------------
-//
-/*Mat flowToDisp( const Mat& flow, const Mat& imgFrom, const Mat& imgTo )
-{
-
-   Mat disp( flow.rows, flow.cols, CV_32FC2 );
-
-   const vec3 chromW(0.2126, 0.7152, 0.0722);
-
-#pragma omp parallel for
-   for ( size_t y = 0; y < flow.rows; y++ )
-   {
-      const float* flowPtr = flow.ptr<float>( y );
-      const float* fromPtr = imgFrom.ptr<float>( y );
-      float* dispPtr = mser.ptr<float>( y );
-      for ( size_t x = 0; x < flow.cols; x++ )
-      {
-         const vec2 d(flowPtr[x*2],flowPtr[x*2+1]);
-         const vec3 fromValue(fromPtr[x*3],fromPtr[x*3+1],fromPtr[x*3+2]);
-         const vec3 toValue = cv_utils::imsample32FC3<vec3>(imgTo,vec2(x,y) + d);
-
-         dispPtr[2*x] = d.x;
-         dispPtr[2*x+1] = distance(fromValue*chromW, toValue*chromW);
-      }
-   }
-
-   // normalize( disp, disp, 0.0, 1.0, NORM_MINMAX );
-   Mat wkA, wkB;
-   reduce( disp, wkA, 0, CV_REDUCE_AVG );
-   reduce( wkA, wkB, 1, CV_REDUCE_AVG );
-   const float mean = wkB.at<Vec2>( 0, 0 ).y;
-   wkA = disp - mean;
-   wkA = wkA.mul( wkA );
-   reduce( wkA, wkB, 0, CV_REDUCE_AVG );
-   reduce( wkB, wkA, 1, CV_REDUCE_AVG );
-   const float std = sqrt( wkA.at<Vec2>( 0, 0 ).y );
-
-#pragma omp parallel for
-   for ( size_t y = 0; y < disp.rows; y++ )
-   {
-      float* dispPtr = disp.ptr<float>( y );
-      for ( size_t x = 0; x < im.cols; x++ )
-      {
-         dispPtr[2*x+1] = 0.5 * ( ( dispPtr[2*x+1] - mean ) / ( 5.0 * std ) + 1.0 );
-      }
-   }
-
-   return mser;
-}*/
-
-//------------------------------------------------------------------------------
-//
-Mat flowToDisp( const Mat& flowR, const Mat& flowL )
-{
-   Mat disp( flowR.rows, flowR.cols, CV_32FC1 );
-
-#pragma omp parallel for
-   for ( size_t y = 0; y < flowR.rows; y++ )
-   {
-      const float* f_row_r_data = flowR.ptr<float>( y );
-      const float* f_row_l_data = flowL.ptr<float>( y );
-      float* d_row_data = disp.ptr<float>( y );
-      for ( size_t x = 0; x < flowR.cols; x++ )
-      {
-         const float dispR = f_row_r_data[x * 2];
-         const float dispRL = -1.0 * mix( f_row_l_data[( x + (int)ceil( dispR ) ) * 2],
-                                          f_row_l_data[( x + (int)floor( dispR ) ) * 2],
-                                          ceil( dispR ) - dispR );
-         const float dispReg = mix( dispR, dispRL, 0.5 );
-         const float dispFinal = abs( dispR - dispRL ) / abs( dispReg ) > 0.33
-                                     ? ( abs( dispR ) > abs( dispRL ) ? dispRL : dispR )
-                                     : dispReg;
-         d_row_data[x] = /*dispFinal > 30.0 ? 100000000.0 :*/ -1.0 * dispFinal;
-      }
-   }
-
-   // normalize( disp, disp, 0.0, 1.0, NORM_MINMAX );
-   /*Mat wkA( flowR.rows, flowR.cols, CV_32FC1 );
-   Mat wkB( flowR.rows, flowR.cols, CV_32FC1 );
-   reduce( disp, wkA, 0, CV_REDUCE_AVG );
-   reduce( wkA, wkB, 1, CV_REDUCE_AVG );
-   const float mean = wkB.at<float>( 0, 0 );
-   wkA = disp - mean;
-   wkA = wkA.mul( wkA );
-   reduce( wkA, wkB, 0, CV_REDUCE_AVG );
-   reduce( wkB, wkA, 1, CV_REDUCE_AVG );
-   const float std = sqrt( wkA.at<float>( 0, 0 ) );
-
-#pragma omp parallel for
-   for ( size_t y = 0; y < disp.rows; y++ )
-   {
-      float* d_row_data = disp.ptr<float>( y );
-      for ( size_t x = 0; x < disp.cols; x++ )
-      {
-         d_row_data[x] =
-             1.0 - 0.5 * ( clamp( ( d_row_data[x] - mean ) / ( 3.33 * std ), -1.0, 1.0 ) + 1.0 );
-      }
-   }
-*/
-   Mat wkC( flowR.rows, flowR.cols, CV_32FC1 );
-   bilateralFilter( disp, wkC, 7, 1.75, 0.075 );
-   normalize( wkC, wkC, 0.0, 1.0, NORM_MINMAX );
-
-   return wkC;
 }
 
 //------------------------------------------------------------------------------
@@ -573,9 +467,9 @@ int main( int argc, char* argv[] )
 
          // display
          //imshow( "Full", img );
-         imshow( "Right", right );
+         //imshow( "Right", right );
          //imshow( "Left", left );
-         imshow( "Disp", depth );
+         //imshow( "Disp", depth );
 
          const filesystem::path fRight( outBasename + string( "_i" ) + ".png" );
          const filesystem::path fDepth( outBasename + string( "_d" ) + ".exr" );
@@ -590,7 +484,7 @@ int main( int argc, char* argv[] )
          else
             cout << " ";
 
-         waitKey( 0 );
+         //waitKey( 0 );
       }
    }
 
