@@ -249,7 +249,7 @@ int main( int argc, char* argv[] )
       }
    }
 
-   const uvec2 imgSz( 512, 512 );
+   const uvec2 imgSz( 256, 256 );
 
    // SDL init
    SDL_Init( SDL_INIT_EVERYTHING );
