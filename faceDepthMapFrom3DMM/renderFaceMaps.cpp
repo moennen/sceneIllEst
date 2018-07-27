@@ -47,6 +47,25 @@ void sampleRN( const size_t d, T* data )
    for ( size_t i = 0; i < d; ++i ) data[i] = rd( rs_gen );
 }
 
+void fittSz( Mat& img, const uvec2 sampleSz, const float scale, const float tx, const float ty )
+{
+   constexpr float maxDsScaleFactor = 3.5;
+
+   uvec2 imgSz( img.cols, img.rows );
+   // random rescale
+   const float minDs = std::max( (float)sampleSz.y / imgSz.y, (float)sampleSz.x / imgSz.x );
+   const float ds = mix( std::min( 1.0f, maxDsScaleFactor * minDs ), minDs, scale );
+   resize( img, img, Size(), ds, ds, CV_INTER_AREA );
+   imgSz = ivec2( img.cols, img.rows );
+
+   // random translate
+   const ivec2 trans(
+       std::floor( tx * ( imgSz.x - sampleSz.x ) ), std::floor( ty * ( imgSz.y - sampleSz.y ) ) );
+
+   // crop
+   img = img( Rect( trans.x, trans.y, sampleSz.x, sampleSz.y ) ).clone();
+}
+
 void init()
 {
    glClearColor( 0.0, 0.0, 0.0, 0.0 );
@@ -55,7 +74,7 @@ void init()
    // glOrtho( 0.0, windowSz.x, windowSz.y, 0.0, -10000.0, 10000.0 );
    // glEnable( GL_BLEND );
    glEnable( GL_DEPTH_TEST );
-   //glFrontFace( GL_CW );
+   // glFrontFace( GL_CW );
    glEnable( GL_TEXTURE_2D );
    glBlendFunc( GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA );
 }
@@ -230,14 +249,16 @@ int main( int argc, char* argv[] )
       }
    }
 
+   const uvec2 imgSz( 512, 512 );
+
    // SDL init
    SDL_Init( SDL_INIT_EVERYTHING );
    SDL_Window* window = SDL_CreateWindow(
        "renderFaceMaps",
        SDL_WINDOWPOS_CENTERED,
        SDL_WINDOWPOS_CENTERED,
-       1920,
-       1080,
+       imgSz.x,
+       imgSz.y,
        SDL_WINDOW_OPENGL );
    SDL_GLContext glCtx = SDL_GL_CreateContext( window );
 
@@ -269,6 +290,8 @@ int main( int argc, char* argv[] )
    uniform_real_distribution<> rs_lightCol( 0.5, 20.0 );
    uniform_real_distribution<> rs_ambient( 0.5, 10.0 );
 
+   uniform_real_distribution<> rs_backImgResize(0.0,1.0);
+
    // Out root path
    const filesystem::path outRootPath( parser.get<string>( "@outDir" ) );
 
@@ -278,11 +301,11 @@ int main( int argc, char* argv[] )
    for ( int s = 0; s < nRenders; ++s )
    {
       // Sample a random background images
-      const auto& data = imgLst[ rs_img( rs_gen ) ];
+      const auto& data = imgLst[rs_img( rs_gen )];
       Mat backImg = cv_utils::imread32FC4( data[0] );
       if ( backImg.empty() ) continue;
-      
-      const uvec2 imgSz( backImg.cols, backImg.rows );
+
+      fittSz( backImg, imgSz, rs_backImgResize(rs_gen), rs_backImgResize(rs_gen), rs_backImgResize(rs_gen) );
 
       // Set the render buffers
       gl_utils::RenderTarget renderTarget( imgSz );
@@ -300,13 +323,9 @@ int main( int argc, char* argv[] )
       gl_utils::uploadToTexture( faceColorTex, backImg.ptr() );
 
       // Sample the prespective view
-      const float fov = clamp(rs_fov(rs_gen),15.0,110.0);
+      const float fov = clamp( rs_fov( rs_gen ), 15.0, 110.0 );
       const mat4 camProj = glm::perspectiveFov(
-          (float)( fov * M_PI / 180.0 ),
-          (float)imgSz.x,
-          (float)imgSz.y,
-          0.0001f,
-          10000.0f );
+          (float)( fov * M_PI / 180.0 ), (float)imgSz.x, (float)imgSz.y, 0.0001f, 10000.0f );
       const vec4 camProjectionInfo = vec4(
           -2.0 / ( imgSz.x * camProj[0][0] ),
           -2.0 / ( imgSz.y * camProj[1][1] ),
@@ -316,17 +335,18 @@ int main( int argc, char* argv[] )
       // Sample the light
       const float shade = rs_shade( rs_gen );
       const float ambient = rs_ambient( rs_gen ) * ( 1.0 - shade );
-      const vec3 lightPos = vec3( rs_lightPos( rs_gen ), rs_lightPos( rs_gen ), rs_lightPos( rs_gen ) );
-      const vec3 lightCol = vec3( rs_lightCol( rs_gen ) ) *  shade;
+      const vec3 lightPos =
+          vec3( rs_lightPos( rs_gen ), rs_lightPos( rs_gen ), rs_lightPos( rs_gen ) );
+      const vec3 lightCol = vec3( rs_lightCol( rs_gen ) ) * shade;
 
       // Sample a random number of faces
-      const size_t nfaces = 1 + static_cast<int>(abs(rs_nfaces(rs_gen)));
+      const size_t nfaces = 1 + static_cast<int>( abs( rs_nfaces( rs_gen ) ) );
 
       for ( size_t f = 0; f < nfaces; ++f )
       {
          // Sample a random face
          sampleRN( nFaceParamsCoeffs, beFaceParams.data() );
-         
+
          // Create the face geometry
          beFaceMMd.get(
              beFaceParams.data(),
@@ -370,15 +390,13 @@ int main( int argc, char* argv[] )
                  z,
              z );
          modelView = translate( modelView, cs_pos );
-         const float pitch = clamp(rs_pitch( rs_gen ),-45.0,45.0);
-         modelView = rotate(
-             modelView, (float)( pitch * M_PI / 180.0 ), vec3( 1.0, 0.0, 0.0 ) );
-         const float yaw = clamp(rs_yaw( rs_gen ),-90.0,90.0);
+         const float pitch = clamp( rs_pitch( rs_gen ), -45.0, 45.0 );
+         modelView = rotate( modelView, (float)( pitch * M_PI / 180.0 ), vec3( 1.0, 0.0, 0.0 ) );
+         const float yaw = clamp( rs_yaw( rs_gen ), -90.0, 90.0 );
+         modelView = rotate( modelView, (float)( yaw * M_PI / 180.0 ), vec3( 0.0, 1.0, 0.0 ) );
+         const float roll = clamp( rs_roll( rs_gen ), -45.0, 45.0 );
          modelView =
-             rotate( modelView, (float)( yaw * M_PI / 180.0 ), vec3( 0.0, 1.0, 0.0 ) );
-         const float roll = clamp(rs_roll( rs_gen ), -45.0,45.0);
-         modelView = rotate(
-             modelView, (float)( M_PI +  roll * M_PI / 180.0 ), vec3( 0.0, 0.0, 1.0 ) );
+             rotate( modelView, (float)( M_PI + roll * M_PI / 180.0 ), vec3( 0.0, 0.0, 1.0 ) );
 
          // Draw the face
          renderTarget.bind( 3, &rTex[0] );
@@ -408,16 +426,17 @@ int main( int argc, char* argv[] )
          cvtColor( faceUVDepthImg, faceUVDepthImg, cv::COLOR_RGBA2BGR );
          cvtColor( faceNormalsImg, faceNormalsImg, cv::COLOR_RGBA2BGR );
 
-         imwrite( outBasename + "c.png", faceColorImg * 255.0 );
+         /*imwrite( outBasename + "c.png", faceColorImg * 255.0 );
          imwrite( outBasename + "uvd.exr", faceUVDepthImg );
-         imwrite( outBasename + "n.exr", faceNormalsImg );
+         imwrite( outBasename + "n.exr", faceNormalsImg );*/
 
-         std::cout << outBasename + "c.png " << outBasename + "uvd.exr " << outBasename + "n.exr" << std::endl;
-         
-         /*imshow( "color", faceColorImg );
+         std::cout << outBasename + "c.png " << outBasename + "uvd.exr " << outBasename + "n.exr"
+                   << std::endl;
+
+         imshow( "color", faceColorImg );
          imshow( "uvdepth", faceUVDepthImg );
          imshow( "normals", faceNormalsImg );
-         waitKey( 0 );*/
+         waitKey( 0 );
       }
    }
 

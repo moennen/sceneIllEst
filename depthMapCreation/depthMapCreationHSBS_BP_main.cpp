@@ -214,7 +214,7 @@ void processDepth(
 
             depthPtr[x] = val / ( w > 0.0 ? w : 1.0f );
             assert( !isnan( depthPtr[x].y ) );
-            assert( depthPtr[x].x <= 1.0 );
+            //assert( depthPtr[x].x <= 1.0 );
          }
       }
 
@@ -281,7 +281,7 @@ void processDepth(
                dH = ( dH.y == 0.0 ) ? val / w : mix( dH, val / w, filter );
                assert( !isnan( dH.y ) );
                assert( dH.y > 0.0 );
-               assert( dH.x <= 1.0 );
+               //assert( dH.x <= 1.0 );
             }
          }
       }
@@ -474,8 +474,8 @@ int main( int argc, char* argv[] )
          const filesystem::path fRight( outBasename + string( "_i" ) + ".png" );
          const filesystem::path fDepth( outBasename + string( "_d" ) + ".exr" );
 
-         //imwrite( filesystem::path( outRootPath / fRight ).string().c_str(), right * 255.0 );
-         //imwrite( filesystem::path( outRootPath / fDepth ).string().c_str(), depth );
+         imwrite( filesystem::path( outRootPath / fRight ).string().c_str(), right * 255.0 );
+         imwrite( filesystem::path( outRootPath / fDepth ).string().c_str(), depth );
 
          cout << fRight.string() << " " << fDepth.string();
 

@@ -139,7 +139,7 @@ inline TVec3 imsample32FC3( const cv::Mat& img, const glm::vec2& in_pt )
 {
    // compute the positions
    const glm::vec2 max_pt( img.cols - 1, img.rows - 1 );
-   const glm::vec2 pt = in_pt;  // glm::clamp( in_pt, glm::vec2( 0.0 ), max_pt );
+   const glm::vec2 pt = glm::clamp( in_pt, glm::vec2( 0.0 ), max_pt );
    const glm::ivec2 ul_pt(
        static_cast<int>( std::floor( pt.x ) ), static_cast<int>( std::floor( pt.y ) ) );
 

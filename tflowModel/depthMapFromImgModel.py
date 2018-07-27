@@ -97,7 +97,7 @@ def testDataset(imgRootDir, trainPath):
 def trainModel(modelPath, imgRootDir, trainPath, testPath):
 
     lp = LearningParams(modelPath)  # , 20160704)
-    lp.numSteps = 135000
+    lp.numSteps = 5000
     lp.tslogStep = 150
     lp.trlogStep = 150
     lp.backupStep = 300
