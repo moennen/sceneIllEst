@@ -283,7 +283,7 @@ int main( int argc, char* argv[] )
    normal_distribution<> rs_roll( 0.0, 7.0 );
 
    uniform_real_distribution<> rs_pos_xy( 0.0, 1.0 );
-   uniform_real_distribution<> rs_pos_z( -250.0, -1000.0 );
+   uniform_real_distribution<> rs_pos_z( -250.0, -700.0 );
 
    uniform_real_distribution<> rs_shade( 0.0, 1.0 );
    uniform_real_distribution<> rs_lightPos( -500.0, 500.0 );
@@ -297,7 +297,7 @@ int main( int argc, char* argv[] )
 
    const int nRenders = parser.get<int>( "@nRenders" );
    const int startIdx = parser.get<int>( "@startIdx" );
-   normal_distribution<> rs_nfaces( 0.0, 3.0 );
+   normal_distribution<> rs_nfaces( 0.0, 2.0 );
    for ( int s = 0; s < nRenders; ++s )
    {
       // Sample a random background images
