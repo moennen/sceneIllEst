@@ -98,7 +98,9 @@ void drawFaceModel(
 
    if ( faceShader._id == -1 )
    {
-      faceShader.load( "./shaders/face_frag.glsl", "./shaders/face_vtx.glsl" );
+      faceShader.load(
+          "/mnt/p4/avila/moennen_wkspce/sceneIllEst/faceDepthMapFrom3DMM/shaders/face_frag.glsl",
+          "/mnt/p4/avila/moennen_wkspce/sceneIllEst/faceDepthMapFrom3DMM/shaders/face_vtx.glsl" );
       uniMVP = faceShader.getUniform( "mvp" );
       uniMV = faceShader.getUniform( "mv" );
       uniMVN = faceShader.getUniform( "mvn" );
@@ -249,7 +251,7 @@ int main( int argc, char* argv[] )
       }
    }
 
-   const uvec2 imgSz( 256, 256 );
+   const uvec2 imgSz( 132, 132 );
 
    // SDL init
    SDL_Init( SDL_INIT_EVERYTHING );
@@ -284,35 +286,58 @@ int main( int argc, char* argv[] )
 
    uniform_real_distribution<> rs_pos_xy( 0.0, 1.0 );
    uniform_real_distribution<> rs_pos_z( -250.0, -700.0 );
+   normal_distribution<> rs_scale_off( 0.0, 1.5 );
 
    uniform_real_distribution<> rs_shade( 0.0, 1.0 );
    uniform_real_distribution<> rs_lightPos( -500.0, 500.0 );
    uniform_real_distribution<> rs_lightCol( 0.5, 20.0 );
    uniform_real_distribution<> rs_ambient( 0.5, 10.0 );
 
-   uniform_real_distribution<> rs_backImgResize(0.0,1.0);
+   uniform_real_distribution<> rs_backImgResize( 0.0, 1.0 );
 
    // Out root path
    const filesystem::path outRootPath( parser.get<string>( "@outDir" ) );
 
    const int nRenders = parser.get<int>( "@nRenders" );
    const int startIdx = parser.get<int>( "@startIdx" );
-   normal_distribution<> rs_nfaces( 0.0, 2.0 );
+   normal_distribution<> rs_nfaces( 0.0, 1.5 );
+
+   const int nMaxRendersPerGroup = 10000;
+   unsigned renderGroupId = startIdx / nMaxRendersPerGroup;
+
+   // Set the render buffers
+   gl_utils::RenderTarget renderTarget( imgSz );
+   gl_utils::Texture<gl_utils::RGBA_32FP> faceColorTex( imgSz );
+   gl_utils::Texture<gl_utils::RGBA_32FP> faceUVDepthTex( imgSz );
+   gl_utils::Texture<gl_utils::RGBA_32FP> faceNormalsTex( imgSz );
+   GLuint rTex[3] = {faceColorTex.id, faceUVDepthTex.id, faceNormalsTex.id};
+
    for ( int s = 0; s < nRenders; ++s )
    {
+      if ( ( ( startIdx + s ) % nMaxRendersPerGroup ) == 0 )
+      {
+         renderGroupId += 1;
+         char dirname[7];
+         sprintf( dirname, "%06d", renderGroupId );
+         const filesystem::path outGroupRootPath =
+             outRootPath / filesystem::path( std::string( dirname ) );
+         if ( !filesystem::create_directory( outGroupRootPath ) )
+         {
+            cerr << "Cannot create directory : " << outGroupRootPath.string() << endl;
+         }
+      }
+
       // Sample a random background images
       const auto& data = imgLst[rs_img( rs_gen )];
       Mat backImg = cv_utils::imread32FC4( data[0] );
-      if ( backImg.empty() ) continue;
+      if ( backImg.empty() ) { --s; continue; }
 
-      fittSz( backImg, imgSz, rs_backImgResize(rs_gen), rs_backImgResize(rs_gen), rs_backImgResize(rs_gen) );
-
-      // Set the render buffers
-      gl_utils::RenderTarget renderTarget( imgSz );
-      gl_utils::Texture<gl_utils::RGBA_32FP> faceColorTex( imgSz );
-      gl_utils::Texture<gl_utils::RGBA_32FP> faceUVDepthTex( imgSz );
-      gl_utils::Texture<gl_utils::RGBA_32FP> faceNormalsTex( imgSz );
-      GLuint rTex[3] = {faceColorTex.id, faceUVDepthTex.id, faceNormalsTex.id};
+      fittSz(
+          backImg,
+          imgSz,
+          rs_backImgResize( rs_gen ),
+          rs_backImgResize( rs_gen ),
+          rs_backImgResize( rs_gen ) );
 
       renderTarget.bind( 3, &rTex[0] );
       glClear( GL_COLOR_BUFFER_BIT );
@@ -397,6 +422,8 @@ int main( int argc, char* argv[] )
          const float roll = clamp( rs_roll( rs_gen ), -45.0, 45.0 );
          modelView =
              rotate( modelView, (float)( M_PI + roll * M_PI / 180.0 ), vec3( 0.0, 0.0, 1.0 ) );
+         const float sf = 1.0 + abs( rs_scale_off( rs_gen ) );
+         modelView = glm::scale( modelView, vec3( sf ) );
 
          // Draw the face
          renderTarget.bind( 3, &rTex[0] );
@@ -411,9 +438,10 @@ int main( int argc, char* argv[] )
       }
 
       // upload and write the maps
-      char sampleId[8];
-      sprintf( sampleId, "%06d_", startIdx + s );
-      const string outBasename = ( outRootPath / filesystem::path( sampleId ) ).string();
+      char sampleId[16];
+      sprintf( sampleId, "%06d/%08d_", renderGroupId, startIdx + s );
+      const string outBasename( sampleId );
+      const string outBasenameFull = ( outRootPath / filesystem::path( sampleId ) ).string();
 
       Mat faceColorImg( faceColorTex.sz.y, faceColorTex.sz.x, CV_32FC4 );
       Mat faceUVDepthImg( faceUVDepthTex.sz.y, faceUVDepthTex.sz.x, CV_32FC4 );
@@ -426,17 +454,17 @@ int main( int argc, char* argv[] )
          cvtColor( faceUVDepthImg, faceUVDepthImg, cv::COLOR_RGBA2BGR );
          cvtColor( faceNormalsImg, faceNormalsImg, cv::COLOR_RGBA2BGR );
 
-         /*imwrite( outBasename + "c.png", faceColorImg * 255.0 );
-         imwrite( outBasename + "uvd.exr", faceUVDepthImg );
-         imwrite( outBasename + "n.exr", faceNormalsImg );*/
+         imwrite( outBasenameFull + "c.png", faceColorImg * 255.0 );
+         imwrite( outBasenameFull + "uvd.exr", faceUVDepthImg );
+         imwrite( outBasenameFull + "n.exr", faceNormalsImg );
 
          std::cout << outBasename + "c.png " << outBasename + "uvd.exr " << outBasename + "n.exr"
                    << std::endl;
 
-         imshow( "color", faceColorImg );
+         /*imshow( "color", faceColorImg );
          imshow( "uvdepth", faceUVDepthImg );
          imshow( "normals", faceNormalsImg );
-         waitKey( 0 );
+         waitKey( 0 );*/
       }
    }
 

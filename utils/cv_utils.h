@@ -92,7 +92,11 @@ inline cv::Mat imread32FC1( const std::string& imgPath )
 
 cv::Mat convert8UC3ToLinear32FC3( cv::Mat& img );
 
-inline cv::Mat imread32FC3( const std::string& imgPath, bool toLinear = false, bool toRGB = false )
+inline cv::Mat imread32FC3(
+    const std::string& imgPath,
+    bool toLinear = false,
+    bool toRGB = false,
+    const float smax = 255.0 )
 {
    HOP_PROF_FUNC();
 
@@ -116,11 +120,11 @@ inline cv::Mat imread32FC3( const std::string& imgPath, bool toLinear = false, b
    }
    else
    {
-      if ( img.type() != CV_32F )
+      if ( img.depth() != CV_32F )
       {
          HOP_PROF( "cv_convert" );
          img.convertTo( img, CV_32F );
-         img /= 255.0;
+         img /= smax;
       }
       if ( toLinear ) imToLinear( img );
    }
@@ -195,6 +199,25 @@ inline void imToBuffer( const cv::Mat& img, float* buff, const bool toRGB = fals
       memcpy( row_buff_data, row_img_data, row_size );
    }
 }
+
+inline void fittResizeCrop( cv::Mat& img, const glm::uvec2 sampleSz )
+{
+   glm::uvec2 imgSz( img.cols, img.rows );
+
+   // rescale
+   const float ds = std::min( (float)sampleSz.y / imgSz.y, (float)sampleSz.x / imgSz.x );
+   cv::resize( img, img, cv::Size(), ds, ds, CV_INTER_AREA );
+   imgSz = glm::uvec2( img.cols, img.rows );
+
+   // translate
+   const glm::ivec2 trans(
+       std::floor( 0.5 * ( imgSz.x - sampleSz.x ) ), std::floor( 0.5 * ( imgSz.y - sampleSz.y ) ) );
+
+   // crop
+   img = img( cv::Rect( trans.x, trans.y, sampleSz.x, sampleSz.y ) ).clone();
+}
+
+
 }
 
 #endif  // _UTILS_CV_UTILS_H

@@ -27,8 +27,19 @@ using namespace boost;
 
 namespace
 {
-const std::array<std::string, 7> stripedVideoIdName = {{"0001", "0005", "0006", "0007", "0009", "0015", "0018"}};
+const std::array<std::string, 7> stripedVideoIdName = {
+    {"0001", "0005", "0006", "0007", "0009", "0015", "0018"}};
 const std::array<std::string, 1> invertVideoIdName = {{"0010"}};
+
+//------------------------------------------------------------------------------
+//
+void resizeToMin( Mat& img, const uvec2 sampleSz )
+{
+   uvec2 imgSz( img.cols, img.rows );
+   // random rescale
+   const float ds = std::min( (float)sampleSz.y / imgSz.y, (float)sampleSz.x / imgSz.x );
+   resize( img, img, Size(), ds, ds, CV_INTER_AREA );
+}
 
 //------------------------------------------------------------------------------
 //
@@ -36,8 +47,9 @@ void split_hsbs( const Mat& img, Mat& right, Mat& left, const unsigned nHStripes
 {
    const uvec2 off = {0, 0};
    const uvec2 hSz = {img.cols / 2, img.rows - 2 * nHStripes};
-   right = img( Rect( off.x, nHStripes+off.y, hSz.x-2*off.x, hSz.y-2*off.y ) ).clone();
-   left = img( Rect( hSz.x + off.x, nHStripes+off.y, hSz.x-2*off.x, hSz.y-2*off.y ) ).clone();
+   right = img( Rect( off.x, nHStripes + off.y, hSz.x - 2 * off.x, hSz.y - 2 * off.y ) ).clone();
+   left = img( Rect( hSz.x + off.x, nHStripes + off.y, hSz.x - 2 * off.x, hSz.y - 2 * off.y ) )
+              .clone();
 }
 
 //------------------------------------------------------------------------------
@@ -214,7 +226,7 @@ void processDepth(
 
             depthPtr[x] = val / ( w > 0.0 ? w : 1.0f );
             assert( !isnan( depthPtr[x].y ) );
-            //assert( depthPtr[x].x <= 1.0 );
+            // assert( depthPtr[x].x <= 1.0 );
          }
       }
 
@@ -281,7 +293,7 @@ void processDepth(
                dH = ( dH.y == 0.0 ) ? val / w : mix( dH, val / w, filter );
                assert( !isnan( dH.y ) );
                assert( dH.y > 0.0 );
-               //assert( dH.x <= 1.0 );
+               // assert( dH.x <= 1.0 );
             }
          }
       }
@@ -314,8 +326,7 @@ Mat flowToDisp(
    Mat lkR = flowToLk( flowR, imgFrom, imgTo );
    Mat lkL = flowToLk( flowL, imgTo, imgFrom );
 
-   //Mat flowLi( flowR.rows, flowR.cols, CV_32FC2 );
-
+   // Mat flowLi( flowR.rows, flowR.cols, CV_32FC2 );
 
 #pragma omp parallel for
    for ( size_t y = 0; y < flowR.rows; y++ )
@@ -325,7 +336,7 @@ Mat flowToDisp(
       const float* f_row_l_data = flowL.ptr<float>( y );
       const float* lk_l_data = lkL.ptr<float>( y );
 
-      //vec2* f_row_li_data = flowLi.ptr<vec2>(y);
+      // vec2* f_row_li_data = flowLi.ptr<vec2>(y);
 
       float* d_row_data = disp.ptr<float>( y );
       float* u_row_data = undef.ptr<float>( y );
@@ -336,7 +347,7 @@ Mat flowToDisp(
          const float dispRL = -1.0 * mix( f_row_l_data[( x + (int)ceil( dispR ) ) * 2],
                                           f_row_l_data[( x + (int)floor( dispR ) ) * 2],
                                           ceil( dispR ) - dispR );
-         //f_row_li_data[x] = vec2(dispRL, 0.0);
+         // f_row_li_data[x] = vec2(dispRL, 0.0);
          const float dispReg = mix( dispR, dispRL, 0.5 );
 
          u_row_data[x] =
@@ -387,6 +398,7 @@ int main( int argc, char* argv[] )
       return ( 0 );
    }
 
+   const uvec2 maxSz = uvec2( 640, 480 );
    const bool toLinear = false;
    const float delayOnError = 100;
    const int startIdx = parser.get<int>( "@startIdx" );
@@ -395,7 +407,7 @@ int main( int argc, char* argv[] )
 
    // Create the list of image triplets
 
-   ImgNFileLst<3> imgLst(
+   ImgNFileLst<1> imgLst(
        parser.get<string>( "@imgFileLst" ).c_str(), parser.get<string>( "@imgRootDir" ).c_str() );
    if ( imgLst.size() == 0 )
    {
@@ -415,7 +427,8 @@ int main( int argc, char* argv[] )
       const auto& data = imgLst[i];
 
       // load the current image
-      for ( size_t j = 0; j < 3; ++j )
+      // for ( size_t j = 0; j < 3; ++j )
+      const size_t j = 0;
       {
          const string outBasename = filesystem::path( data[j] ).stem().string();
          const string videoIdname = outBasename.substr( 0, outBasename.find_first_of( "_" ) );
@@ -434,6 +447,8 @@ int main( int argc, char* argv[] )
          // split the current image
          Mat right, left;
          split_hsbs( img, right, left, isStriped ? ( img.rows - img.rows / 1.35 ) / 2 : 0 );
+         resizeToMin( right, maxSz );
+         resizeToMin( left, maxSz );
 
          ofEstimator.setImgSize( right.cols, right.rows );
 
@@ -466,10 +481,10 @@ int main( int argc, char* argv[] )
          Mat depth = flowToDisp( ofRight, ofLeft, right, left, isInverted );
 
          // display
-         //imshow( "Full", img );
-         //imshow( "Right", right );
-         //imshow( "Left", left );
-         //imshow( "Disp", depth );
+         // imshow( "Full", img );
+         /*imshow( "Right", right );
+         imshow( "Left", left );
+         imshow( "Disp", depth );*/
 
          const filesystem::path fRight( outBasename + string( "_i" ) + ".png" );
          const filesystem::path fDepth( outBasename + string( "_d" ) + ".exr" );
@@ -479,12 +494,12 @@ int main( int argc, char* argv[] )
 
          cout << fRight.string() << " " << fDepth.string();
 
-         if ( j == 2 )
-            cout << endl;
-         else
-            cout << " ";
+         // if ( j == 2 )
+         cout << endl;
+         /*else
+            cout << " ";*/
 
-         //waitKey( 0 );
+         // waitKey( 0 );
       }
    }
 

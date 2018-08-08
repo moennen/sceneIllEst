@@ -7,6 +7,7 @@ import time
 import tensorflow as tf
 from matplotlib import pyplot as plt
 import numpy as np
+from PIL import Image
 
 #-----------------------------------------------------------------------------------------------------
 # Set common custom includes
@@ -97,6 +98,27 @@ def loadImgPIL(img_name, linearCS):
 
     return [im]
 
+
+def loadResizeImgPIL(img_name, imgSz, linearCS):
+
+    im = Image.open(img_name)
+    ratio = float(imgSz[1])/imgSz[0]
+    imgRatio = float(im.size[0])/im.size[1]
+    cw = (int(im.size[1]*ratio) if imgRatio > ratio else im.size[0])
+    ow = (int((im.size[0]-cw)/2) if imgRatio > ratio else 0)
+    ch = (int(im.size[0]/ratio) if imgRatio < ratio else im.size[1])
+    oh = (int((im.size[1]-ch)/2) if imgRatio < ratio else 0)
+    im = im.crop([ow, oh, ow+cw, oh+ch])
+    im = im.resize([imgSz[1], imgSz[0]])
+    im = np.array(im)
+    im = im.astype(np.float32) / 255.0
+
+    if linearCS == 1:
+        im = (im <= 0.04045) * (im / 12.92) + (im > 0.04045) * \
+            np.power((im + 0.055)/1.055, 2.4)
+
+    return im
+
 #-----------------------------------------------------------------------------------------------------
 # PARAMETERS
 #-----------------------------------------------------------------------------------------------------
@@ -106,9 +128,10 @@ class LearningParams:
 
     def __init__(self, modelPath, seed=int(time.time())):
 
-        self.numSteps = 75000
-        self.trlogStep = 75
+        self.numSteps = 175000
+        self.trlogStep = 150
         self.tslogStep = 150
+        self.vallogStep = 150
         self.backupStep = 1500
 
         self.batchSz = 64
@@ -346,7 +369,8 @@ def pix2pix_disc(gen_inputs, gen_outputs, n, train):
     return layer_6
 
 
-def pix2pix_optimizer(imgs, targets_in, learning_rate, alpha_data, alpha_disc, dropout, train, n=64, normOutputs=False):
+def pix2pix_optimizer(imgs, targets_in, learning_rate, alpha_data, alpha_disc, dropout, train, n, normOutputs,
+                      inDispRange, outDispRange):
 
     targets = targets_in
 
@@ -366,10 +390,10 @@ def pix2pix_optimizer(imgs, targets_in, learning_rate, alpha_data, alpha_disc, d
 
             # outputs_mean = tf.expand_dims(tf.expand_dims(
             #    tf.reduce_mean(outputs, axis=[1, 2]), axis=1), axis=2)
-            #outputs_var = tf.square(tf.subtract(outputs, outputs_mean))
+            # outputs_var = tf.square(tf.subtract(outputs, outputs_mean))
             # outputs_std = tf.expand_dims(tf.expand_dims(
             #    tf.sqrt(tf.reduce_mean(outputs_var, axis=[1, 2])), axis=1), axis=2)
-            #outputs_range = tf.subtract(outputs_max, outputs_min)
+            # outputs_range = tf.subtract(outputs_max, outputs_min)
             # gen_loss_data = gen_loss_data + 0.05 * \
             #    tf.reduce_mean(tf.square(tf.subtract(outputs_range, 2.0)))
             outputs = tf.divide(tf.subtract(outputs, outputs_min),
@@ -472,13 +496,34 @@ def pix2pix_optimizer(imgs, targets_in, learning_rate, alpha_data, alpha_disc, d
 
     targetsSamples = targets
     outputSamples = outputs
+    imgSamples = []
 
-    targetsSamples = tf.concat([[targetsSamples[it, :, :, :]]
-                                for it in range(16)], axis=2)
-    outputSamples = tf.concat([[outputSamples[it, :, :, :]]
+    imgSz = imgs.get_shape()
+    sliceSz = [imgSz[0], imgSz[1], imgSz[2], 1]
+
+    for i in range(inDispRange.shape[0]):
+        inSamples = tf.concat(
+            [tf.slice(imgs, [0, 0, 0, it], sliceSz) for it in inDispRange[i]], axis=3)
+        inSamples = tf.concat([[inSamples[it, :, :, 0:3]]
                                for it in range(16)], axis=2)
-    imgSamples = tf.concat([targetsSamples, outputSamples], axis=1)
-    tsSum.append(tf.summary.image("samples", imgSamples))
+        imgSamples.append(inSamples)
+
+    for i in range(outDispRange.shape[0]):
+        outSamples = tf.concat(
+            [tf.slice(targetsSamples, [0, 0, 0, it], sliceSz) for it in outDispRange[i]], axis=3)
+        outSamples = tf.concat([[outSamples[it, :, :, 0:3]]
+                                for it in range(16)], axis=2)
+        imgSamples.append(outSamples)
+
+        outSamples = tf.concat(
+            [tf.slice(outputSamples, [0, 0, 0, it], sliceSz) for it in outDispRange[i]], axis=3)
+        outSamples = tf.concat([[outSamples[it, :, :, 0:3]]
+                                for it in range(16)], axis=2)
+        imgSamples.append(outSamples)
+
+    imgSamples = tf.concat(imgSamples, axis=1)
+
+    tsSum.append(tf.summary.image("out_samples", imgSamples))
 
     trSum = tf.summary.merge(trSum, "Train")
     tsSum = tf.summary.merge(tsSum, "Test")

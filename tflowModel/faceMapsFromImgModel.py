@@ -1,5 +1,5 @@
 #!/usr/bin/python
-""" Depth Map From Image Model
+""" Face Maps From Image Model
 
 """
 import argparse
@@ -25,25 +25,27 @@ import cv2 as cv
 class DatasetTF(object):
 
     __lib = BufferDataSamplerLibrary(
-        "/mnt/p4/avila/moennen_wkspce/sceneIllEst/sampleBuffDataset/libDepthImgSampler/libDepthImgSampler.so")
+        "/mnt/p4/avila/moennen_wkspce/sceneIllEst/sampleBuffDataset/libFaceAOVSampler/libFaceAOVSampler.so")
 
     def __init__(self, dbPath, imgRootDir, batchSz, imgSz, seed):
         params = np.array([batchSz, imgSz[0], imgSz[1]], dtype=np.float32)
         self.__ds = BufferDataSampler(
             DatasetTF.__lib, dbPath, imgRootDir, params, seed)
         self.data = tf.data.Dataset.from_generator(
-            self.sample, (tf.float32, tf.float32))
+            self.sample, (tf.float32, tf.float32, tf.float32, tf.float32))
 
     def sample(self):
         for i in itertools.count(1):
-            currImg, currDepth = self.__ds.getDataBuffers()
-            yield (currImg, currDepth)
+            currImg, currUVs, currDepth, currNormals = self.__ds.getDataBuffers()
+            yield (currImg, currUVs, currDepth, currNormals)
 
 
 def loadValidationData(dataPath, dataRootDir, dataSz):
 
     im = np.zeros((dataSz[0], dataSz[1], dataSz[2], 3))
+    uv = np.full((dataSz[0], dataSz[1], dataSz[2], 2), 0.5)
     depth = np.full((dataSz[0], dataSz[1], dataSz[2], 1), 0.5)
+    normal = np.full((dataSz[0], dataSz[1], dataSz[2], 2), 0.5)
 
     n = 0
 
@@ -59,17 +61,7 @@ def loadValidationData(dataPath, dataRootDir, dataSz):
                                               data.rstrip('\n'), [dataSz[1], dataSz[2]], False)
             n = n + 1
 
-    return im, depth
-
-
-#-----------------------------------------------------------------------------------------------------
-# MODEL
-#-----------------------------------------------------------------------------------------------------
-
-
-def model(imgs):
-
-    return base_model(imgs)
+    return im, uv, depth, normal
 
 #-----------------------------------------------------------------------------------------------------
 # UNIT TESTS
@@ -99,12 +91,21 @@ def testDataset(imgRootDir, trainPath):
 
         for step in range(100):
 
-            currImg, currDepth = sess.run(dsView)
+            currImg, currUVs, currDepth, currNormals = sess.run(dsView)
 
             idx = random.randint(0, batchSz-1)
 
             cv.imshow('currImg', cv.cvtColor(currImg[idx], cv.COLOR_RGB2BGR))
+
             cv.imshow('currDepth', currDepth[idx])
+
+            u, v = cv.split(currUVs[idx])
+            cv.imshow('currU', u)
+            cv.imshow('currV', v)
+
+            nx, ny = cv.split(currNormals[idx])
+            cv.imshow('currNormalsX', nx)
+            cv.imshow('currNormalsY', ny)
 
             cv.waitKey(700)
 
@@ -147,11 +148,13 @@ def evalModel(modelPath, imgRootDir, imgLst):
                 img = [loadResizeImgPIL(imgRootDir + "/" +
                                         data.rstrip('\n'), [evalSz[1], evalSz[2]], False)]
 
-                depth = sess.run(outputs, feed_dict={inputsi: img})
+                uvdn = sess.run(outputs, feed_dict={inputsi: img})
 
                 # show the sample
                 cv.imshow('Input', cv.cvtColor(img[0], cv.COLOR_RGB2BGR))
-                cv.imshow('Output', depth[0])
+                cv.imshow('Output_UVD', uvdn[0, :, :, 0:3])
+                cv.imshow('Output_DNorm', uvdn[0, :, :, 2:5])
+
                 cv.waitKey(0)
 
 #-----------------------------------------------------------------------------------------------------
@@ -162,7 +165,7 @@ def evalModel(modelPath, imgRootDir, imgLst):
 def trainModel(modelPath, imgRootDir, trainPath, testPath, valPath):
 
     lp = LearningParams(modelPath)  # , 20160704)
-    lp.numSteps = 250000
+    lp.numSteps = 150000
     lp.backupStep = 300
     lp.imgSzTr = [128, 128]
     lp.batchSz = 128
@@ -185,26 +188,34 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath, valPath):
 
     # Input placeholders
     inImgi = tf.placeholder(tf.float32, shape=[
-                            lp.batchSz, lp.imgSzTr[0], lp.imgSzTr[1], 3], name="input_img")
+        lp.batchSz, lp.imgSzTr[0], lp.imgSzTr[1], 3], name="input_img")
     inImg = preprocess(inImgi)
+    inUVi = tf.placeholder(tf.float32, shape=[
+        lp.batchSz, lp.imgSzTr[0], lp.imgSzTr[1], 2], name="input_uvs")
+    inUV = tf.multiply(tf.subtract(inUVi, 0.5), 2.0)
     inDepthi = tf.placeholder(tf.float32, shape=[
-                              lp.batchSz, lp.imgSzTr[0], lp.imgSzTr[1], 1], name="input_depth")
+        lp.batchSz, lp.imgSzTr[0], lp.imgSzTr[1], 1], name="input_depth")
     inDepth = tf.multiply(tf.subtract(inDepthi, 0.5), 2.0)
+    inNormali = tf.placeholder(tf.float32, shape=[
+        lp.batchSz, lp.imgSzTr[0], lp.imgSzTr[1], 2], name="input_normals")
+    inNormal = tf.multiply(tf.subtract(inNormali, 0.5), 2.0)
+
+    inMaps = tf.concat([inUV, inDepth, inNormal], 3)
 
     # Optimizers
-    [opts, loss, trSum, tsSum] = pix2pix_optimizer(inImg, inDepth,
+    [opts, loss, trSum, tsSum] = pix2pix_optimizer(inImg, inMaps,
                                                    lp.learningRate, alpha_data, alpha_disc, lp.dropoutProb,
                                                    lp.isTraining, baseN, False,
                                                    np.array([[0, 1, 2]]),
-                                                   np.array([[0, 0, 0]]))
+                                                   np.array([[0, 1, 2], [2, 3, 4]]))
 
     # Validation
-    valImg, valDepth = loadValidationData(
+    valImg, valUVs, valDepth, valNormals = loadValidationData(
         valPath, imgRootDir, [lp.batchSz, lp.imgSzTr[0], lp.imgSzTr[1]])
 
     # Persistency
     persistency = tf.train.Saver(
-        pad_step_number=True, max_to_keep=3, filename=lp.modelFilename)
+        pad_step_number=True, max_to_keep=1, filename=lp.modelFilename)
 
     # Logger
     merged_summary_op = tf.summary.merge_all()
@@ -240,12 +251,14 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath, valPath):
         while lp.globalStep.eval(sess) < lp.numSteps:
 
             # Get the next training batch
-            currImg, currDepth = sess.run(dsView)
+            currImg, currUVs, currDepth, currNormals = sess.run(dsView)
 
             trFeed = {lp.dropoutProb: 0.01,
                       lp.isTraining: True,
                       inImgi: currImg,
-                      inDepthi: currDepth}
+                      inUVi: currUVs,
+                      inDepthi: currDepth,
+                      inNormali: currNormals}
 
             step = lp.globalStep.eval(sess) + 1
 
@@ -270,17 +283,21 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath, valPath):
                 summary = sess.run(tsSum, feed_dict={lp.dropoutProb: 0.0,
                                                      lp.isTraining: False,
                                                      inImgi: currImg,
-                                                     inDepthi: currDepth})
+                                                     inUVi: currUVs,
+                                                     inDepthi: currDepth,
+                                                     inNormali: currNormals})
                 train_summary_writer.add_summary(summary, step)
 
             if step % lp.tslogStep == 0:
 
                 sess.run(tsInit)
-                currImg, currDepth = sess.run(dsView)
+                currImg, currUVs, currDepth, currNormals = sess.run(dsView)
                 tsLoss, summary = sess.run([loss, tsSum], feed_dict={lp.dropoutProb: 0.0,
                                                                      lp.isTraining: False,
                                                                      inImgi: currImg,
-                                                                     inDepthi: currDepth})
+                                                                     inUVi: currUVs,
+                                                                     inDepthi: currDepth,
+                                                                     inNormali: currNormals})
 
                 test_summary_writer.add_summary(summary, step)
 
@@ -297,7 +314,9 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath, valPath):
                 summary = sess.run(tsSum, feed_dict={lp.dropoutProb: 0.0,
                                                      lp.isTraining: False,
                                                      inImgi: valImg,
-                                                     inDepthi: valDepth})
+                                                     inUVi: valUVs,
+                                                     inDepthi: valDepth,
+                                                     inNormali: valNormals})
 
                 val_summary_writer.add_summary(summary, step)
 
