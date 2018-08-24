@@ -365,7 +365,7 @@ def pix2pix_deconv_bn(inputs, ref, i_n, o_n, ks, ss, strided, bn, train):
                                            kernel_size=ks,
                                            strides=(ss, ss),
                                            padding="same",
-                                           use_bias=False,
+                                           use_bias=not bn,
                                            kernel_initializer=tf.contrib.layers.xavier_initializer())
         # should pad the layer tensor to be able to concat it with the ref tensor
         if ss > 1:

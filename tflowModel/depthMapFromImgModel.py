@@ -109,7 +109,11 @@ class DepthPredictionModelParams(Pix2PixParams):
 
     def __init__(self, modelPath, seed=int(time.time())):
 
-        modelId = 1
+        #
+        # model 0 : scale / resize / pix2pix_gen / no bn
+        # model 1 : scale / strided / pix2pix_ires / no bn
+        # model 2 : scale / resize / pix2pix_gen / bn
+        #
 
         Pix2PixParams.__init__(self, modelPath)
 
@@ -123,13 +127,16 @@ class DepthPredictionModelParams(Pix2PixParams):
         self.imgSzTr = [256, 256]
         self.batchSz = 64
 
-        self.useBatchNorm = False
+        # bn vs no bn
+        self.useBatchNorm = True
         self.nbChannels = 32
         self.nbInChannels = 3
         self.nbOutputChannels = 1
         self.kernelSz = 5
         self.stridedEncoder = True
-        self.stridedDecoder = False if modelId == 0 else True
+        # strided vs resize
+        self.stridedDecoder = False
+        # scale vs no scale
         self.doLogNormOutputs = True
         self.inDispRange = np.array([[0, 1, 2]])
         self.outDispRange = np.array([[0, 0, 0]])
@@ -139,7 +146,8 @@ class DepthPredictionModelParams(Pix2PixParams):
 
         self.modelNbToKeep = 5
 
-        self.model = pix2pix_gen if modelId == 0 else pix2pix_ires
+        # network arch function
+        self.model = pix2pix_gen
 
         self.update()
 
