@@ -54,6 +54,26 @@ void split_hsbs( const Mat& img, Mat& right, Mat& left, const unsigned nHStripes
 
 //------------------------------------------------------------------------------
 //
+Mat hstrech( const Mat& img )
+{
+   Mat simg( img.rows, 2 * img.cols, CV_32FC3 );
+
+#pragma omp parallel for
+   for ( size_t y = 0; y < simg.rows; y++ )
+   {
+      vec3* simg_data = simg.ptr<vec3>( y );
+
+      for ( size_t x = 0; x < simg.cols; x++ )
+      {
+         simg_data[x] = imsample32FC3( img, vec2( 0.5 * x, y ) );
+      }
+   }
+
+   return simg;
+}
+
+//------------------------------------------------------------------------------
+//
 void compute_disparity( const Mat& right, const Mat& left, Mat& disp )
 {
    cv::cuda::printShortCudaDeviceInfo( cv::cuda::getDevice() );
@@ -168,7 +188,7 @@ void processDepth(
    vector<Mat> dPyr;
    dPyr.emplace_back( depth.rows, depth.cols, CV_32FC4 );
 
-   // fill the first level
+// fill the first level
 #pragma omp parallel for
    for ( unsigned y = 0; y < depth.rows; y++ )
    {
@@ -326,7 +346,7 @@ Mat flowToDisp(
    Mat lkR = flowToLk( flowR, imgFrom, imgTo );
    Mat lkL = flowToLk( flowL, imgTo, imgFrom );
 
-   // Mat flowLi( flowR.rows, flowR.cols, CV_32FC2 );
+// Mat flowLi( flowR.rows, flowR.cols, CV_32FC2 );
 
 #pragma omp parallel for
    for ( size_t y = 0; y < flowR.rows; y++ )
@@ -351,12 +371,11 @@ Mat flowToDisp(
          const float dispReg = mix( dispR, dispRL, 0.5 );
 
          u_row_data[x] =
-             ( lk_r_data[x] > 0.5 ? 1.0 : 0.0 ) *
-             ( mix( lk_l_data[x + (int)ceil( dispR )],
-                    lk_l_data[x + (int)floor( dispR )],
-                    ceil( dispR ) - dispR ) > 0.5
-                   ? 1.0
-                   : 0.0 ) *
+             ( lk_r_data[x] > 0.5 ? 1.0 : 0.0 ) * ( mix( lk_l_data[x + (int)ceil( dispR )],
+                                                         lk_l_data[x + (int)floor( dispR )],
+                                                         ceil( dispR ) - dispR ) > 0.5
+                                                        ? 1.0
+                                                        : 0.0 ) *
              ( exp( -( dispR - dispRL ) * ( dispR - dispRL ) / 3.0 ) > 0.5 ? 1.0 : 0.0 );
 
          d_row_data[x] = ( isInverted ? 1.0 : -1.0 ) * dispReg;
@@ -434,7 +453,7 @@ int main( int argc, char* argv[] )
          const string videoIdname = outBasename.substr( 0, outBasename.find_first_of( "_" ) );
 
          Mat img = cv_utils::imread32FC3( data[j] );
-         GaussianBlur( img, img, Size( 3, 3 ), 0.75 );
+         GaussianBlur( img, img, Size( 3, 3 ), 0.5 );
 
          const bool isStriped =
              find( stripedVideoIdName.begin(), stripedVideoIdName.end(), videoIdname ) !=
@@ -447,8 +466,8 @@ int main( int argc, char* argv[] )
          // split the current image
          Mat right, left;
          split_hsbs( img, right, left, isStriped ? ( img.rows - img.rows / 1.35 ) / 2 : 0 );
-         resizeToMin( right, maxSz );
-         resizeToMin( left, maxSz );
+         resizeToMin( hstrech( right ), maxSz );
+         resizeToMin( hstrech( left ), maxSz );
 
          ofEstimator.setImgSize( right.cols, right.rows );
 
