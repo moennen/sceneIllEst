@@ -4,6 +4,10 @@ uniform vec3 lightPos;
 uniform vec3 lightColor;
 uniform float ambient;
 
+uniform float roughness;
+uniform float sheen;
+uniform float subsurface;
+
 in vec3 colour;
 in vec4 position;
 in vec3 normal;
@@ -36,8 +40,8 @@ void main()
    vec3 col = applyBRDF(norm,position.xyz,
                         lightPos, 0.5*lightColor,
                         colour,
-                        1.0,1.0,1.0,0.0,0.5,vec3(1.0,1.0,1.0),
-                        0.5, vec3(1.0,1.0,1.0), 0.0, 0.0 ) + ambient * colour;
+                        1.0,roughness,subsurface,0.0,0.5,vec3(1.0,1.0,1.0),
+                        sheen, vec3(1.0,1.0,1.0), 0.0, 0.0 ) + ambient * colour;
 
    float depth =  -position.z / 1000.0;
    frag_colour = vec4(col,1.0);

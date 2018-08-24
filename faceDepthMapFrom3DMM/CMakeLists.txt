@@ -3,7 +3,7 @@
 CMAKE_MINIMUM_REQUIRED(VERSION 2.6) 
 
 PROJECT(faceDepthMapFrom3DMM)
-ADD_DEFINITIONS( -DCOMPILER_GCC -std=c++11 -O3 )
+ADD_DEFINITIONS( -DCOMPILER_GCC -std=c++11 )
 SET(CMAKE_COLOR_MAKEFILE ON)
 SET(CMAKE_VERBOSE_MAKEFILE ON)
 
@@ -78,3 +78,11 @@ ADD_EXECUTABLE(renderFaceMaps renderFaceMaps.cpp
 	            ${UTILS}/cv_utils.C)
 
 TARGET_LINK_LIBRARIES( renderFaceMaps GLEW GL SDL2 assimp opencv_world boost_system boost_filesystem )
+
+ADD_EXECUTABLE(renderFaceInstMaps renderFaceInstMaps.cpp 
+	            ${FACE}/beFaceMModel.C
+	            ${FACE}/beFaceModelInstance.C
+	            ${UTILS}/gl_utils.C
+	            ${UTILS}/cv_utils.C)
+
+TARGET_LINK_LIBRARIES( renderFaceInstMaps GLEW GL SDL2 assimp opencv_world boost_system boost_filesystem )

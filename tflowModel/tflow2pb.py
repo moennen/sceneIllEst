@@ -4,7 +4,7 @@
 import os
 import argparse
 import tensorflow as tf
-import uff
+from tensorflow.python.tools import freeze_graph
 
 
 def freeze_graph(model_dir, output_node_names):
@@ -28,15 +28,12 @@ def freeze_graph(model_dir, output_node_names):
     checkpoint = tf.train.get_checkpoint_state(model_dir)
     input_checkpoint = checkpoint.model_checkpoint_path
 
-    # We precise the file fullname of our freezed graph
-    absolute_model_dir = "/".join(input_checkpoint.split('/')[:-1])
-    output_graph = absolute_model_dir + "/frozen_model.pb"
-
     # We clear devices to allow TensorFlow to control on which device it will load operations
     clear_devices = True
 
     # We start a session using a temporary fresh Graph
-    with tf.Session(graph=tf.Graph()) as sess:
+    sess_config = tf.ConfigProto(device_count={'GPU': 0})
+    with tf.Session(graph=tf.Graph(), config=sess_config) as sess:
         # We import the meta graph in the current default Graph
         saver = tf.train.import_meta_graph(
             input_checkpoint + '.meta', clear_devices=clear_devices)
@@ -59,12 +56,9 @@ def freeze_graph(model_dir, output_node_names):
         output_graph_def = tf.graph_util.remove_training_nodes(
             output_graph_def)
 
-        # Finally we serialize and dump the output graph to the filesystem
-        with tf.gfile.GFile(output_graph, "wb") as f:
-            f.write(output_graph_def.SerializeToString())
         print("%d ops in the final graph." % len(output_graph_def.node))
 
-    return output_graph
+    return output_graph_def
 
 
 if __name__ == "__main__":
@@ -79,15 +73,11 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    frozenInModelPath = freeze_graph(args.inModelPath, args.outputNodes)
+    pbModel = freeze_graph(args.inModelPath, args.outputNodes)
 
-    uff.from_tensorflow_frozen_model(
-        frozenInModelPath, [args.outputNodes], list_nodes=True)
+    # Finally we serialize and dump the output graph to the filesystem
+    with tf.gfile.GFile(args.outModelPath, "wb") as f:
+        f.write(pbModel.SerializeToString())
+    #
 
-    uff_model = uff.from_tensorflow_frozen_model(
-        frozenInModelPath, [args.outputNodes], text=True,
-        output_filename=args.outModelPath, input_nodes=[args.inputNodes])
-
-    # uff_model = uff.from_tensorflow(
-    #    args.inModelPath, [args.outputNodes], text=True,
-    #    output_filename=args.outModelPath, input_nodes=[args.inputNodes], list_nodes=True)
+    # freeze_graph("", "", "", "", output_node_names=args.outputNodes)

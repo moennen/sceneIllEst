@@ -2,7 +2,7 @@
 
 CMAKE_MINIMUM_REQUIRED(VERSION 2.6) 
 
-PROJECT(DepthImgSampler)
+PROJECT(SemSegSampler)
 ADD_DEFINITIONS( -DCOMPILER_GCC -std=gnu++0x -O3 )
 SET(CMAKE_COLOR_MAKEFILE ON)
 SET(CMAKE_VERBOSE_MAKEFILE ON)
@@ -39,12 +39,12 @@ LINK_DIRECTORIES(
 	${M_LIBS64}
 )
 
-ADD_LIBRARY(DepthImgSampler SHARED libSampler.cpp
+ADD_LIBRARY(SemSegSampler SHARED libSampler.cpp
 				${UTILS}/cv_utils.C )
 
-SET_PROPERTY(TARGET DepthImgSampler PROPERTY POSITION_INDEPENDENT_CODE ON)
+SET_PROPERTY(TARGET SemSegSampler PROPERTY POSITION_INDEPENDENT_CODE ON)
 
-TARGET_LINK_LIBRARIES( DepthImgSampler
+TARGET_LINK_LIBRARIES( SemSegSampler
 	                    boost_thread boost_system boost_filesystem
 	                    opencv_world
 	                    rt dl )

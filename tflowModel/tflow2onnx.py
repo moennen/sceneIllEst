@@ -4,10 +4,10 @@
 import os
 import argparse
 import tensorflow as tf
-import uff
+from onnx_tf.frontend import tensorflow_graph_to_onnx_model
 
 
-def freeze_graph(model_dir, output_node_names):
+def freeze_onnx_graph(model_dir, output_node_names):
     """Extract the sub graph defined by the output nodes and convert 
     all its variables into constant 
     Args:
@@ -59,12 +59,13 @@ def freeze_graph(model_dir, output_node_names):
         output_graph_def = tf.graph_util.remove_training_nodes(
             output_graph_def)
 
-        # Finally we serialize and dump the output graph to the filesystem
-        with tf.gfile.GFile(output_graph, "wb") as f:
-            f.write(output_graph_def.SerializeToString())
-        print("%d ops in the final graph." % len(output_graph_def.node))
+        # convert to ONNX
+        onnx_model = tensorflow_graph_to_onnx_model(output_graph_def,
+                                                    output_node_names,
+                                                    # opset=6,
+                                                    ignore_unimplemented=True)
 
-    return output_graph
+    return onnx_model
 
 
 if __name__ == "__main__":
@@ -79,15 +80,8 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    frozenInModelPath = freeze_graph(args.inModelPath, args.outputNodes)
+    onnxModel = freeze_onnx_graph(args.inModelPath, args.outputNodes)
 
-    uff.from_tensorflow_frozen_model(
-        frozenInModelPath, [args.outputNodes], list_nodes=True)
-
-    uff_model = uff.from_tensorflow_frozen_model(
-        frozenInModelPath, [args.outputNodes], text=True,
-        output_filename=args.outModelPath, input_nodes=[args.inputNodes])
-
-    # uff_model = uff.from_tensorflow(
-    #    args.inModelPath, [args.outputNodes], text=True,
-    #    output_filename=args.outModelPath, input_nodes=[args.inputNodes], list_nodes=True)
+    onnxFile = open(args.outModelPath, "wb")
+    onnxFile.write(onnxModel.SerializeToString())
+    onnxFile.close()

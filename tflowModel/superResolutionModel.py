@@ -18,16 +18,23 @@ from sampleBuffDataset import *
 #-----------------------------------------------------------------------------------------------------
 
 
-class SupResDatasetTF(object):
+import cv2 as cv
+
+#-----------------------------------------------------------------------------------------------------
+# DATASET
+#-----------------------------------------------------------------------------------------------------
+
+
+class DatasetTF(object):
 
     __lib = BufferDataSamplerLibrary(
         "/mnt/p4/avila/moennen_wkspce/sceneIllEst/sampleBuffDataset/libSuperResolutionSampler/libSuperResolutionSampler.so")
 
-    def __init__(self, dbPath, imgRootDir, batchSz, imgSz, scaleFactor, seed):
+    def __init__(self, dbPath, imgRootDir, batchSz, imgSz, scaleFactor, linearCS, seed):
         params = np.array([batchSz, imgSz[0], imgSz[1],
-                           scaleFactor], dtype=np.float32)
+                           scaleFactor, 1.0 if linearCS else 0.0], dtype=np.float32)
         self.__ds = BufferDataSampler(
-            SupResDatasetTF.__lib, dbPath, imgRootDir, params, seed)
+            DatasetTF.__lib, dbPath, imgRootDir, params, seed)
         self.data = tf.data.Dataset.from_generator(
             self.sample, (tf.float32, tf.float32))
 
@@ -35,6 +42,29 @@ class SupResDatasetTF(object):
         for i in itertools.count(1):
             imgHD, imgLD = self.__ds.getDataBuffers()
             yield (imgHD, imgLD)
+
+
+def loadValidationData(dataPath, dataRootDir, dataSz, linearCS=False):
+
+    imLD = np.zeros((dataSz[0], dataSz[1], dataSz[2], 3))
+    inHD = imLD
+
+    n = 0
+
+    # input
+    with open(dataPath, 'r') as img_names_file:
+
+        for data in img_names_file:
+
+            if n >= dataSz[0]:
+                break
+
+            im[n, :, :, :] = loadResizeImgPIL(dataRootDir + "/" +
+                                              data.rstrip('\n'), [dataSz[1], dataSz[2]], linearCS)
+            n = n + 1
+
+    return im, depth
+
 
 #-----------------------------------------------------------------------------------------------------
 # MODEL

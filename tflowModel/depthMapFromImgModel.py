@@ -27,8 +27,9 @@ class DatasetTF(object):
     __lib = BufferDataSamplerLibrary(
         "/mnt/p4/avila/moennen_wkspce/sceneIllEst/sampleBuffDataset/libDepthImgSampler/libDepthImgSampler.so")
 
-    def __init__(self, dbPath, imgRootDir, batchSz, imgSz, seed):
-        params = np.array([batchSz, imgSz[0], imgSz[1]], dtype=np.float32)
+    def __init__(self, dbPath, imgRootDir, batchSz, imgSz, linearCS, seed):
+        params = np.array([batchSz, imgSz[0], imgSz[1],
+                           1.0 if linearCS else 0.0], dtype=np.float32)
         self.__ds = BufferDataSampler(
             DatasetTF.__lib, dbPath, imgRootDir, params, seed)
         self.data = tf.data.Dataset.from_generator(
@@ -40,7 +41,7 @@ class DatasetTF(object):
             yield (currImg, currDepth)
 
 
-def loadValidationData(dataPath, dataRootDir, dataSz):
+def loadValidationData(dataPath, dataRootDir, dataSz, linearCS=False):
 
     im = np.zeros((dataSz[0], dataSz[1], dataSz[2], 3))
     depth = np.full((dataSz[0], dataSz[1], dataSz[2], 1), 0.5)
@@ -56,20 +57,10 @@ def loadValidationData(dataPath, dataRootDir, dataSz):
                 break
 
             im[n, :, :, :] = loadResizeImgPIL(dataRootDir + "/" +
-                                              data.rstrip('\n'), [dataSz[1], dataSz[2]], False)
+                                              data.rstrip('\n'), [dataSz[1], dataSz[2]], linearCS)
             n = n + 1
 
     return im, depth
-
-
-#-----------------------------------------------------------------------------------------------------
-# MODEL
-#-----------------------------------------------------------------------------------------------------
-
-
-def model(imgs):
-
-    return base_model(imgs)
 
 #-----------------------------------------------------------------------------------------------------
 # UNIT TESTS
@@ -79,13 +70,13 @@ def model(imgs):
 def testDataset(imgRootDir, trainPath):
 
     rseed = int(time.time())
-    imgSz = [128, 128]
+    imgSz = [256, 256]
 
     tf.set_random_seed(rseed)
 
     batchSz = 16
 
-    trDs = DatasetTF(trainPath, imgRootDir, batchSz, imgSz, rseed)
+    trDs = DatasetTF(trainPath, imgRootDir, batchSz, imgSz, False, rseed)
 
     dsIt = tf.data.Iterator.from_structure(
         trDs.data.output_types, trDs.data.output_shapes)
@@ -104,9 +95,53 @@ def testDataset(imgRootDir, trainPath):
             idx = random.randint(0, batchSz-1)
 
             cv.imshow('currImg', cv.cvtColor(currImg[idx], cv.COLOR_RGB2BGR))
-            cv.imshow('currDepth', currDepth[idx])
+            cv.imshow('currDepth', cv.applyColorMap(
+                (currDepth[idx] * 255.0).astype(np.uint8), cv.COLORMAP_JET))
 
             cv.waitKey(700)
+
+#-----------------------------------------------------------------------------------------------------
+# PARAMETERS
+#-----------------------------------------------------------------------------------------------------
+
+
+class DepthPredictionModelParams(Pix2PixParams):
+
+    def __init__(self, modelPath, seed=int(time.time())):
+
+        modelId = 1
+
+        Pix2PixParams.__init__(self, modelPath)
+
+        self.numMaxSteps = 175000
+        self.numSteps = 175000
+        self.backupStep = 250
+        self.trlogStep = 250
+        self.tslogStep = 250
+        self.vallogStep = 250
+
+        self.imgSzTr = [256, 256]
+        self.batchSz = 64
+
+        self.useBatchNorm = False
+        self.nbChannels = 32
+        self.nbInChannels = 3
+        self.nbOutputChannels = 1
+        self.kernelSz = 5
+        self.stridedEncoder = True
+        self.stridedDecoder = False if modelId == 0 else True
+        self.doLogNormOutputs = True
+        self.inDispRange = np.array([[0, 1, 2]])
+        self.outDispRange = np.array([[0, 0, 0]])
+        self.alphaData = 1.0
+        self.alphaDisc = 0.0
+        self.linearImg = False
+
+        self.modelNbToKeep = 5
+
+        self.model = pix2pix_gen if modelId == 0 else pix2pix_ires
+
+        self.update()
 
 #-----------------------------------------------------------------------------------------------------
 # VALIDATION
@@ -115,18 +150,19 @@ def testDataset(imgRootDir, trainPath):
 
 def evalModel(modelPath, imgRootDir, imgLst):
 
-    modelFilename = modelPath + "/tfData"
-    baseN = 64
+    lp = DepthPredictionModelParams(modelPath)
+    lp.isTraining = False
+
     evalSz = [1, 256, 256, 3]
 
     inputsi = tf.placeholder(tf.float32, shape=evalSz, name="input")
     inputs = preprocess(inputsi)
 
     with tf.variable_scope("generator"):
-        outputs = pix2pix_gen(inputs, 1, baseN, 0.0, False)
+        outputs = pix2pix_gen(inputs, lp)
 
     # Persistency
-    persistency = tf.train.Saver(filename=modelFilename)
+    persistency = tf.train.Saver(filename=lp.modelFilename)
 
     # Params Initializer
     varInit = tf.global_variables_initializer()
@@ -145,13 +181,14 @@ def evalModel(modelPath, imgRootDir, imgLst):
             for data in img_names_file:
 
                 img = [loadResizeImgPIL(imgRootDir + "/" +
-                                        data.rstrip('\n'), [evalSz[1], evalSz[2]], False)]
+                                        data.rstrip('\n'), [evalSz[1], evalSz[2]], lp.linearImg)]
 
                 depth = sess.run(outputs, feed_dict={inputsi: img})
 
                 # show the sample
                 cv.imshow('Input', cv.cvtColor(img[0], cv.COLOR_RGB2BGR))
-                cv.imshow('Output', depth[0])
+                cv.imshow('Output', cv.applyColorMap(
+                    (depth[0] * 255.0).astype(np.uint8), cv.COLORMAP_JET))
                 cv.waitKey(0)
 
 #-----------------------------------------------------------------------------------------------------
@@ -161,20 +198,13 @@ def evalModel(modelPath, imgRootDir, imgLst):
 
 def trainModel(modelPath, imgRootDir, trainPath, testPath, valPath):
 
-    lp = LearningParams(modelPath)  # , 20160704)
-    lp.numSteps = 250000
-    lp.backupStep = 300
-    lp.imgSzTr = [128, 128]
-    lp.batchSz = 128
-    baseN = 64
-    alpha_data = 1.0
-    alpha_disc = 0.0
-    lp.update()
-    profile = True
+    lp = DepthPredictionModelParams(modelPath)
 
     # Datasets / Iterators
-    trDs = DatasetTF(trainPath, imgRootDir, lp.batchSz, lp.imgSzTr, lp.rseed)
-    tsDs = DatasetTF(testPath, imgRootDir, lp.batchSz, lp.imgSzTr, lp.rseed)
+    trDs = DatasetTF(trainPath, imgRootDir, lp.batchSz,
+                     lp.imgSzTr, lp.linearImg, lp.rseed)
+    tsDs = DatasetTF(testPath, imgRootDir, lp.batchSz,
+                     lp.imgSzTr, lp.linearImg, lp.rseed)
 
     dsIt = tf.data.Iterator.from_structure(
         trDs.data.output_types, trDs.data.output_shapes)
@@ -192,19 +222,15 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath, valPath):
     inDepth = tf.multiply(tf.subtract(inDepthi, 0.5), 2.0)
 
     # Optimizers
-    [opts, loss, trSum, tsSum] = pix2pix_optimizer(inImg, inDepth,
-                                                   lp.learningRate, alpha_data, alpha_disc, lp.dropoutProb,
-                                                   lp.isTraining, baseN, False,
-                                                   np.array([[0, 1, 2]]),
-                                                   np.array([[0, 0, 0]]))
+    [opts, loss, trSum, tsSum, valSum] = pix2pix_optimizer(inImg, inDepth, lp)
 
     # Validation
     valImg, valDepth = loadValidationData(
-        valPath, imgRootDir, [lp.batchSz, lp.imgSzTr[0], lp.imgSzTr[1]])
+        valPath, imgRootDir, [lp.batchSz, lp.imgSzTr[0], lp.imgSzTr[1]], lp.linearImg)
 
     # Persistency
     persistency = tf.train.Saver(
-        pad_step_number=True, max_to_keep=3, filename=lp.modelFilename)
+        pad_step_number=True, max_to_keep=lp.modelNbToKeep, filename=lp.modelFilename)
 
     # Logger
     merged_summary_op = tf.summary.merge_all()
@@ -212,7 +238,11 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath, valPath):
     # Params Initializer
     varInit = tf.global_variables_initializer()
 
-    with tf.Session(config=tf.ConfigProto(device_count={'GPU': 1})) as sess:
+    # Session configuration
+    sess_config = tf.ConfigProto()  # device_count={'GPU': 2})
+    sess_config.gpu_options.allow_growth = True
+
+    with tf.Session(config=sess_config) as sess:
         # with tf.Session() as sess:
 
         train_summary_writer = tf.summary.FileWriter(
@@ -242,8 +272,7 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath, valPath):
             # Get the next training batch
             currImg, currDepth = sess.run(dsView)
 
-            trFeed = {lp.dropoutProb: 0.01,
-                      lp.isTraining: True,
+            trFeed = {lp.isTraining: True,
                       inImgi: currImg,
                       inDepthi: currDepth}
 
@@ -267,8 +296,7 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath, valPath):
             # SUMMARIES
 
             if step % lp.trlogStep == 0:
-                summary = sess.run(tsSum, feed_dict={lp.dropoutProb: 0.0,
-                                                     lp.isTraining: False,
+                summary = sess.run(tsSum, feed_dict={lp.isTraining: False,
                                                      inImgi: currImg,
                                                      inDepthi: currDepth})
                 train_summary_writer.add_summary(summary, step)
@@ -277,8 +305,7 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath, valPath):
 
                 sess.run(tsInit)
                 currImg, currDepth = sess.run(dsView)
-                tsLoss, summary = sess.run([loss, tsSum], feed_dict={lp.dropoutProb: 0.0,
-                                                                     lp.isTraining: False,
+                tsLoss, summary = sess.run([loss, tsSum], feed_dict={lp.isTraining: False,
                                                                      inImgi: currImg,
                                                                      inDepthi: currDepth})
 
@@ -294,10 +321,9 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath, valPath):
             # validation
             if step % lp.vallogStep == 0:
 
-                summary = sess.run(tsSum, feed_dict={lp.dropoutProb: 0.0,
-                                                     lp.isTraining: False,
-                                                     inImgi: valImg,
-                                                     inDepthi: valDepth})
+                summary = sess.run(valSum, feed_dict={lp.isTraining: False,
+                                                      inImgi: valImg,
+                                                      inDepthi: valDepth})
 
                 val_summary_writer.add_summary(summary, step)
 
@@ -347,4 +373,4 @@ if __name__ == "__main__":
 
     #------------------------------------------------------------------------------------------------
 
-    # evalModel(args.modelPath, args.imgRootDir, args.valLstPath)
+    #evalModel(args.modelPath, args.imgRootDir, args.valLstPath)

@@ -24,10 +24,13 @@
 #include "externals/face/beFaceMModel.h"
 
 #include <boost/filesystem.hpp>
+#include <Eigen/Dense>
 
 #include <memory>
 #include <random>
 #include <iostream>
+
+#include "skinColourSamples.h"
 
 using namespace std;
 using namespace cv;
@@ -45,6 +48,74 @@ void sampleRN( const size_t d, T* data )
    std::normal_distribution<T> rd;
 
    for ( size_t i = 0; i < d; ++i ) data[i] = rd( rs_gen );
+}
+
+vec3 sampleSkinColourFromData()
+{
+   static uniform_int_distribution<> rs_sample( 0, 50858 );
+
+   const int sample = rs_sample( rs_gen );
+
+   return vec3(
+       skinColourSamples[3 * sample + 2] / 255.0,
+       skinColourSamples[3 * sample + 1] / 255.0,
+       skinColourSamples[3 * sample] / 255.0 );
+}
+
+vec3 sampleSkinColourFromModel()
+{
+   static bool isInit = false;
+   static Eigen::MatrixXd skinRGB( 3, 3 );
+   static Eigen::VectorXd skinColMean( 3 );
+   static normal_distribution<> rs_skin_color( 0.0, 1.5 );
+
+   // create the transform matrix from random number to skin rgb values
+   if ( !isInit )
+   {
+      // learn from Skin_NonSkin.txt
+      skinColMean << 203.992, 146.601, 113.87;
+      Eigen::MatrixXd skinColCovar( 3, 3 );
+      skinColCovar.row( 0 ) << 1421.03, 1296.27, 1311.81;
+      skinColCovar.row( 1 ) << 1296.27, 1284.54, 1379.75;
+      skinColCovar.row( 2 ) << 1311.81, 1379.75, 1731.63;
+
+      Eigen::LLT<Eigen::MatrixXd> cholSolver( skinColCovar );
+      skinRGB = cholSolver.matrixL();
+
+      isInit = true;
+   }
+
+   Eigen::VectorXd val( 3 );
+   val << rs_skin_color( rs_gen ), rs_skin_color( rs_gen ), rs_skin_color( rs_gen );
+
+   val = skinRGB * val + skinColMean;
+
+   return vec3( val[0] / 255.0, val[1] / 255.0, val[2] / 255.0 );
+}
+
+vec3 sampleSkinColourOffset( const vector<vec3>& vtxCol )
+{
+   static uniform_real_distribution<> rs_method( 0, 1.0 );
+
+   const float methodRand = rs_method( rs_gen );
+
+   vec3 skinColour( 0.0 );
+
+   if ( methodRand < 0.2 ) return skinColour;
+
+   skinColour = ( methodRand < 0.3 ) ? sampleSkinColourFromModel() : sampleSkinColourFromData();
+
+   vec3 vtxColour( 0.0 );
+   for ( auto col : vtxCol )
+   {
+      vtxColour += col;
+   }
+   vtxColour /= vtxCol.size();
+
+   //
+   skinColour = normalize( skinColour ) * length( vtxColour );
+
+   return skinColour - vtxColour;
 }
 
 void fittSz( Mat& img, const uvec2 sampleSz, const float scale, const float tx, const float ty )
@@ -81,10 +152,11 @@ void init()
 
 void drawFaceModel(
     const gl_utils::TriMeshBuffer& mdFace,
-    const glm::mat4& p,
-    const glm::mat4& mv,
-    const glm::vec3& lightPos,
-    const glm::vec3& lightCol,
+    const vec3& faceColOffset,
+    const mat4& p,
+    const mat4& mv,
+    const vec3& lightPos,
+    const vec3& lightCol,
     const float ambient )
 {
    static gl_utils::RenderProgram faceShader;
@@ -95,6 +167,14 @@ void drawFaceModel(
    static GLint uniLightPos = -1;
    static GLint uniLightCol = -1;
    static GLint uniAmbient = -1;
+   static GLint uniColOffset = -1;
+   static GLint uniRoughness = -1;
+   static GLint uniSubsurface = -1;
+   static GLint uniSheen = -1;
+
+   static normal_distribution<> rs_skin_roughness( 0.0, 0.1 );
+   static normal_distribution<> rs_skin_subsurface( 0.0, 0.1 );
+   static normal_distribution<> rs_skin_sheen( 0.5, 0.1 );
 
    if ( faceShader._id == -1 )
    {
@@ -107,6 +187,10 @@ void drawFaceModel(
       uniLightPos = faceShader.getUniform( "lightPos" );
       uniLightCol = faceShader.getUniform( "lightColor" );
       uniAmbient = faceShader.getUniform( "ambient" );
+      uniColOffset = faceShader.getUniform( "colourOffset" );
+      uniRoughness = faceShader.getUniform( "roughness" );
+      uniSubsurface = faceShader.getUniform( "subsurface" );
+      uniSheen = faceShader.getUniform( "sheen" );
    }
 
    faceShader.activate();
@@ -121,6 +205,12 @@ void drawFaceModel(
    glUniform3fv( uniLightCol, 1, value_ptr( lightCol ) );
 
    glUniform1f( uniAmbient, ambient );
+
+   glUniform1f( uniRoughness, clamp( 1.0 - abs( rs_skin_roughness( rs_gen ) ), 0.0, 1.0 ) );
+   glUniform1f( uniSubsurface, clamp( 1.0 - abs( rs_skin_subsurface( rs_gen ) ), 0.0, 1.0 ) );
+   glUniform1f( uniSheen, clamp( rs_skin_sheen( rs_gen ), 0.0, 1.0 ) );
+
+   glUniform3fv( uniColOffset, 1, value_ptr( faceColOffset ) );
 
    mdFace.draw();
 
@@ -251,7 +341,7 @@ int main( int argc, char* argv[] )
       }
    }
 
-   const uvec2 imgSz( 132, 132 );
+   const uvec2 imgSz( 296, 296 );
 
    // SDL init
    SDL_Init( SDL_INIT_EVERYTHING );
@@ -278,20 +368,20 @@ int main( int argc, char* argv[] )
    vector<vec3> vtxNorm( BEFaceMModel::NumVertices, vec3( 0.0f ) );
 
    // Sampler
-   normal_distribution<> rs_fov( 60.0, 17.5 );
+   normal_distribution<> rs_fov( 65.0, 7.5 );
 
-   normal_distribution<> rs_yaw( 0.0, 33.0 );
-   normal_distribution<> rs_pitch( 0.0, 10.0 );
-   normal_distribution<> rs_roll( 0.0, 7.0 );
+   normal_distribution<> rs_yaw( 0.0, 15.0 );
+   normal_distribution<> rs_pitch( 0.0, 5.0 );
+   normal_distribution<> rs_roll( 0.0, 3.5 );
 
-   uniform_real_distribution<> rs_pos_xy( 0.0, 1.0 );
-   uniform_real_distribution<> rs_pos_z( -250.0, -700.0 );
-   normal_distribution<> rs_scale_off( 0.0, 1.5 );
+   uniform_real_distribution<> rs_pos_xy( 0.25, 0.75 );
+   uniform_real_distribution<> rs_pos_z( -700.0, -850.0 );
+   normal_distribution<> rs_scale_off( 0.0, 1.35 );
 
-   uniform_real_distribution<> rs_shade( 0.0, 1.0 );
+   uniform_real_distribution<> rs_shade( 0.05, 1.0 );
    uniform_real_distribution<> rs_lightPos( -500.0, 500.0 );
-   uniform_real_distribution<> rs_lightCol( 0.5, 20.0 );
-   uniform_real_distribution<> rs_ambient( 0.5, 10.0 );
+   uniform_real_distribution<> rs_lightCol( 0.5, 15.0 );
+   uniform_real_distribution<> rs_ambient( 0.5, 7.0 );
 
    uniform_real_distribution<> rs_backImgResize( 0.0, 1.0 );
 
@@ -330,7 +420,11 @@ int main( int argc, char* argv[] )
       // Sample a random background images
       const auto& data = imgLst[rs_img( rs_gen )];
       Mat backImg = cv_utils::imread32FC4( data[0] );
-      if ( backImg.empty() ) { --s; continue; }
+      if ( ( backImg.cols < imgSz.x ) || ( backImg.rows < imgSz.y ) )
+      {
+         --s;
+         continue;
+      }
 
       fittSz(
           backImg,
@@ -392,6 +486,9 @@ int main( int argc, char* argv[] )
          // color
          mdFaceA.loadAttrib( 3, value_ptr( vtxCol[0] ) );
 
+         // sample a random skin colour offset
+         const vec3 faceColOffset = sampleSkinColourOffset( vtxCol );
+
          // normals
          gl_utils::computeNormals(
              BEFaceMModel::NumFaces,
@@ -432,7 +529,7 @@ int main( int argc, char* argv[] )
          glEnable( GL_CULL_FACE );
          glCullFace( GL_BACK );
 
-         drawFaceModel( mdFaceA, camProj, modelView, lightPos, lightCol, ambient );
+         drawFaceModel( mdFaceA, faceColOffset, camProj, modelView, lightPos, lightCol, ambient );
 
          renderTarget.unbind();
       }

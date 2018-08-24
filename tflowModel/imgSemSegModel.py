@@ -1,5 +1,5 @@
 #!/usr/bin/python
-""" Frame Interpolation Model
+""" Depth Map From Image Model
 
 """
 import argparse
@@ -25,29 +25,26 @@ import cv2 as cv
 class DatasetTF(object):
 
     __lib = BufferDataSamplerLibrary(
-        "/mnt/p4/avila/moennen_wkspce/sceneIllEst/sampleBuffDataset/libFrameInterpolationSampler/libFrameInterpolationSampler.so")
+        "/mnt/p4/avila/moennen_wkspce/sceneIllEst/sampleBuffDataset/libSemSegSampler/libSemSegSampler.so")
 
-    def __init__(self, dbPath, imgRootDir, batchSz, imgSz, scaleFactor, blendInLDFreq, mode, linearCS, seed,
-                 minPrevNextSqDiff=-1.0, maxPrevNextSqDiff=1000000.0):
+    def __init__(self, dbPath, imgRootDir, batchSz, imgSz, linearCS, seed):
         params = np.array([batchSz, imgSz[0], imgSz[1],
-                           scaleFactor, blendInLDFreq, minPrevNextSqDiff, maxPrevNextSqDiff, mode,
                            1.0 if linearCS else 0.0], dtype=np.float32)
         self.__ds = BufferDataSampler(
             DatasetTF.__lib, dbPath, imgRootDir, params, seed)
         self.data = tf.data.Dataset.from_generator(
-            self.sample, (tf.float32, tf.float32, tf.float32, tf.float32, tf.float32))
+            self.sample, (tf.float32, tf.float32))
 
     def sample(self):
         for i in itertools.count(1):
-            currHD, currLD, blendSple, prevSple, nextSple = self.__ds.getDataBuffers()
-            yield (currHD, currLD, blendSple, prevSple, nextSple)
+            currImg, currLabels = self.__ds.getDataBuffers()
+            yield (currImg, currLabels)
 
 
-def loadValidationData(dataPath, dataRootDir, dataSz, linearCS=False):
+def loadValidationData(dataPath, dataRootDir, dataSz, linearCS):
 
-    prevIm = np.zeros((dataSz[0], dataSz[1], dataSz[2], 3))
-    nextIm = np.zeros((dataSz[0], dataSz[1], dataSz[2], 3))
-    blendIm = np.zeros((dataSz[0], dataSz[1], dataSz[2], 3))
+    im = np.zeros((dataSz[0], dataSz[1], dataSz[2], 3))
+    labels = np.zeros((dataSz[0], dataSz[1], dataSz[2], 1))
 
     n = 0
 
@@ -59,21 +56,21 @@ def loadValidationData(dataPath, dataRootDir, dataSz, linearCS=False):
             if n >= dataSz[0]:
                 break
 
-            data = data.rstrip('\n').split()
-
-            prevIm[n, :, :, :] = loadResizeImgPIL(dataRootDir + "/" +
-                                                  data[0], [dataSz[1], dataSz[2]], linearCS)
-            nextIm[n, :, :, :] = loadResizeImgPIL(dataRootDir + "/" +
-                                                  data[2], [dataSz[1], dataSz[2]], linearCS)
-
-            alpha = float(data[3])
-
-            blendIm[n, :, :, :] = alpha * prevIm[n, :, :, :] + \
-                (1.0 - alpha) * nextIm[n, :, :, :]
-
+            im[n, :, :, :] = loadResizeImgPIL(dataRootDir + "/" +
+                                              data.rstrip('\n'), [dataSz[1], dataSz[2]], linearCS)
             n = n + 1
 
-    return blendIm, prevIm, nextIm
+    return im, labels
+
+
+#-----------------------------------------------------------------------------------------------------
+# MODEL
+#-----------------------------------------------------------------------------------------------------
+
+
+def model(imgs):
+
+    return base_model(imgs)
 
 #-----------------------------------------------------------------------------------------------------
 # UNIT TESTS
@@ -89,8 +86,7 @@ def testDataset(imgRootDir, trainPath):
 
     batchSz = 16
 
-    trDs = DatasetTF(trainPath, imgRootDir, batchSz,
-                     imgSz, 1.0, 1.0, 0, False, rseed)
+    trDs = DatasetTF(trainPath, imgRootDir, batchSz, imgSz, False, rseed)
 
     dsIt = tf.data.Iterator.from_structure(
         trDs.data.output_types, trDs.data.output_shapes)
@@ -104,15 +100,14 @@ def testDataset(imgRootDir, trainPath):
 
         for step in range(100):
 
-            currHD, currLD, blendSple, prevSple, nextSple = sess.run(dsView)
+            currImg, currLabels = sess.run(dsView)
 
             idx = random.randint(0, batchSz-1)
 
-            cv.imshow('prevImg', cv.cvtColor(prevSple[idx], cv.COLOR_RGB2BGR))
-            cv.imshow('nextImg', cv.cvtColor(nextSple[idx], cv.COLOR_RGB2BGR))
-            cv.imshow('blendImg', cv.cvtColor(
-                blendSple[idx], cv.COLOR_RGB2BGR))
-            cv.imshow('currImg', cv.cvtColor(currHD[idx], cv.COLOR_RGB2BGR))
+            cv.imshow('currImg', cv.cvtColor(currImg[idx], cv.COLOR_RGB2BGR))
+            cv.imshow('currLabels', cv.applyColorMap(
+                currLabels[idx].astype(np.uint8), cv.COLORMAP_JET))
+
             cv.waitKey(700)
 
 #-----------------------------------------------------------------------------------------------------
@@ -120,14 +115,14 @@ def testDataset(imgRootDir, trainPath):
 #-----------------------------------------------------------------------------------------------------
 
 
-class FrameInterpolationModelParams(Pix2PixParams):
+class SemSegModelParams(Pix2PixParams):
 
     def __init__(self, modelPath, seed=int(time.time())):
 
         Pix2PixParams.__init__(self, modelPath, seed)
 
-        self.numMaxSteps = 250000
-        self.numSteps = 250000
+        self.numMaxSteps = 150000
+        self.numSteps = 150000
         self.backupStep = 150
         self.trlogStep = 150
         self.tslogStep = 150
@@ -138,30 +133,22 @@ class FrameInterpolationModelParams(Pix2PixParams):
 
         self.useBatchNorm = False
         self.nbChannels = 32
-        self.nbInChannels = 9
-        self.nbOutputChannels = 3
+        self.nbInChannels = 3
+        self.nbOutputChannels = 151
         self.kernelSz = 5
         self.stridedEncoder = True
         self.stridedDecoder = False
         self.doLogNormOutputs = False
         self.inDispRange = np.array([[0, 1, 2]])
-        self.outDispRange = np.array([[0, 1, 2]])
+        self.outDispRange = np.array([[0, 0, 0]])
         self.alphaData = 1.0
         self.alphaDisc = 0.0
-        self.linearImg = True
+        self.linearImg = False
 
-        self.model = pix2pix_ngen
-
-        self.dsScaleFactor = 0.7
-        self.dsBlendInLdFreq = 0.0
-        self.dsMode = 0
-        # minimum value of frame difference # default to 0.0001
-        self.dsMinPrevNextSqDiff = 0.000075
-        # maximum value ""                  # default to 0.0005
-        self.dsMaxPrevNextSqDiff = 0.001
+        self.model = pix2pix_gen
+        self.doClassOut = True
 
         self.update()
-
 
 #-----------------------------------------------------------------------------------------------------
 # VALIDATION
@@ -170,24 +157,16 @@ class FrameInterpolationModelParams(Pix2PixParams):
 
 def evalModel(modelPath, imgRootDir, imgLst):
 
-    lp = FrameInterpolationModelParams(modelPath)
+    lp = SemSegModelParams(modelPath)
     lp.isTraining = False
 
     evalSz = [1, 620, 480, 3]
 
-    prevImgi = tf.placeholder(tf.float32, shape=evalSz, name="prev_img")
-    prevImg = preprocess(prevImgi)
-    nextImgi = tf.placeholder(tf.float32, shape=evalSz, name="next_img")
-    nextImg = preprocess(nextImgi)
-    interpFactor = tf.placeholder(tf.float32, name="interp_factor")
-    blendImg = tf.add(tf.multiply(prevImg, interpFactor),
-                      tf.multiply(nextImg, 1.0-interpFactor))
-
-    inputs = tf.concat([blendImg, tf.subtract(
-        blendImg, prevImg), tf.subtract(blendImg, nextImg)], axis=3)
+    inputsi = tf.placeholder(tf.float32, shape=evalSz, name="input")
+    inputs = preprocess(inputsi)
 
     with tf.variable_scope("generator"):
-        outputs = lp.model(inputs, lp)
+        outputs = pix2pix_gen(inputs, lp)
 
     # Persistency
     persistency = tf.train.Saver(filename=lp.modelFilename)
@@ -208,23 +187,15 @@ def evalModel(modelPath, imgRootDir, imgLst):
 
             for data in img_names_file:
 
-                data = data.rstrip('\n').split()
+                img = [loadResizeImgPIL(imgRootDir + "/" +
+                                        data.rstrip('\n'), [evalSz[1], evalSz[2]], lp.linearImg)]
 
-                alpha = float(data[3])
-
-                prevIm = [loadResizeImgPIL(
-                    imgRootDir + "/" + data[0], [evalSz[1], evalSz[2]], lp.linearImg)]
-                nextIm = [loadResizeImgPIL(
-                    imgRootDir + "/" + data[1], [evalSz[1], evalSz[2]], lp.linearImg)]
-
-                currIm = sess.run(outputs, feed_dict={prevImgi: prevIm,
-                                                      nextImgi: nextIm,
-                                                      interpFactor: alpha})
+                labels = sess.run(outputs, feed_dict={inputsi: img})
 
                 # show the sample
-                cv.imshow('Prev', cv.cvtColor(prevIm[0], cv.COLOR_RGB2BGR))
-                cv.imshow('Next', cv.cvtColor(nextIm[0], cv.COLOR_RGB2BGR))
-                cv.imshow('Curr', cv.cvtColor(currIm[0], cv.COLOR_RGB2BGR))
+                cv.imshow('Input', cv.cvtColor(img[0], cv.COLOR_RGB2BGR))
+                cv.imshow('Output', cv.applyColorMap(
+                    labels.astype(np.uint8), cv.COLORMAP_JETdepth[0]))
                 cv.waitKey(0)
 
 #-----------------------------------------------------------------------------------------------------
@@ -234,15 +205,13 @@ def evalModel(modelPath, imgRootDir, imgLst):
 
 def trainModel(modelPath, imgRootDir, trainPath, testPath, valPath):
 
-    lp = FrameInterpolationModelParams(modelPath)
+    lp = SemSegModelParams(modelPath)
 
     # Datasets / Iterators
     trDs = DatasetTF(trainPath, imgRootDir, lp.batchSz,
-                     lp.imgSzTr, lp.dsScaleFactor, lp.dsBlendInLdFreq, lp.dsMode, lp.linearImg, lp.rseed,
-                     lp.dsMinPrevNextSqDiff, lp.dsMaxPrevNextSqDiff)
+                     lp.imgSzTr, lp.linearImg, lp.rseed)
     tsDs = DatasetTF(testPath, imgRootDir, lp.batchSz,
-                     lp.imgSzTr, lp.dsScaleFactor, lp.dsBlendInLdFreq, lp.dsMode, lp.linearImg, lp.rseed,
-                     lp.dsMinPrevNextSqDiff, lp.dsMaxPrevNextSqDiff)
+                     lp.imgSzTr, lp.linearImg, lp.rseed)
 
     dsIt = tf.data.Iterator.from_structure(
         trDs.data.output_types, trDs.data.output_shapes)
@@ -252,25 +221,19 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath, valPath):
     tsInit = dsIt.make_initializer(tsDs.data)
 
     # Input placeholders
-    sampleShape = [lp.batchSz, lp.imgSzTr[0], lp.imgSzTr[1], 3]
-
-    inBlendi = tf.placeholder(
-        tf.float32, shape=sampleShape, name="input_blend")
-    inBlend = preprocess(inBlendi)
-    inPrevi = tf.placeholder(tf.float32, shape=sampleShape, name="input_prev")
-    inPrev = tf.subtract(inBlend, preprocess(inPrevi))
-    inNexti = tf.placeholder(tf.float32, shape=sampleShape, name="input_next")
-    inNext = tf.subtract(inBlend, preprocess(inNexti))
-    inCurri = tf.placeholder(tf.float32, shape=sampleShape, name="input_curr")
-    inCurr = preprocess(inCurri)
+    inImgi = tf.placeholder(tf.float32, shape=[
+        lp.batchSz, lp.imgSzTr[0], lp.imgSzTr[1], 3], name="input_img")
+    inImg = preprocess(inImgi)
+    inLabelsi = tf.placeholder(tf.float32, shape=[
+        lp.batchSz, lp.imgSzTr[0], lp.imgSzTr[1], 1], name="input_depth")
+    inLabels = tf.to_int32(inLabelsi)
 
     # Optimizers
-    [opts, loss, trSum, tsSum, valSum] = pix2pix_optimizer(
-        tf.concat([inBlend, inPrev, inNext], axis=3), inCurr, lp)
+    [opts, loss, trSum, tsSum, valSum] = pix2pix_optimizer(inImg, inLabels, lp)
 
     # Validation
-    valBlend, valPrev, valNext = loadValidationData(
-        valPath, imgRootDir, sampleShape, lp.linearImg)
+    valImg, valLabels = loadValidationData(
+        valPath, imgRootDir, [lp.batchSz, lp.imgSzTr[0], lp.imgSzTr[1]], lp.linearImg)
 
     # Persistency
     persistency = tf.train.Saver(
@@ -283,8 +246,10 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath, valPath):
     varInit = tf.global_variables_initializer()
 
     # Session configuration
-    sess_config = tf.ConfigProto(device_count={'GPU': 1})
-    sess_config.gpu_options.allow_growth = True
+    sess_config = tf.ConfigProto()
+    #sess_config = tf.ConfigProto(device_count={'GPU': 1})
+    #sess_config.gpu_options.allow_growth = True
+    #sess_config.gpu_options.per_process_gpu_memory_fraction = 0.33
 
     with tf.Session(config=sess_config) as sess:
         # with tf.Session() as sess:
@@ -295,8 +260,8 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath, valPath):
         val_summary_writer = tf.summary.FileWriter(lp.tbLogsPath + "/Val")
 
         # profiling
-        #run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
-        #run_metadata = tf.RunMetadata()
+        # run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
+        # run_metadata = tf.RunMetadata()
 
         # initialize params
         sess.run(varInit)
@@ -314,13 +279,11 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath, valPath):
         while lp.globalStep.eval(sess) < lp.numSteps:
 
             # Get the next training batch
-            currHD, currLD, blendSple, prevSple, nextSple = sess.run(dsView)
+            currImg, currLabels = sess.run(dsView)
 
             trFeed = {lp.isTraining: True,
-                      inCurri: currHD,
-                      inPrevi: prevSple,
-                      inNexti: nextSple,
-                      inBlendi: blendSple}
+                      inImgi: currImg,
+                      inLabelsi: currLabels}
 
             step = lp.globalStep.eval(sess) + 1
 
@@ -343,22 +306,17 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath, valPath):
 
             if step % lp.trlogStep == 0:
                 summary = sess.run(tsSum, feed_dict={lp.isTraining: False,
-                                                     inCurri: currHD,
-                                                     inPrevi: prevSple,
-                                                     inNexti: nextSple,
-                                                     inBlendi: blendSple})
+                                                     inImgi: currImg,
+                                                     inLabelsi: currLabels})
                 train_summary_writer.add_summary(summary, step)
 
             if step % lp.tslogStep == 0:
 
                 sess.run(tsInit)
-                currHD, currLD, blendSple, prevSple, nextSple = sess.run(
-                    dsView)
+                currImg, currLabels = sess.run(dsView)
                 tsLoss, summary = sess.run([loss, tsSum], feed_dict={lp.isTraining: False,
-                                                                     inCurri: currHD,
-                                                                     inPrevi: prevSple,
-                                                                     inNexti: nextSple,
-                                                                     inBlendi: blendSple})
+                                                                     inImgi: currImg,
+                                                                     inLabelsi: currLabels})
 
                 test_summary_writer.add_summary(summary, step)
 
@@ -373,10 +331,8 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath, valPath):
             if step % lp.vallogStep == 0:
 
                 summary = sess.run(valSum, feed_dict={lp.isTraining: False,
-                                                      inCurri: valBlend,
-                                                      inPrevi: valPrev,
-                                                      inNexti: valNext,
-                                                      inBlendi: valBlend})
+                                                      inImgi: valImg,
+                                                      inLabelsi: valLabels})
 
                 val_summary_writer.add_summary(summary, step)
 
@@ -426,4 +382,4 @@ if __name__ == "__main__":
 
     #------------------------------------------------------------------------------------------------
 
-    #evalModel(args.modelPath, args.imgRootDir, args.valLstPath)
+    # evalModel(args.modelPath, args.imgRootDir, args.valLstPath)

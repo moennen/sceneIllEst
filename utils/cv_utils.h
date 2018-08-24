@@ -105,12 +105,14 @@ inline cv::Mat imread32FC3(
       HOP_PROF( "cv_imread" );
       img = cv::imread( imgPath, cv::IMREAD_UNCHANGED );
    }
-   if ( !img.data || ( img.channels() < 3 ) || ( img.channels() > 4 ) )
+   if ( !img.data || ( img.channels() == 2 ) || ( img.channels() > 4 ) )
    {
       std::cerr << "ERROR loading image : " << imgPath << std::endl;
       return cv::Mat();
    }
-   if ( img.channels() == 4 )
+   if ( img.channels() == 1 )
+      cv::cvtColor( img, img, toRGB ? cv::COLOR_GRAY2BGR : cv::COLOR_GRAY2RGB );
+   else if ( img.channels() == 4 )
       cv::cvtColor( img, img, toRGB ? cv::COLOR_RGBA2BGR : cv::COLOR_RGBA2RGB );
    else if ( toRGB )
       cv::cvtColor( img, img, cv::COLOR_BGR2RGB );
@@ -216,8 +218,6 @@ inline void fittResizeCrop( cv::Mat& img, const glm::uvec2 sampleSz )
    // crop
    img = img( cv::Rect( trans.x, trans.y, sampleSz.x, sampleSz.y ) ).clone();
 }
-
-
 }
 
 #endif  // _UTILS_CV_UTILS_H

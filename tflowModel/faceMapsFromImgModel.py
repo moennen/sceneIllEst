@@ -45,7 +45,8 @@ def loadValidationData(dataPath, dataRootDir, dataSz):
     im = np.zeros((dataSz[0], dataSz[1], dataSz[2], 3))
     uv = np.full((dataSz[0], dataSz[1], dataSz[2], 2), 0.5)
     depth = np.full((dataSz[0], dataSz[1], dataSz[2], 1), 0.5)
-    normal = np.full((dataSz[0], dataSz[1], dataSz[2], 2), 0.5)
+    # normals are in [-1.0,1.0]
+    normal = np.full((dataSz[0], dataSz[1], dataSz[2], 3), 0)
 
     n = 0
 
@@ -103,11 +104,43 @@ def testDataset(imgRootDir, trainPath):
             cv.imshow('currU', u)
             cv.imshow('currV', v)
 
-            nx, ny = cv.split(currNormals[idx])
-            cv.imshow('currNormalsX', nx)
-            cv.imshow('currNormalsY', ny)
+            cv.imshow('currNormals', currNormals[idx])
 
             cv.waitKey(700)
+
+#-----------------------------------------------------------------------------------------------------
+# PARAMETERS
+#-----------------------------------------------------------------------------------------------------
+
+
+def getParams(modelPath):
+
+    lp = Pix2PixParams(modelPath, 20160704)
+
+    lp.numMaxSteps = 150000
+    lp.numSteps = 150000
+
+    lp.imgSzTr = [128, 128]
+    lp.batchSz = 128
+
+    lp.useBatchNorm = True
+    lp.useConv2dTranspose = True
+    lp.convDropOut = tf.placeholder(tf.float32)
+    lp.nbChannels = 64
+    lp.nbOutputChannels = 6
+    lp.kernelSz = 4
+    lp.stridedEncoder = True
+    lp.stridedDecoder = True
+    lp.doNormOutputs = False
+    lp.inDispRange = np.array([[0, 1, 2]])
+    lp.outDispRange = np.array([[0, 1, 2], [3, 4, 5]])
+
+    lp.alphaData = 1.0
+    lp.alphaDisc = 0.0
+
+    lp.update()
+
+    return lp
 
 #-----------------------------------------------------------------------------------------------------
 # VALIDATION
@@ -116,8 +149,10 @@ def testDataset(imgRootDir, trainPath):
 
 def evalModel(modelPath, imgRootDir, imgLst):
 
-    modelFilename = modelPath + "/tfData"
-    baseN = 64
+    lp = getParams(modelPath)
+    lp.isTraining = False
+    lp.convDropOut = 0.0
+
     evalSz = [1, 256, 256, 3]
 
     inputsi = tf.placeholder(tf.float32, shape=evalSz, name="input")
@@ -127,7 +162,7 @@ def evalModel(modelPath, imgRootDir, imgLst):
         outputs = pix2pix_gen(inputs, 1, baseN, 0.0, False)
 
     # Persistency
-    persistency = tf.train.Saver(filename=modelFilename)
+    persistency = tf.train.Saver(filename=lp.modelFilename)
 
     # Params Initializer
     varInit = tf.global_variables_initializer()
@@ -164,16 +199,7 @@ def evalModel(modelPath, imgRootDir, imgLst):
 
 def trainModel(modelPath, imgRootDir, trainPath, testPath, valPath):
 
-    lp = LearningParams(modelPath)  # , 20160704)
-    lp.numSteps = 150000
-    lp.backupStep = 300
-    lp.imgSzTr = [128, 128]
-    lp.batchSz = 128
-    baseN = 64
-    alpha_data = 1.0
-    alpha_disc = 0.0
-    lp.update()
-    profile = True
+    lp = getParams(modelPath)
 
     # Datasets / Iterators
     trDs = DatasetTF(trainPath, imgRootDir, lp.batchSz, lp.imgSzTr, lp.rseed)
@@ -197,17 +223,13 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath, valPath):
         lp.batchSz, lp.imgSzTr[0], lp.imgSzTr[1], 1], name="input_depth")
     inDepth = tf.multiply(tf.subtract(inDepthi, 0.5), 2.0)
     inNormali = tf.placeholder(tf.float32, shape=[
-        lp.batchSz, lp.imgSzTr[0], lp.imgSzTr[1], 2], name="input_normals")
-    inNormal = tf.multiply(tf.subtract(inNormali, 0.5), 2.0)
+        lp.batchSz, lp.imgSzTr[0], lp.imgSzTr[1], 3], name="input_normals")
+    inNormal = inNormali
 
     inMaps = tf.concat([inUV, inDepth, inNormal], 3)
 
     # Optimizers
-    [opts, loss, trSum, tsSum] = pix2pix_optimizer(inImg, inMaps,
-                                                   lp.learningRate, alpha_data, alpha_disc, lp.dropoutProb,
-                                                   lp.isTraining, baseN, False,
-                                                   np.array([[0, 1, 2]]),
-                                                   np.array([[0, 1, 2], [2, 3, 4]]))
+    [opts, loss, trSum, tsSum, valSum] = pix2pix_optimizer(inImg, inMaps, lp)
 
     # Validation
     valImg, valUVs, valDepth, valNormals = loadValidationData(
@@ -311,12 +333,12 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath, valPath):
             # validation
             if step % lp.vallogStep == 0:
 
-                summary = sess.run(tsSum, feed_dict={lp.dropoutProb: 0.0,
-                                                     lp.isTraining: False,
-                                                     inImgi: valImg,
-                                                     inUVi: valUVs,
-                                                     inDepthi: valDepth,
-                                                     inNormali: valNormals})
+                summary = sess.run(valSum, feed_dict={lp.dropoutProb: 0.0,
+                                                      lp.isTraining: False,
+                                                      inImgi: valImg,
+                                                      inUVi: valUVs,
+                                                      inDepthi: valDepth,
+                                                      inNormali: valNormals})
 
                 val_summary_writer.add_summary(summary, step)
 

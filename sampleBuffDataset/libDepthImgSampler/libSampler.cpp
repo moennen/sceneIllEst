@@ -45,6 +45,7 @@ struct Sampler final
    static constexpr float maxDsScaleFactor = 3.5;
 
    const ivec3 _sampleSz;
+   const bool _toLinear;
 
    enum
    {
@@ -54,8 +55,13 @@ struct Sampler final
 
    inline static unsigned getBufferDepth( const unsigned buffId ) { return buffId == 0 ? 3 : 1; }
 
-   Sampler( const char* dataSetPath, const char* dataPath, const ivec3 sampleSz, const int seed )
-       : _rng( seed ), _tsGen( 0.0, 1.0 ), _sampleSz( sampleSz )
+   Sampler(
+       const char* dataSetPath,
+       const char* dataPath,
+       const ivec3 sampleSz,
+       const bool toLinear,
+       const int seed )
+       : _rng( seed ), _tsGen( 0.0, 1.0 ), _sampleSz( sampleSz ), _toLinear( toLinear )
    {
       HOP_PROF_FUNC();
 
@@ -76,13 +82,13 @@ struct Sampler final
       const unsigned imgBuffSz = depthBuffSz * 3;
 
       float* currBuffImg = buff;
-      float* currBuffDepth = buff + imgBuffSz * _sampleSz.x ;
+      float* currBuffDepth = buff + imgBuffSz * _sampleSz.x;
 
       for ( size_t s = 0; s < _sampleSz.x; ++s )
       {
          const ImgNFileLst<nBuffers>::Data& data = _data[_dataGen( _rng )];
 
-         Mat currImg = cv_utils::imread32FC3( data[0], false/*toLinear*/, true/*toRGB*/ );
+         Mat currImg = cv_utils::imread32FC3( data[0], _toLinear, true /*toRGB*/ );
          Mat currDepth = cv_utils::imread32FC1( data[1] );
 
          ivec2 imgSz( currImg.cols, currImg.rows );
@@ -115,10 +121,10 @@ struct Sampler final
 
          // random small blur to remove artifacts + copy to destination
          Mat imgSple( _sampleSz.z, _sampleSz.y, CV_32FC3, currBuffImg );
-         GaussianBlur( currImg, imgSple, Size( 3, 3 ), 0.5 * _tsGen( _rng ) );
+         GaussianBlur( currImg, imgSple, Size( 5, 5 ), 1.5 * _tsGen( _rng ) );
          Mat depthSple( _sampleSz.z, _sampleSz.y, CV_32FC1, currBuffDepth );
-         GaussianBlur( currDepth, depthSple, Size( 3, 3 ), 0.5 * _tsGen( _rng ) );
-         //cv_utils::normalizeMeanStd(depthSple);
+         GaussianBlur( currDepth, depthSple, Size( 5, 5 ), 1.5 * _tsGen( _rng ) );
+         // cv_utils::normalizeMeanStd(depthSple);
          normalize( depthSple, depthSple, 0, 1, NORM_MINMAX );
 
          currBuffImg += imgBuffSz;
@@ -171,7 +177,8 @@ extern "C" int initBuffersDataSampler(
 
    // parse params
    const ivec3 sz( params[0], params[1], params[2] );
-   g_samplers[sidx].reset( new Sampler( datasetPath, dataPath, sz, seed ) );
+   const bool toLinear( nParams > 3 ? params[3] > 0.0 : false );
+   g_samplers[sidx].reset( new Sampler( datasetPath, dataPath, sz, toLinear, seed ) );
 
    return g_samplers[sidx]->nSamples() ? SUCCESS : ERROR_BAD_DB;
 }

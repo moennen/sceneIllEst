@@ -13,9 +13,8 @@
 
 #include <glm/glm.hpp>
 
-#include <random>
-#include <array>
 #include <iostream>
+#include <array>
 
 using namespace std;
 using namespace cv;
@@ -29,26 +28,16 @@ struct Sampler final
    uniform_int_distribution<> _dataGen;
    uniform_real_distribution<> _tsGen;
 
-   static constexpr float maxDsScaleFactor = 3.5;
-
    const ivec3 _sampleSz;
    const bool _toLinear;
 
    enum
    {
-      nBuffers = 4
+      nBuffers = 2
    };
-   ImgNFileLst<nBuffers - 1> _data;
+   ImgNFileLst<nBuffers> _data;
 
-   inline static unsigned getBufferDepth( const unsigned buffId )
-   {
-      if ( buffId == 1 )
-         return 2;
-      else if ( buffId == 2 )
-         return 1;
-      else
-         return 3;
-   }
+   inline static unsigned getBufferDepth( const unsigned buffId ) { return buffId == 0 ? 3 : 1; }
 
    Sampler(
        const char* dataSetPath,
@@ -60,7 +49,7 @@ struct Sampler final
    {
       HOP_PROF_FUNC();
 
-      _data.open( dataSetPath, dataPath, ImgNFileLst<nBuffers - 1>::OptsNone /*No Check*/ );
+      _data.open( dataSetPath, dataPath );
 
       if ( _data.size() )
       {
@@ -73,22 +62,18 @@ struct Sampler final
    {
       HOP_PROF_FUNC();
 
-      const unsigned depthBuffSz = _sampleSz.y * _sampleSz.z;
-      const unsigned uvBuffSz = depthBuffSz * 2;
-      const unsigned imgBuffSz = depthBuffSz * 3;
+      const unsigned labelsBuffSz = _sampleSz.y * _sampleSz.z;
+      const unsigned imgBuffSz = labelsBuffSz * 3;
 
       float* currBuffImg = buff;
-      float* currBuffUVs = buff + imgBuffSz * _sampleSz.x;
-      float* currBuffDepth = buff + ( imgBuffSz + uvBuffSz ) * _sampleSz.x;
-      float* currBuffNormals = buff + ( imgBuffSz + uvBuffSz + depthBuffSz ) * _sampleSz.x;
+      float* currBuffLabels = buff + imgBuffSz * _sampleSz.x;
 
       for ( size_t s = 0; s < _sampleSz.x; ++s )
       {
-         const ImgNFileLst<nBuffers - 1>::Data& data = _data[_dataGen( _rng )];
+         const ImgNFileLst<nBuffers>::Data& data = _data[_dataGen( _rng )];
 
          Mat currImg = cv_utils::imread32FC3( data[0], _toLinear, true /*toRGB*/ );
-         Mat currUVDepth = cv_utils::imread32FC3( data[1], false, true );
-         Mat currNormals = cv_utils::imread32FC3( data[2], false, true );
+         Mat currLabels = cv_utils::imread32FC1( data[1] );
 
          ivec2 imgSz( currImg.cols, currImg.rows );
 
@@ -99,17 +84,8 @@ struct Sampler final
             continue;
          }
 
-         // bad dataset : the samples o be of the same size
-         if ( ( currUVDepth.cols != imgSz.x ) || ( currUVDepth.rows != imgSz.y ) ) return false;
-         if ( ( currNormals.cols != imgSz.x ) || ( currNormals.rows != imgSz.y ) ) return false;
-
-         // random rescale
-         const float minDs = std::max( (float)_sampleSz.z / imgSz.y, (float)_sampleSz.y / imgSz.x );
-         const float ds = mix( std::min( 1.0f, maxDsScaleFactor * minDs ), minDs, _tsGen( _rng ) );
-         resize( currImg, currImg, Size(), ds, ds, CV_INTER_AREA );
-         resize( currUVDepth, currUVDepth, Size(), ds, ds, CV_INTER_AREA );
-         resize( currNormals, currNormals, Size(), ds, ds, CV_INTER_AREA );
-         imgSz = ivec2( currImg.cols, currImg.rows );
+         // bad dataset : the samples have to be of the same size
+         if ( ( currLabels.cols != imgSz.x ) || ( currLabels.rows != imgSz.y ) ) return false;
 
          // random translate
          const ivec2 trans(
@@ -118,33 +94,16 @@ struct Sampler final
 
          // crop
          currImg = currImg( Rect( trans.x, trans.y, _sampleSz.y, _sampleSz.z ) );
-         currUVDepth = currUVDepth( Rect( trans.x, trans.y, _sampleSz.y, _sampleSz.z ) );
-         currNormals = currNormals( Rect( trans.x, trans.y, _sampleSz.y, _sampleSz.z ) );
+         currLabels = currLabels( Rect( trans.x, trans.y, _sampleSz.y, _sampleSz.z ) );
 
          // random small blur to remove artifacts + copy to destination
          Mat imgSple( _sampleSz.z, _sampleSz.y, CV_32FC3, currBuffImg );
-         GaussianBlur( currImg, imgSple, Size( 5, 5 ), 2.5 * _tsGen( _rng ) );
-
-         // split uvdepth and
-         Mat uvd[3];
-         split( currUVDepth, uvd );
-
-         Mat uvsSple( _sampleSz.z, _sampleSz.y, CV_32FC2, currBuffUVs );
-         Mat uvl;
-         merge( &uvd[0], 2, uvl );
-         uvl.copyTo( uvsSple );
-
-         Mat depthSple( _sampleSz.z, _sampleSz.y, CV_32FC1, currBuffDepth );
-         uvd[2].copyTo( depthSple );
-
-         // normalize the normals
-         Mat normalsSple( _sampleSz.z, _sampleSz.y, CV_32FC3, currBuffNormals );
-         currNormals.copyTo( normalsSple );
+         GaussianBlur( currImg, imgSple, Size( 5, 5 ), 1.5 * _tsGen( _rng ) );
+         Mat labelsSple( _sampleSz.z, _sampleSz.y, CV_32FC1, currBuffLabels );
+         currLabels.copyTo( labelsSple );
 
          currBuffImg += imgBuffSz;
-         currBuffDepth += depthBuffSz;
-         currBuffUVs += uvBuffSz;
-         currBuffNormals += imgBuffSz;
+         currBuffLabels += labelsBuffSz;
       }
 
       return true;
@@ -152,23 +111,6 @@ struct Sampler final
 
    size_t nSamples() const { return _data.size(); }
    ivec3 sampleSizes() const { return _sampleSz; }
-
-   // normalize normal by z to reduce the dimension from 3 to 2
-   void processNormals( const Mat& in, Mat& out )
-   {
-#pragma omp parallel for
-      for ( size_t y = 0; y < in.rows; y++ )
-      {
-         const vec3* in_data = in.ptr<vec3>( y );
-         vec2* out_data = out.ptr<vec2>( y );
-         for ( size_t x = 0; x < in.cols; x++ )
-         {
-            const vec3& norm = in_data[x];
-            out_data[x] =
-                ( norm.z > 0.000001 ? ( vec2( norm.x, norm.y ) / norm.z ) : vec2( 0.0, 0.0 ) );
-         }
-      }
-   }
 };
 
 array<unique_ptr<Sampler>, 33> g_samplers;

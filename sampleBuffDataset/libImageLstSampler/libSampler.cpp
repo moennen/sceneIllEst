@@ -38,14 +38,16 @@ struct Sampler final
    boost::random::uniform_int_distribution<> _pathGen;
    std::vector<std::string> _paths;
    const ivec3 _sampleSz;
+   const bool _toLinear;
 
    Sampler(
        const char* dataSetPath,
        const char* dataPath,
        const ivec3 sampleSz,
+       const bool toLinear,
        const int seed,
        const bool doRand )
-       : _rand( doRand ), _rng( seed ), _sampleSz( sampleSz )
+       : _rand( doRand ), _rng( seed ), _sampleSz( sampleSz ), _toLinear( toLinear )
    {
       HOP_PROF_FUNC();
 
@@ -72,11 +74,11 @@ struct Sampler final
 
       float* currBuff = buff;
       const unsigned buffOffset = _sampleSz.z * _sampleSz.y * 3;
-      const uvec2 sampleImgSz(_sampleSz.y, _sampleSz.z);
+      const uvec2 sampleImgSz( _sampleSz.y, _sampleSz.z );
       for ( size_t s = 0; s < _sampleSz.x; ++s )
       {
-         Mat inputImg =
-             cv_utils::imread32FC3( _paths[_rand ? _pathGen( _rng ) : s % _paths.size()] );
+         Mat inputImg = cv_utils::imread32FC3(
+             _paths[_rand ? _pathGen( _rng ) : s % _paths.size()], _toLinear );
          Mat sampleImg( _sampleSz.z, _sampleSz.y, CV_32FC3, currBuff );
          cv_utils::fittResizeCrop( inputImg, sampleImgSz );
          inputImg.copyTo( sampleImg );
@@ -126,7 +128,8 @@ extern "C" int initBuffersDataSampler(
    // parse params
    const ivec3 sz( params[0], params[1], params[2] );
    const bool doRand( nParams > 3 ? params[3] != 0.0 : false );
-   g_samplers[sidx].reset( new Sampler( datasetPath, dataPath, sz, seed, doRand ) );
+   const bool toLinear( nParams > 4 ? params[4] > 0.0 : false );
+   g_samplers[sidx].reset( new Sampler( datasetPath, dataPath, sz, toLinear, seed, doRand ) );
 
    return g_samplers[sidx]->nSamples() ? SUCCESS : ERROR_BAD_DB;
 }

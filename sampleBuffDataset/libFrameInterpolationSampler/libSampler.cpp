@@ -45,6 +45,7 @@ struct Sampler final
 
    ImgTripletsFileLst _data;
    const ivec3 _sampleSz;
+   const bool _toLinear;
    const float _downsample;
    const float _ldAsBlendFreq;
    const float _minPrevNextSqDiff;
@@ -65,11 +66,13 @@ struct Sampler final
        const float maxPrevNextSqDiff,
        const int mode,
        const ivec3 sampleSz,
+       const bool toLinear,
        const int seed )
        : _rng( seed ),
          _transGen( 0.0, 1.0 ),
          _ldAsBlendGen( 0.0, 1.0 ),
          _sampleSz( sampleSz ),
+         _toLinear( toLinear ),
          _downsample( downsampleFactor ),
          _ldAsBlendFreq( ldAsBlendFreq ),
          _minPrevNextSqDiff( minPrevNextSqDiff ),
@@ -111,9 +114,9 @@ struct Sampler final
          const bool swapPrevNext = ( data._alpha > 0.5 ) && ( _mode == PrevIsClosestMode );
          const float alpha = swapPrevNext ? 1.0 - data._alpha : data._alpha;
 
-         Mat prevImg = cv_utils::imread32FC3( swapPrevNext ? data._pathC : data._pathA, false );
-         Mat currImg = cv_utils::imread32FC3( data._pathB, false );
-         Mat nextImg = cv_utils::imread32FC3( swapPrevNext ? data._pathA : data._pathC, false );
+         Mat prevImg = cv_utils::imread32FC3( swapPrevNext ? data._pathC : data._pathA, _toLinear );
+         Mat currImg = cv_utils::imread32FC3( data._pathB, _toLinear );
+         Mat nextImg = cv_utils::imread32FC3( swapPrevNext ? data._pathA : data._pathC, _toLinear );
 
          ivec2 imgSz( currImg.cols, currImg.rows );
 
@@ -150,10 +153,10 @@ struct Sampler final
          nextImg = nextImg( Rect( trans.x, trans.y, _sampleSz.y, _sampleSz.z ) );
 
          // random small blur to remove artifacts
-         const float blur = 0.5 * _transGen( _rng );
-         GaussianBlur( prevImg, prevImg, Size( 3, 3 ), blur );
-         GaussianBlur( currImg, currImg, Size( 3, 3 ), blur );
-         GaussianBlur( nextImg, nextImg, Size( 3, 3 ), blur );
+         const float blur = 1.5 * _transGen( _rng );
+         GaussianBlur( prevImg, prevImg, Size( 5, 5 ), blur );
+         GaussianBlur( currImg, currImg, Size( 5, 5 ), blur );
+         GaussianBlur( nextImg, nextImg, Size( 5, 5 ), blur );
 
          // filter samples on differences :
          const double sqDiff = norm( prevImg, nextImg ) / buffSz;
@@ -262,6 +265,7 @@ extern "C" int initBuffersDataSampler(
    const float minPrevNextSqDiff = params[5];
    const float maxPrevNextSqDiff = params[6];
    const int mode = static_cast<int>( params[7] );
+   const bool toLinear( nParams > 8 ? params[8] > 0.0 : false );
    g_samplers[sidx].reset( new Sampler(
        datasetPath,
        dataPath,
@@ -271,6 +275,7 @@ extern "C" int initBuffersDataSampler(
        maxPrevNextSqDiff,
        mode,
        sz,
+       toLinear,
        seed ) );
 
    return g_samplers[sidx]->nSamples() ? SUCCESS : ERROR_BAD_DB;

@@ -42,6 +42,7 @@ struct Sampler final
 
    std::vector<std::string> _paths;
    const ivec3 _sampleSz;
+   const bool _toLinear;
    const float _downsample;
 
    Sampler(
@@ -49,8 +50,13 @@ struct Sampler final
        const char* dataPath,
        const float downsampleFactor,
        const ivec3 sampleSz,
+       const bool toLinear,
        const int seed )
-       : _rng( seed ), _transGen( 0.0, 1.0 ), _sampleSz( sampleSz ), _downsample( downsampleFactor )
+       : _rng( seed ),
+         _transGen( 0.0, 1.0 ),
+         _sampleSz( sampleSz ),
+         _toLinear( toLinear ),
+         _downsample( downsampleFactor )
    {
       HOP_PROF_FUNC();
 
@@ -83,7 +89,7 @@ struct Sampler final
       {
          const std::string& iname = _paths[_pathGen( _rng )];
 
-         Mat inputImg = cv_utils::imread32FC3( iname, true );
+         Mat inputImg = cv_utils::imread32FC3( iname, _toLinear );
          ivec2 imgSz( inputImg.cols, inputImg.rows );
 
          // ignore too small samples
@@ -171,7 +177,9 @@ extern "C" int initBuffersDataSampler(
    // parse params
    const ivec3 sz( params[0], params[1], params[2] );
    const float downsampleFactor = params[3];
-   g_samplers[sidx].reset( new Sampler( datasetPath, dataPath, downsampleFactor, sz, seed ) );
+   const bool toLinear( nParams > 4 ? params[4] > 0.0 : false );
+   g_samplers[sidx].reset(
+       new Sampler( datasetPath, dataPath, downsampleFactor, sz, toLinear, seed ) );
 
    return g_samplers[sidx]->nSamples() ? SUCCESS : ERROR_BAD_DB;
 }
