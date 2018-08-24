@@ -453,7 +453,6 @@ int main( int argc, char* argv[] )
          const string videoIdname = outBasename.substr( 0, outBasename.find_first_of( "_" ) );
 
          Mat img = cv_utils::imread32FC3( data[j] );
-         GaussianBlur( img, img, Size( 3, 3 ), 0.5 );
 
          const bool isStriped =
              find( stripedVideoIdName.begin(), stripedVideoIdName.end(), videoIdname ) !=
@@ -468,6 +467,13 @@ int main( int argc, char* argv[] )
          split_hsbs( img, right, left, isStriped ? ( img.rows - img.rows / 1.35 ) / 2 : 0 );
          resizeToMin( hstrech( right ), maxSz );
          resizeToMin( hstrech( left ), maxSz );
+
+         // clone the image for output
+         Mat oright = right.clone();
+
+         // apply a blur to ease the optical flow estimation
+         GaussianBlur( img, img, Size( 3, 3 ), 0.7 );
+         GaussianBlur( img, img, Size( 3, 3 ), 0.7 );
 
          ofEstimator.setImgSize( right.cols, right.rows );
 
@@ -508,7 +514,7 @@ int main( int argc, char* argv[] )
          const filesystem::path fRight( outBasename + string( "_i" ) + ".png" );
          const filesystem::path fDepth( outBasename + string( "_d" ) + ".exr" );
 
-         imwrite( filesystem::path( outRootPath / fRight ).string().c_str(), right * 255.0 );
+         imwrite( filesystem::path( outRootPath / fRight ).string().c_str(), oright * 255.0 );
          imwrite( filesystem::path( outRootPath / fDepth ).string().c_str(), depth );
 
          cout << fRight.string() << " " << fDepth.string();
