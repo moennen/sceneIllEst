@@ -113,9 +113,12 @@ class DepthPredictionModelParams(Pix2PixParams):
         # model 0 : scale / resize / pix2pix_gen / no bn
         # model 1 : scale / strided / pix2pix_ires / no bn
         # model 2 : scale / resize / pix2pix_gen / bn
+        # model 3 : scale / resize / pix2pix_ires / bn
+        # model 4 : scale / resize / pix2pix_gen_p / bn
+        # model 5 : noscale / resize / pix2pix_gen_p / bn
         #
 
-        Pix2PixParams.__init__(self, modelPath)
+        Pix2PixParams.__init__(self, modelPath, 0)
 
         self.numMaxSteps = 175000
         self.numSteps = 175000
@@ -125,7 +128,7 @@ class DepthPredictionModelParams(Pix2PixParams):
         self.vallogStep = 250
 
         self.imgSzTr = [256, 256]
-        self.batchSz = 64
+        self.batchSz = 32
 
         # bn vs no bn
         self.useBatchNorm = True
@@ -137,7 +140,7 @@ class DepthPredictionModelParams(Pix2PixParams):
         # strided vs resize
         self.stridedDecoder = False
         # scale vs no scale
-        self.doLogNormOutputs = True
+        self.doLogNormOutputs = False
         self.inDispRange = np.array([[0, 1, 2]])
         self.outDispRange = np.array([[0, 0, 0]])
         self.alphaData = 1.0
@@ -147,7 +150,7 @@ class DepthPredictionModelParams(Pix2PixParams):
         self.modelNbToKeep = 5
 
         # network arch function
-        self.model = pix2pix_gen
+        self.model = pix2pix_gen_p
 
         self.update()
 
@@ -248,7 +251,8 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath, valPath):
 
     # Session configuration
     sess_config = tf.ConfigProto()  # device_count={'GPU': 2})
-    sess_config.gpu_options.allow_growth = True
+    #sess_config.gpu_options.per_process_gpu_memory_fraction = 0.4
+    #sess_config.gpu_options.allow_growth = True
 
     with tf.Session(config=sess_config) as sess:
         # with tf.Session() as sess:

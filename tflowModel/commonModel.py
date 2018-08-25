@@ -396,12 +396,12 @@ def pix2pix_deception_bn(inputs, i_n, n, o_n, ss, strided, bn, name, train):
 
     with tf.variable_scope(name):
 
-        c3 = pix2pix_conv_bn(inputs, i_n, n, 1, 1, True, bn, train)
+        c3 = pix2pix_conv_bn(inputs, i_n, n, 1, 1, True, False, train)
         c3 = tf.nn.relu(c3)
         c3 = pix2pix_conv_bn(c3, n, o_n//2, 3, ss, strided, bn, train)
         c3 = tf.nn.relu(c3)
 
-        c7 = pix2pix_conv_bn(inputs, i_n, n, 1, 1, True, bn, train)
+        c7 = pix2pix_conv_bn(inputs, i_n, n, 1, 1, True, False, train)
         c7 = tf.nn.relu(c7)
         c7 = pix2pix_conv_bn(c7, n, o_n//2, 7, ss, strided, bn, train)
         c7 = tf.nn.relu(c7)
@@ -415,12 +415,12 @@ def pix2pix_uception_bn(inputs, ref, i_n, n, o_n, ss, strided, bn, name, train):
 
     with tf.variable_scope(name):
 
-        c3 = pix2pix_conv_bn(inputs, i_n, n, 1, 1, True, bn, train)
+        c3 = pix2pix_conv_bn(inputs, i_n, n, 1, 1, True, False, train)
         c3 = tf.nn.relu(c3)
         c3 = pix2pix_deconv_bn(c3, ref, n, o_n//2, 3, ss, strided, bn, train)
         c3 = tf.nn.relu(c3)
 
-        c7 = pix2pix_conv_bn(inputs, i_n, n, 1, 1, True, bn, train)
+        c7 = pix2pix_conv_bn(inputs, i_n, n, 1, 1, True, False, train)
         c7 = tf.nn.relu(c7)
         c7 = pix2pix_deconv_bn(c7, ref, n, o_n//2, 7, ss, strided, bn, train)
         c7 = tf.nn.relu(c7)
@@ -534,6 +534,77 @@ def pix2pix_gen(imgs, params):
     with tf.variable_scope("decoder_0"):
         output = pix2pix_conv_bn(decoder_1, n*2, nOut,
                                  3, 1, True, False, train)
+        if not params.doClassOut:
+            output = tf.nn.tanh(output)
+
+    return output
+
+
+def pix2pix_gen_p(imgs, params):
+
+    n = params.nbChannels
+    nIn = params.nbInChannels
+    nOut = params.nbOutputChannels
+
+    ks = params.kernelSz
+    ess = params.stridedEncoder
+    dss = params.stridedDecoder
+
+    bn = params.useBatchNorm
+
+    train = params.isTraining
+
+    # encoder part
+
+    # S x I --> S x N
+    encoder_0 = pix2pix_encoder_bn(
+        imgs, nIn, n, ks, 1, True, False, "encoder_0", train)
+    # S x N --> S/2 x 2*N
+    encoder_1 = pix2pix_encoder_bn(
+        encoder_0, n, n*2, ks, 2, ess, bn, "encoder_1", train)
+    # S/2 x 2*N --> S/4 x 4*N
+    encoder_2 = pix2pix_encoder_bn(
+        encoder_1, n*2, n*4, ks, 2, ess, bn, "encoder_2", train)
+    # S/4 x 4*N --> S/8 x 4*N
+    encoder_3 = pix2pix_encoder_bn(
+        encoder_2, n*4, n*4, ks, 2, ess, bn, "encoder_3", train)
+    # S/8 x 8*N --> S/16 x 8*N
+    encoder_4 = pix2pix_encoder_bn(
+        encoder_3, n*4, n*8, ks, 2, ess, bn, "encoder_4", train)
+    # S/16 x 8*N --> S/32 x 8*N
+    encoder_5 = pix2pix_encoder_bn(
+        encoder_4, n*8, n*8, ks, 2, ess, bn, "encoder_5", train)
+    # S/32 x 8*N --> S/64 x 4*N
+    encoder_6 = pix2pix_encoder_bn(
+        encoder_5, n*8, n*4, ks, 2, ess, bn, "encoder_6", train)
+    # S/64 x 4*N --> S/64 x 4*N
+    encoder_7 = pix2pix_encoder_bn(
+        encoder_6, n*4, n*4, ks, 1, ess, bn, "encoder_7", train)
+
+    # decoder with skip connections
+
+    # S/64 x 4*N --> S/32 x 12*N
+    decoder_6 = pix2pix_decoder_skip(
+        encoder_7, encoder_5, n*4, n*4, ks, 2, dss, bn, "decoder_6", train)
+    # S/32 x 12*N --> S/16 x 12*N
+    decoder_5 = pix2pix_decoder_skip(
+        decoder_6, encoder_4, n*12, n*4, ks, 2, dss, bn, "decoder_5", train)
+    # S/16 x 12*N --> S/8 x 8*N
+    decoder_4 = pix2pix_decoder_skip(
+        decoder_5, encoder_3, n*12, n*4, ks, 2, dss, bn, "decoder_4", train)
+    # S/8 x 8*N --> S/4 x 6*N
+    decoder_3 = pix2pix_decoder_skip(
+        decoder_4, encoder_2, n*8, n*2, ks, 2, dss, bn, "decoder_3", train)
+    # S/4 x 6*N --> S/2 x 4*N
+    decoder_2 = pix2pix_decoder_skip(
+        decoder_3, encoder_1, n*6, n*2, ks, 2, dss, bn, "decoder_2", train)
+    # S/2 x 4*N --> S x 2*N
+    decoder_1 = pix2pix_decoder_skip(
+        decoder_2, encoder_0, n*4, n, ks, 2, dss, bn, "decoder_1", train)
+    # S x N --> S x I
+    with tf.variable_scope("decoder_0"):
+        output = pix2pix_conv_bn(decoder_1, n*2, nOut,
+                                 ks, 1, True, False, train)
         if not params.doClassOut:
             output = tf.nn.tanh(output)
 
