@@ -119,34 +119,44 @@ class SemSegModelParams(Pix2PixParams):
 
     def __init__(self, modelPath, seed=int(time.time())):
 
+        #
+        # model 0 : resize / pix2pix_gen_p / bn
+        #
+
+        seed = 0
+
         Pix2PixParams.__init__(self, modelPath, seed)
 
-        self.numMaxSteps = 150000
-        self.numSteps = 150000
-        self.backupStep = 150
-        self.trlogStep = 150
-        self.tslogStep = 150
-        self.vallogStep = 150
+        self.numMaxSteps = 175000
+        self.numSteps = 175000
+        self.backupStep = 250
+        self.trlogStep = 250
+        self.tslogStep = 250
+        self.vallogStep = 250
 
         self.imgSzTr = [256, 256]
         self.batchSz = 32
 
-        self.useBatchNorm = False
+        # bn vs no bn
+        self.useBatchNorm = True
         self.nbChannels = 32
         self.nbInChannels = 3
         self.nbOutputChannels = 151
         self.kernelSz = 5
         self.stridedEncoder = True
+        # strided vs resize
         self.stridedDecoder = False
-        self.doLogNormOutputs = False
         self.inDispRange = np.array([[0, 1, 2]])
         self.outDispRange = np.array([[0, 0, 0]])
         self.alphaData = 1.0
         self.alphaDisc = 0.0
         self.linearImg = False
 
-        self.model = pix2pix_gen
+        self.model = pix2pix_gen_p
+
+        # loss
         self.doClassOut = True
+        self.loss = pix2pix_classout_loss
 
         self.update()
 
@@ -248,8 +258,8 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath, valPath):
     # Session configuration
     sess_config = tf.ConfigProto()
     #sess_config = tf.ConfigProto(device_count={'GPU': 1})
-    #sess_config.gpu_options.allow_growth = True
-    #sess_config.gpu_options.per_process_gpu_memory_fraction = 0.33
+    sess_config.gpu_options.allow_growth = True
+    sess_config.gpu_options.per_process_gpu_memory_fraction = 0.7
 
     with tf.Session(config=sess_config) as sess:
         # with tf.Session() as sess:

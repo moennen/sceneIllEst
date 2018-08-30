@@ -33,6 +33,8 @@ vec3 applyBRDF( vec3 normal,
                 float clearcoat,
                 float clearcoatGloss );
 
+vec4 linToLog(vec3 linColour);
+
 void main() 
 {
    vec3 norm = normalize(normal);
@@ -44,7 +46,7 @@ void main()
                         sheen, vec3(1.0,1.0,1.0), 0.0, 0.0 ) + ambient * colour;
 
    float depth =  -position.z / 1000.0;
-   frag_colour = vec4(col,1.0);
+   frag_colour = linToLog(col);
    frag_uv_depth = vec4(uv, depth, 1.0);
    frag_normals = vec4(norm, 1.0);
 }
@@ -156,4 +158,18 @@ vec3 applyBRDF( vec3 normal,
                           spec * (specular + clearcoatColor);
 
    return lightCol * ndotl * reflectedColor;
+}
+
+vec4 linToLog(vec3 linColour)
+{
+  const vec3 gamma = vec3(1.0/2.4);
+
+  vec3 cond = vec3(greaterThan(linColour,vec3(0.0031308)));
+
+  // if c > 0.0031308  
+  vec3 vg = cond * vec3(1.055) * pow( linColour, gamma ) - vec3(0.055);
+  // else if c <= 0.0031308
+  vec3 vl = (vec3(1.0) - cond) * linColour * vec3(12.95);
+
+  return vec4(clamp(vg+vl, 0.0, 1.0), 1.0);
 }

@@ -35,11 +35,40 @@ void processImg( Mat& img )
 
 //------------------------------------------------------------------------------
 //
-void processDepth( Mat& depth, const Mat& img, const float undef,
-                  const float sp_z, const float col_z, const float filter )
+Mat processDepthMask( Mat& depth )
 {
    depth =
-       depth( Rect( 150, depth.rows / 3 + 20, depth.cols - 300, 2 * depth.rows / 3 - 20 ) ).clone() ;
+       depth( Rect( 150, depth.rows / 3 + 20, depth.cols - 300, 2 * depth.rows / 3 - 20 ) ).clone();
+
+   Mat mask = Mat( depth.rows, depth.cols, CV_8UC1 );
+
+#pragma omp parallel for
+   for ( unsigned y = 0; y < depth.rows; y++ )
+   {
+      const unsigned short* depthPtr = depth.ptr<unsigned short>( y );
+      unsigned char* maskPtr = mask.ptr<unsigned char>( y );
+      for ( unsigned x = 0; x < depth.cols; x++ )
+      {
+         const unsigned short& d = depthPtr[x];
+         maskPtr[x] = d <= 0 ? 0 : 255;
+      }
+   }
+
+   return mask;
+}
+
+//------------------------------------------------------------------------------
+//
+void processDepth(
+    Mat& depth,
+    const Mat& img,
+    const float undef,
+    const float sp_z,
+    const float col_z,
+    const float filter )
+{
+   depth =
+       depth( Rect( 150, depth.rows / 3 + 20, depth.cols - 300, 2 * depth.rows / 3 - 20 ) ).clone();
 
    vector<Mat> dPyr;
    dPyr.emplace_back( depth.rows, depth.cols, CV_32FC4 );
@@ -99,7 +128,7 @@ void processDepth( Mat& depth, const Mat& img, const float undef,
             }
 
             depthPtr[x] = val / ( w > 0.0 ? w : 1.0f );
-            assert( !isnan(depthPtr[x].y) );
+            assert( !isnan( depthPtr[x].y ) );
             assert( depthPtr[x].x <= 1.0 );
          }
       }
@@ -109,7 +138,7 @@ void processDepth( Mat& depth, const Mat& img, const float undef,
       currPyrSz = std::min( iCurr.rows, iCurr.cols );
    }
 
-   // upscale 
+   // upscale
    for ( size_t i = 2; i <= dPyr.size(); ++i )
    {
       const size_t cl = dPyr.size() - i;
@@ -145,26 +174,27 @@ void processDepth( Mat& depth, const Mat& img, const float undef,
                   {
                      const vec2 dpos( (float)x + (float)dx, (float)y + (float)dy );
                      const vec4 dL = cv_utils::imsample32F<vec4>( dPrev, 0.5f * dpos );
-                     if ( isnan(dL.y) || (dL.y == 0.0) )
+                     if ( isnan( dL.y ) || ( dL.y == 0.0 ) )
                      {
                         vec4 dL2 = cv_utils::imsample32F<vec4>( dPrev, 0.5f * dpos );
                      }
-                     assert( !isnan(dL.y) );
+                     assert( !isnan( dL.y ) );
                      assert( dL.y > 0.0 );
                      const vec3 cL = cv_utils::imsample32F<vec3>( iPrev, 0.5f * dpos );
 
                      const float sp_dist = distance( pos, dpos );
                      const float col_dist = distance( cL, cH );
 
-                     const float z = exp( -sp_dist * sp_dist / sp_z ) * exp( -col_dist * col_dist / col_z );
+                     const float z =
+                         exp( -sp_dist * sp_dist / sp_z ) * exp( -col_dist * col_dist / col_z );
                      w += z;
-                     assert( !isnan(w) );
+                     assert( !isnan( w ) );
                      val += z * dL;
                   }
                }
 
-               dH = (dH.y == 0.0) ? val / w : mix( dH, val / w, filter);
-               assert( !isnan(dH.y) );
+               dH = ( dH.y == 0.0 ) ? val / w : mix( dH, val / w, filter );
+               assert( !isnan( dH.y ) );
                assert( dH.y > 0.0 );
                assert( dH.x <= 1.0 );
             }
@@ -362,6 +392,7 @@ int main( int argc, char* argv[] )
    int nbSamples = parser.get<int>( "@nbSamples" );
 
    const filesystem::path outRootPath( parser.get<string>( "@imgOutDir" ) );
+   filesystem::path outGroupRootPath = outRootPath;
 
    // Create the list of image triplets
 
@@ -373,43 +404,67 @@ int main( int argc, char* argv[] )
       return -1;
    }
 
+   unsigned startIdx = 0;
+   const int nMaxRendersPerGroup = 10000;
+   
    // Loop through the data
    nbSamples = nbSamples <= 0 ? imgLst.size() : nbSamples;
    for ( size_t i = 0; i < nbSamples; ++i )
    {
       const auto& data = imgLst[i];
 
-      const string outPrefix = filesystem::path( data[1] ).parent_path().stem().string() + "_";
+      if ( ( ( startIdx + i ) % nMaxRendersPerGroup ) == 0 )
+      {
+         const unsigned renderGroupId = ( startIdx + i ) / nMaxRendersPerGroup;
+         char dirname[7];
+         sprintf( dirname, "%06d", renderGroupId );
+         outGroupRootPath = outRootPath / filesystem::path( std::string( dirname ) );
+         if ( !filesystem::create_directory( outGroupRootPath ) )
+         {
+            cerr << "Cannot create directory : " << outGroupRootPath.string() << endl;
+         }
+      }
 
-      for ( size_t j = 0; j < 3; ++j )
+      char sampleIdName[7];
+      sprintf(sampleIdName,"%06d",i);
+      const string outPrefix = string(sampleIdName) + "_";
+         //filesystem::path( data[1] ).parent_path().stem().string() + "_";
+
+      // for ( size_t j = 0; j < 3; ++j )
+      size_t j = 1;
       {
          // load the current image
-         Mat img = cv_utils::imread32FC3( data[j * 2] );
-         Mat depth = cv_utils::imread32FC1( data[j * 2 + 1] );
-         normalize(depth, depth, 1.0, 0.0, NORM_MINMAX);
+         Mat img = cv::imread( data[j * 2], cv::IMREAD_UNCHANGED );
+         Mat depth = cv::imread( data[j * 2 + 1], cv::IMREAD_UNCHANGED );
 
          processImg( img );
 
-         //imshow( "InDepth", depth( Rect( 150, depth.rows / 3 + 20, depth.cols - 300, 2 * depth.rows / 3 - 20 ) ) );
-         
-         processDepth( depth, img, 0.0f, 1.0, 0.1, 0.23  );
+         Mat mask = processDepthMask( depth );
+
+         // normalize(depth, depth, 1.0, 0.0, NORM_MINMAX);
+
+         // imshow( "InDepth", depth( Rect( 150, depth.rows / 3 + 20, depth.cols - 300, 2 *
+         // depth.rows / 3 - 20 ) ) );  processDepth( depth, img, 0.0f, 1.0, 0.1, 0.23  );
 
          // display
-         //imshow( "Img", img );
-         //imshow( "Depth", depth );
+         /*imshow( "Img", img );
+         imshow( "Depth", depth );
+         imshow( "Mask", mask );*/
 
          const string outBasename = outPrefix + filesystem::path( data[j * 2] ).stem().string();
-         const filesystem::path fRight( outBasename + string( "_i" ) + ".png" );
+         const filesystem::path fRight( outBasename + string( "_rgb" ) + ".png" );
          const filesystem::path fDepth( outBasename + string( "_d" ) + ".png" );
+         const filesystem::path fMask( outBasename + string( "_a" ) + ".png" );
 
-         imwrite( filesystem::path( outRootPath / fRight ).string().c_str(), img * 255.0 );
-         imwrite( filesystem::path( outRootPath / fDepth ).string().c_str(), depth * 255.0 );
+         imwrite( filesystem::path( outGroupRootPath / fRight ).string().c_str(), img );
+         imwrite( filesystem::path( outGroupRootPath / fDepth ).string().c_str(), depth );
+         imwrite( filesystem::path( outGroupRootPath / fMask ).string().c_str(), mask );
 
-         cout << fRight.string() << " " << fDepth.string();
-         if ( j == 2 )
-            cout << endl;
-         else
-            cout << " ";
+         cout << fRight.string() << " " << fDepth.string() << " " << fMask.string();
+         // if ( j == 2 )
+         cout << endl;
+         /*else
+          */ cout << " ";
 
          //waitKey( 0 );
       }

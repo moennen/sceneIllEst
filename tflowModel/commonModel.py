@@ -96,7 +96,7 @@ def loadImgPIL(img_name, linearCS):
         im = (im <= 0.04045) * (im / 12.92) + (im > 0.04045) * \
             np.power((im + 0.055)/1.055, 2.4)
 
-    return [im]
+    return im
 
 
 def loadResizeImgPIL(img_name, imgSz, linearCS):
@@ -209,8 +209,6 @@ class Pix2PixParams(LearningParams):
         self.kernelSz = 4
         self.stridedEncoder = True
         self.stridedDecoder = True
-
-        self.doLogNormOutputs = False
 
         self.inDispRange = []
         self.outDispRange = []
@@ -851,6 +849,50 @@ def pix2pix_disc(gen_inputs, gen_outputs, params):
     return layer_6
 
 
+def pix2pix_l2_loss(outputs, targets):
+
+    return tf.reduce_mean(tf.square(tf.subtract(outputs, targets)))
+
+
+def pix2pix_l1_loss(outputs, targets):
+
+    return tf.reduce_mean(tf.abs(tf.subtract(outputs, targets)))
+
+
+def pix2pix_charbonnier_loss(outputs, targets):
+
+    return tf.reduce_mean(tf.sqrt(EPS + tf.square(tf.subtract(outputs, targets))))
+
+
+def pix2pix_logscale_l2_loss(outputs, targets):
+
+    outputs_sc = tf.log(tf.add(tf.multiply(outputs, 3.0), 4.0))
+    targets_sc = tf.log(tf.add(tf.multiply(targets, 3.0), 4.0))
+
+    diff = tf.subtract(outputs_sc, targets_sc)
+
+    return tf.reduce_mean(tf.square(diff)) - tf.square(tf.reduce_mean(diff))
+
+
+def pix2pix_logscale_charbonnier_loss(outputs, targets):
+
+    outputs_sc = tf.log(tf.add(tf.multiply(outputs, 3.0), 4.0))
+    targets_sc = tf.log(tf.add(tf.multiply(targets, 3.0), 4.0))
+
+    diff = tf.subtract(outputs_sc, targets_sc)
+    log_scales = tf.expand_dims(tf.expand_dims(
+        tf.reduce_mean(diff, axis=[1, 2]), axis=1), axis=2)
+    diff = tf.subtract(diff, log_scales)
+
+    return tf.reduce_mean(tf.sqrt(EPS + tf.square(diff)))
+
+
+def pix2pix_classout_loss(outputs, targets):
+
+    return tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(
+        labels=tf.squeeze(targets), logits=outputs))
+
+
 def pix2pix_optimizer(imgs, targets_in, params):
 
     targets = targets_in
@@ -862,27 +904,9 @@ def pix2pix_optimizer(imgs, targets_in, params):
 
     with tf.variable_scope("generator"):
         outputs = params.model(imgs, params)
-        if params.doLogNormOutputs:
-            # scale from [-1..1] to [1..7] and apply log -> [0..2]
-            outputs_sc = tf.log(tf.add(tf.multiply(outputs, 3.0), 4.0))
-            targets_sc = tf.log(tf.add(tf.multiply(targets, 3.0), 4.0))
-        else:
-            outputs_sc = outputs
-            targets_sc = targets
 
-    if params.doClassOut:
-        gen_loss_data = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(
-            labels=tf.squeeze(targets_sc), logits=outputs_sc))
-    else:
-        gen_data_diff = tf.subtract(outputs_sc, targets_sc)
-
-        # for log normalization add the mean scaling term
-        if params.doLogNormOutputs:
-            gen_data_log_scales = tf.expand_dims(tf.expand_dims(
-                tf.reduce_mean(gen_data_diff, axis=[1, 2]), axis=1), axis=2)
-            gen_data_diff = tf.subtract(gen_data_diff, gen_data_log_scales)
-
-        gen_loss_data = tf.reduce_mean(tf.sqrt(EPS + tf.square(gen_data_diff)))
+    with tf.variable_scope("generator_loss"):
+        gen_loss_data = params.loss(outputs, targets)
 
     gen_loss = params.alphaData * gen_loss_data
 
@@ -937,6 +961,8 @@ def pix2pix_optimizer(imgs, targets_in, params):
     trSum = []
     tsSum = []
     valSum = []
+    trSum.append(tf.summary.scalar("learningRate",
+                                   params.learningRate, family="LearningParams"))
     tsSum.append(tf.summary.scalar(
         "generator_loss", gen_loss, family="lossGen"))
     tsSum.append(tf.summary.scalar("generator_loss_data",

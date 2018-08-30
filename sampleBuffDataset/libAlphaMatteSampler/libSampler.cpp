@@ -83,7 +83,7 @@ struct Sampler final
          const ImgNFileLst<nBuffers>::Data& data = _data[_dataGen( _rng )];
 
          Mat currImg = cv_utils::imread32FC3( data[0], false/*toLinear*/, true/*toRGB*/ );
-         Mat currDepth = cv_utils::imread32FC1( data[1] );
+         Mat currDepth = cv_utils::imread32FC1( data[1], 1.0 );
 
          ivec2 imgSz( currImg.cols, currImg.rows );
 

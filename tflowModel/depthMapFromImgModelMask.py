@@ -25,20 +25,20 @@ import cv2 as cv
 class DatasetTF(object):
 
     __lib = BufferDataSamplerLibrary(
-        "/mnt/p4/avila/moennen_wkspce/sceneIllEst/sampleBuffDataset/libDepthImgSampler/libDepthImgSampler.so")
+        "/mnt/p4/avila/moennen_wkspce/sceneIllEst/sampleBuffDataset/libSparseDepthImgSampler/libSparseDepthImgSampler.so")
 
-    def __init__(self, dbPath, imgRootDir, batchSz, imgSz, linearCS, seed):
+    def __init__(self, dbPath, imgRootDir, batchSz, imgSz, linearCS, rescale, seed):
         params = np.array([batchSz, imgSz[0], imgSz[1],
-                           1.0 if linearCS else 0.0], dtype=np.float32)
+                           1.0 if linearCS else 0.0, 1.0 if rescale else 0.0], dtype=np.float32)
         self.__ds = BufferDataSampler(
             DatasetTF.__lib, dbPath, imgRootDir, params, seed)
         self.data = tf.data.Dataset.from_generator(
-            self.sample, (tf.float32, tf.float32))
+            self.sample, (tf.float32, tf.float32, tf.float32, tf.float32))
 
     def sample(self):
         for i in itertools.count(1):
-            currImg, currDepth = self.__ds.getDataBuffers()
-            yield (currImg, currDepth)
+            currImg, currDepth, currMask, currErodedMask = self.__ds.getDataBuffers()
+            yield (currImg, currDepth, currMask, currErodedMask)
 
 
 def loadValidationData(dataPath, dataRootDir, dataSz, linearCS=False):
@@ -56,8 +56,10 @@ def loadValidationData(dataPath, dataRootDir, dataSz, linearCS=False):
             if n >= dataSz[0]:
                 break
 
+            data = data.rstrip('\n').split()
+
             im[n, :, :, :] = loadResizeImgPIL(dataRootDir + "/" +
-                                              data.rstrip('\n'), [dataSz[1], dataSz[2]], linearCS)
+                                              data[0], [dataSz[1], dataSz[2]], linearCS)
             n = n + 1
 
     return im, depth
@@ -76,7 +78,8 @@ def testDataset(imgRootDir, trainPath):
 
     batchSz = 16
 
-    trDs = DatasetTF(trainPath, imgRootDir, batchSz, imgSz, False, rseed)
+    trDs = DatasetTF(trainPath, imgRootDir, batchSz,
+                     imgSz, False, True, rseed)
 
     dsIt = tf.data.Iterator.from_structure(
         trDs.data.output_types, trDs.data.output_shapes)
@@ -90,15 +93,17 @@ def testDataset(imgRootDir, trainPath):
 
         for step in range(100):
 
-            currImg, currDepth = sess.run(dsView)
+            currImg, currDepth, currMask, currErodedMask = sess.run(dsView)
 
             idx = random.randint(0, batchSz-1)
 
             cv.imshow('currImg', cv.cvtColor(currImg[idx], cv.COLOR_RGB2BGR))
             cv.imshow('currDepth', cv.applyColorMap(
-                (currDepth[idx] * 255.0).astype(np.uint8), cv.COLORMAP_JET))
+                (currDepth[idx]*255.0).astype(np.uint8), cv.COLORMAP_JET))
+            cv.imshow('currMask', currMask[idx])
+            cv.imshow('currErodedMask', currErodedMask[idx])
 
-            cv.waitKey(700)
+            cv.waitKey(500)
 
 #-----------------------------------------------------------------------------------------------------
 # PARAMETERS
@@ -110,16 +115,10 @@ class DepthPredictionModelParams(Pix2PixParams):
     def __init__(self, modelPath, seed=int(time.time())):
 
         #
-        # model 0 : scale / resize / pix2pix_gen / no bn
-        # model 1 : scale / strided / pix2pix_ires / no bn
-        # model 2 : scale / resize / pix2pix_gen / bn
-        # model 3 : scale / resize / pix2pix_ires / bn
-        # model 4 : scale / resize / pix2pix_gen_p / bn
-        # model 5 : noscale / resize / pix2pix_gen_p / bn
-        # model 6 : scale / strided / pix2pix_gen_p / bn
+        # model 0 : scale / resize / pix2pix_gen_p / bn
         #
 
-        # seed = 0
+        seed = 0
 
         Pix2PixParams.__init__(self, modelPath, seed)
 
@@ -147,18 +146,45 @@ class DepthPredictionModelParams(Pix2PixParams):
         self.alphaData = 1.0
         self.alphaDisc = 0.0
         self.linearImg = False
+        self.rescaleImg = True
 
         self.modelNbToKeep = 5
 
         # network arch function
         self.model = pix2pix_gen_p
 
-        # loss function :
-        # noscale = pix2pix_charbonnier_loss
-        # scale = pix2pix_logscale_charbonnier_loss
-        self.loss = pix2pix_logscale_charbonnier_loss
+        # loss function
+        self.inMask = tf.placeholder(tf.float32, shape=[
+            self.batchSz, self.imgSzTr[0], self.imgSzTr[1], 1], name="input_mask")
+        self.loss = self.loss_masked_logscale_charbonnier
 
         self.update()
+
+    def loss_masked_logscale_charbonnier(self, outputs, targets):
+
+        outputs_sc = tf.log(tf.add(tf.multiply(outputs, 3.0), 4.0))
+        targets_sc = tf.log(tf.add(tf.multiply(targets, 3.0), 4.0))
+
+        diff = tf.subtract(outputs_sc, targets_sc)
+
+        nvalid = tf.reduce_sum(self.inMask)
+
+        log_scales = tf.expand_dims(tf.expand_dims(
+            tf.divide(tf.reduce_sum(diff, axis=[1, 2]), nvalid), axis=1), axis=2)
+        diff = tf.subtract(diff, log_scales)
+
+        return tf.divide(tf.reduce_sum(tf.sqrt(EPS + tf.square(diff))), nvalid)
+
+    def loss_masked_logscale_l2(self, outputs, targets):
+
+        outputs_sc = tf.log(tf.add(tf.multiply(outputs, 3.0), 4.0))
+        targets_sc = tf.log(tf.add(tf.multiply(targets, 3.0), 4.0))
+
+        nvalid = tf.reduce_sum(self.inMask)
+
+        diff = tf.subtract(outputs_sc, targets_sc)
+
+        return tf.divide(tf.reduce_sum(tf.square(diff)), nvalid) - tf.square(tf.divide(tf.reduce_sum(diff), nvalid))
 
 #-----------------------------------------------------------------------------------------------------
 # VALIDATION
@@ -250,9 +276,9 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath, valPath):
 
     # Datasets / Iterators
     trDs = DatasetTF(trainPath, imgRootDir, lp.batchSz,
-                     lp.imgSzTr, lp.linearImg, lp.rseed)
+                     lp.imgSzTr, lp.linearImg, lp.rescaleImg, lp.rseed)
     tsDs = DatasetTF(testPath, imgRootDir, lp.batchSz,
-                     lp.imgSzTr, lp.linearImg, lp.rseed)
+                     lp.imgSzTr, lp.linearImg, lp.rescaleImg, lp.rseed)
 
     dsIt = tf.data.Iterator.from_structure(
         trDs.data.output_types, trDs.data.output_shapes)
@@ -319,11 +345,12 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath, valPath):
         while lp.globalStep.eval(sess) < lp.numSteps:
 
             # Get the next training batch
-            currImg, currDepth = sess.run(dsView)
+            currImg, currDepth, currMask, _ = sess.run(dsView)
 
             trFeed = {lp.isTraining: True,
                       inImgi: currImg,
-                      inDepthi: currDepth}
+                      inDepthi: currDepth,
+                      lp.inMask: currMask}
 
             step = lp.globalStep.eval(sess) + 1
 
@@ -347,16 +374,18 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath, valPath):
             if step % lp.trlogStep == 0:
                 summary = sess.run(tsSum, feed_dict={lp.isTraining: False,
                                                      inImgi: currImg,
-                                                     inDepthi: currDepth})
+                                                     inDepthi: currDepth,
+                                                     lp.inMask: currMask})
                 train_summary_writer.add_summary(summary, step)
 
             if step % lp.tslogStep == 0:
 
                 sess.run(tsInit)
-                currImg, currDepth = sess.run(dsView)
+                currImg, currDepth, currMask, _ = sess.run(dsView)
                 tsLoss, summary = sess.run([loss, tsSum], feed_dict={lp.isTraining: False,
                                                                      inImgi: currImg,
-                                                                     inDepthi: currDepth})
+                                                                     inDepthi: currDepth,
+                                                                     lp.inMask: currMask})
 
                 test_summary_writer.add_summary(summary, step)
 
@@ -409,12 +438,12 @@ if __name__ == "__main__":
 
     #------------------------------------------------------------------------------------------------
 
-    # testDataset(args.imgRootDir, args.trainLstPath)
+    #testDataset(args.imgRootDir, args.trainLstPath)
 
     #------------------------------------------------------------------------------------------------
 
-    # trainModel(args.modelPath, args.imgRootDir,
-    #           args.trainLstPath, args.testLstPath, args.valLstPath)
+    trainModel(args.modelPath, args.imgRootDir,
+               args.trainLstPath, args.testLstPath, args.valLstPath)
 
     #------------------------------------------------------------------------------------------------
 
@@ -422,4 +451,4 @@ if __name__ == "__main__":
 
     #------------------------------------------------------------------------------------------------
 
-    evalModel(args.modelPath, args.imgRootDir, args.valLstPath, False, 512)
+    #evalModel(args.modelPath, args.imgRootDir, args.valLstPath, False, 512)

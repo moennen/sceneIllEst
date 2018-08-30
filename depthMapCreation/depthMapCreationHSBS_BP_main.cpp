@@ -27,9 +27,24 @@ using namespace boost;
 
 namespace
 {
-const std::array<std::string, 7> stripedVideoIdName = {
-    {"0001", "0005", "0006", "0007", "0009", "0015", "0018"}};
-const std::array<std::string, 1> invertVideoIdName = {{"0010"}};
+std::mt19937 rs_gen{0};
+
+const std::array<std::string, 10> stripedVideoIdName = {
+    {"0000", "0004", "0005", "0006", "0008", "0014", "0017", "0022", "0041", "0046"}};
+const std::array<std::string, 2> invertVideoIdName = {{"0009", "0027"}};
+const std::array<std::string, 13> ignoreVideoIdName = {{"0022",
+                                                        "0023",
+                                                        "0024",
+                                                        "0026",
+                                                        "0027",
+                                                        "0028",
+                                                        "0034",
+                                                        "0035",
+                                                        "0036",
+                                                        "0038",
+                                                        "0041",
+                                                        "0046",
+                                                        "0048"}};
 
 //------------------------------------------------------------------------------
 //
@@ -65,56 +80,11 @@ Mat hstrech( const Mat& img )
 
       for ( size_t x = 0; x < simg.cols; x++ )
       {
-         simg_data[x] = imsample32FC3( img, vec2( 0.5 * x, y ) );
+         simg_data[x] = cv_utils::imsample32FC3<vec3>( img, vec2( 0.5 * x, y ) );
       }
    }
 
    return simg;
-}
-
-//------------------------------------------------------------------------------
-//
-void compute_disparity( const Mat& right, const Mat& left, Mat& disp )
-{
-   cv::cuda::printShortCudaDeviceInfo( cv::cuda::getDevice() );
-
-   Ptr<cuda::StereoBeliefPropagation> bp = cuda::createStereoBeliefPropagation( 512 );
-
-   Mat gleft, gright;
-   cvtColor( left * 255.0f, gleft, COLOR_BGR2GRAY );
-   gleft.convertTo( gleft, CV_8U );
-   cvtColor( right * 255.0f, gright, COLOR_BGR2GRAY );
-   gright.convertTo( gright, CV_8U );
-
-   cuda::GpuMat d_left, d_right;
-   d_left.upload( gleft );
-   d_right.upload( gright );
-
-   disp = Mat( left.size(), CV_8U );
-   cuda::GpuMat d_disp( left.size(), CV_8U );
-
-   bp->compute( d_left, d_right, d_disp );
-
-   d_disp.download( disp );
-}
-
-//------------------------------------------------------------------------------
-//
-Mat stereoBlendView( const Mat& R, const Mat& L )
-{
-   Mat gR, gL;
-   cvtColor( R, gR, COLOR_RGB2GRAY );
-   cvtColor( L, gL, COLOR_RGB2GRAY );
-
-   Mat gRSplit[3], gLSplit[3], resSplit[3], res;
-   split( gR, gRSplit );
-   resSplit[1] = gRSplit[0];
-   split( gL, gLSplit );
-   resSplit[2] = gLSplit[0];
-   resSplit[0] = Mat::zeros( resSplit[1].size(), resSplit[1].type() );
-   merge( resSplit, 3, res );
-
-   return res;
 }
 
 //------------------------------------------------------------------------------
@@ -149,7 +119,7 @@ Mat flowToImg( const Mat& flow, const bool leg = false )
 
 //------------------------------------------------------------------------------
 //
-Mat flowToLk( const Mat& flow, const Mat& imgFrom, const Mat& imgTo )
+Mat flowToErr( const Mat& flow, const Mat& imgFrom, const Mat& imgTo )
 {
    Mat lk( flow.rows, flow.cols, CV_32FC1 );
 
@@ -165,10 +135,7 @@ Mat flowToLk( const Mat& flow, const Mat& imgFrom, const Mat& imgTo )
          const vec2 f = flow_data[x];
          const vec3 from = from_data[x];
          const vec3 to = cv_utils::imsample32FC3<vec3>( imgTo, vec2( x, y ) + f );
-
-         vec3 dist = from - to;
-
-         lk_data[x] = exp( -dot( dist, dist ) / 0.33 );
+         lk_data[x] = distance( from, to );
       }
    }
 
@@ -177,223 +144,140 @@ Mat flowToLk( const Mat& flow, const Mat& imgFrom, const Mat& imgTo )
 
 //------------------------------------------------------------------------------
 //
-void processDepth(
-    Mat& depth,
-    const Mat& img,
-    const Mat& undef,
-    const float sp_z,
-    const float col_z,
-    const float filter )
+bool processDepth( Mat& depth, const Mat& img, const Mat& undef, unsigned nIt )
 {
-   vector<Mat> dPyr;
-   dPyr.emplace_back( depth.rows, depth.cols, CV_32FC4 );
-
-// fill the first level
+   Mat curr( depth.rows, depth.cols, CV_32FC4 );
+   // fill the first level
 #pragma omp parallel for
    for ( unsigned y = 0; y < depth.rows; y++ )
    {
       const float* depthPtr = depth.ptr<float>( y );
       const float* undefPtr = undef.ptr<float>( y );
-      vec4* dPtr = dPyr.back().ptr<vec4>( y );
+      const vec3* imgPtr = img.ptr<vec3>( y );
+      vec4* currPtr = curr.ptr<vec4>( y );
       for ( unsigned x = 0; x < depth.cols; x++ )
       {
-         const float d = depthPtr[x];
+         const float& d = depthPtr[x];
+         const vec3& color = imgPtr[x];
          const bool isUndef = undefPtr[x] < 0.5;
-         dPtr[x] = isUndef ? vec4( 0.0 )
-                           : vec4( d, 1.0f, static_cast<float>( x ), static_cast<float>( y ) );
+
+         currPtr[x] = vec4( isUndef ? -1.0 : d, color.x, color.y, color.z );
       }
    }
+   Mat next( depth.rows, depth.cols, CV_32FC4 );
 
-   vector<Mat> iPyr;
-   iPyr.push_back( img.clone() );
-
-   unsigned currPyrSz = std::min( depth.rows, depth.cols );
-
-   // downscale : integrate the depth value using position
-   while ( currPyrSz >= 2 )
+   unsigned nUndef = 0;
+   for ( unsigned it = 0; it < nIt; ++it )
    {
-      Mat iCurr;
-      resize( iPyr.back(), iCurr, Size( 0, 0 ), 0.5, 0.5, INTER_AREA );
-      Mat dCurr( iCurr.rows, iCurr.cols, CV_32FC4 );
+      nUndef = 0;
 
 #pragma omp parallel for
-      for ( unsigned y = 0; y < dCurr.rows; y++ )
+      for ( unsigned y = 0; y < depth.rows; y++ )
       {
-         vec4* depthPtr = dCurr.ptr<vec4>( y );
+         const vec4* currPtr = curr.ptr<vec4>( y );
+         vec4* nextPtr = next.ptr<vec4>( y );
 
-         for ( unsigned x = 0; x < dCurr.cols; x++ )
+         for ( unsigned x = 0; x < depth.cols; x++ )
          {
-            vec4 val( 0.0 );
-            float w = 0.0;
+            const vec4& currVal = currPtr[x];
+            nextPtr[x] = currVal;
 
-            const vec2 pos( x * 2.f, y * 2.f );
-
-            for ( int dy = -1; dy <= 1; dy++ )
+            if ( currVal.x < 0.0 )
             {
-               for ( int dx = -1; dx <= 1; dx++ )
-               {
-                  const vec2 dpos( x * 2.f + dx, y * 2.f + dy );
-                  const vec4 dH = cv_utils::imsample32F<vec4>( dPyr.back(), dpos );
-                  if ( dH.y > 0.0 )
-                  {
-                     const float dist = distance( pos, dpos );
-                     const float z = exp( -dist * dist / sp_z );
-                     w += z;
-                     val += z * dH;
-                  }
-               }
-            }
-
-            depthPtr[x] = val / ( w > 0.0 ? w : 1.0f );
-            assert( !isnan( depthPtr[x].y ) );
-            // assert( depthPtr[x].x <= 1.0 );
-         }
-      }
-
-      dPyr.push_back( dCurr.clone() );
-      iPyr.push_back( iCurr.clone() );
-      currPyrSz = std::min( iCurr.rows, iCurr.cols );
-   }
-
-   // upscale
-   for ( size_t i = 2; i <= dPyr.size(); ++i )
-   {
-      const size_t cl = dPyr.size() - i;
-      const size_t pl = cl + 1;
-
-      const Mat& iCurr = iPyr[cl];
-      const Mat& iPrev = iPyr[pl];
-
-      Mat& dCurr = dPyr[cl];
-      const Mat& dPrev = dPyr[pl];
-
-#pragma omp parallel for
-      for ( unsigned y = 0; y < dCurr.rows; y++ )
-      {
-         vec4* depthPtr = dCurr.ptr<vec4>( y );
-         const vec3* imgPtr = iCurr.ptr<vec3>( y );
-
-         for ( unsigned x = 0; x < dCurr.cols; x++ )
-         {
-            vec4& dH = depthPtr[x];
-
-            if ( ( dH.y == 0.0 ) || ( filter > 0.0 ) )
-            {
-               vec4 val( 0.0 );
+#pragma omp atomic
+               nUndef++;
                float w = 0.0;
-
-               const vec3& cH = imgPtr[x];
-               const vec2 pos( x, y );
-
+               float d = 0.0;
                for ( int dy = -1; dy <= 1; dy++ )
                {
                   for ( int dx = -1; dx <= 1; dx++ )
                   {
                      const vec2 dpos( (float)x + (float)dx, (float)y + (float)dy );
-                     const vec4 dL = cv_utils::imsample32F<vec4>( dPrev, 0.5f * dpos );
-                     if ( isnan( dL.y ) || ( dL.y == 0.0 ) )
+                     const vec4 dval = cv_utils::imsample32F<vec4>( curr, dpos );
+
+                     if ( dval.x > 0.0 )
                      {
-                        vec4 dL2 = cv_utils::imsample32F<vec4>( dPrev, 0.5f * dpos );
+                        float lw = ( currVal.y - dval.y ) * ( currVal.y - dval.y ) +
+                                   ( currVal.z - dval.z ) * ( currVal.z - dval.z ) +
+                                   ( currVal.w - dval.w ) * ( currVal.w - dval.w );
+                        lw = exp( -lw / 0.01 );
+                        w += lw;
+                        d += lw * dval.x;
                      }
-                     assert( !isnan( dL.y ) );
-                     assert( dL.y > 0.0 );
-                     const vec3 cL = cv_utils::imsample32F<vec3>( iPrev, 0.5f * dpos );
-
-                     const float sp_dist = distance( pos, dpos );
-                     const float col_dist = distance( cL, cH );
-
-                     const float z =
-                         exp( -sp_dist * sp_dist / sp_z ) * exp( -col_dist * col_dist / col_z );
-                     w += z;
-                     assert( !isnan( w ) );
-                     val += z * dL;
                   }
                }
-
-               dH = ( dH.y == 0.0 ) ? val / w : mix( dH, val / w, filter );
-               assert( !isnan( dH.y ) );
-               assert( dH.y > 0.0 );
-               // assert( dH.x <= 1.0 );
+               if ( w > 0.0 )
+               {
+                  nextPtr[x].x = d / w;
+               }
             }
          }
       }
+      if ( nUndef == 0 ) break;
+      std::swap( curr, next );
    }
 
 #pragma omp parallel for
    for ( unsigned y = 0; y < depth.rows; y++ )
    {
+      const vec4* currPtr = curr.ptr<vec4>( y );
       float* depthPtr = depth.ptr<float>( y );
-      vec4* dPtr = dPyr.front().ptr<vec4>( y );
       for ( unsigned x = 0; x < depth.cols; x++ )
       {
-         depthPtr[x] = dPtr[x].x;
+         depthPtr[x] = currPtr[x].x;
       }
    }
+
+   return nUndef == 0;
 }
 
 //------------------------------------------------------------------------------
 //
-Mat flowToDisp(
+bool flowToDisp(
     const Mat& flowR,
     const Mat& flowL,
     const Mat& imgFrom,
     const Mat& imgTo,
+    Mat& disp,
+    Mat& mask,
     const bool isInverted )
 {
-   Mat disp( flowR.rows, flowR.cols, CV_32FC1 );
-   Mat undef( flowR.rows, flowR.cols, CV_32FC1 );
+   disp = Mat( flowR.rows, flowR.cols, CV_32FC1 );
+   mask = Mat( flowR.rows, flowR.cols, CV_8UC1 );
 
-   Mat lkR = flowToLk( flowR, imgFrom, imgTo );
-   Mat lkL = flowToLk( flowL, imgTo, imgFrom );
-
-// Mat flowLi( flowR.rows, flowR.cols, CV_32FC2 );
+   Mat errR = flowToErr( flowR, imgFrom, imgTo );
 
 #pragma omp parallel for
    for ( size_t y = 0; y < flowR.rows; y++ )
    {
-      const float* f_row_r_data = flowR.ptr<float>( y );
-      const float* lk_r_data = lkR.ptr<float>( y );
-      const float* f_row_l_data = flowL.ptr<float>( y );
-      const float* lk_l_data = lkL.ptr<float>( y );
-
-      // vec2* f_row_li_data = flowLi.ptr<vec2>(y);
+      const vec2* f_row_r_data = flowR.ptr<vec2>( y );
+      const float* err_data = errR.ptr<float>( y );
+      const vec2* f_row_l_data = flowL.ptr<vec2>( y );
 
       float* d_row_data = disp.ptr<float>( y );
-      float* u_row_data = undef.ptr<float>( y );
+      unsigned char* u_row_data = mask.ptr<unsigned char>( y );
 
       for ( size_t x = 0; x < flowR.cols; x++ )
       {
-         const float dispR = f_row_r_data[x * 2];
-         const float dispRL = -1.0 * mix( f_row_l_data[( x + (int)ceil( dispR ) ) * 2],
-                                          f_row_l_data[( x + (int)floor( dispR ) ) * 2],
-                                          ceil( dispR ) - dispR );
-         // f_row_li_data[x] = vec2(dispRL, 0.0);
+         const vec2 mtR = f_row_r_data[x];
+         const float dispR = sign( mtR.x ) * length( mtR );
+         const vec2 mtRL = vec2( -1.0 ) * cv_utils::imsample32F<vec2>( flowL, vec2( x, y ) + mtR );
+         const float dispRL = sign( mtRL.x ) * length( mtRL );
+
          const float dispReg = mix( dispR, dispRL, 0.5 );
+         const bool undef = ( abs( mtR.y ) > 1.0 ) || ( abs( mtRL.y ) > 1.0 ) ||
+                            ( err_data[x] > 0.31 ) || ( distance( mtR, mtRL ) > 0.75 );
 
-         u_row_data[x] =
-             ( lk_r_data[x] > 0.5 ? 1.0 : 0.0 ) * ( mix( lk_l_data[x + (int)ceil( dispR )],
-                                                         lk_l_data[x + (int)floor( dispR )],
-                                                         ceil( dispR ) - dispR ) > 0.5
-                                                        ? 1.0
-                                                        : 0.0 ) *
-             ( exp( -( dispR - dispRL ) * ( dispR - dispRL ) / 3.0 ) > 0.5 ? 1.0 : 0.0 );
-
+         u_row_data[x] = undef ? 0 : 255;
          d_row_data[x] = ( isInverted ? 1.0 : -1.0 ) * dispReg;
       }
    }
 
-   /*imshow("flowR", flowToImg(flowR));
-   imshow("flowL", flowToImg(flowL));
-   imshow("flowLi", flowToImg(flowLi));
-   imshow("lkR", lkR);
-   imshow("lkL", lkL);
-   imshow("undef", undef);*/
+   normalize( disp, disp, 0.0, 1.0, NORM_MINMAX, -1, mask );
 
-   processDepth( disp, imgFrom, undef, 1.0, 0.03, 0.21 );
+   const float masked = ( 1.0f - ( cv::mean( mask )[0] / 255.0f ) );
 
-   normalize( disp, disp, 0.0, 1.0, NORM_MINMAX );
-
-   return disp;
+   return masked < 0.65;
 }
 }
 
@@ -406,7 +290,9 @@ const string keys =
     "{@imgFileLst      |         | images list   }"
     "{@imgRootDir    |         | images root dir   }"
     "{@imgOutDir    |         | images output dir   }"
-    "{@startIdx    |         |    }";
+    "{startIdx    |0         |    }"
+    "{show     |         |    }"
+    "{nowrite     |        |    }";
 
 int main( int argc, char* argv[] )
 {
@@ -420,7 +306,10 @@ int main( int argc, char* argv[] )
    const uvec2 maxSz = uvec2( 640, 480 );
    const bool toLinear = false;
    const float delayOnError = 100;
-   const int startIdx = parser.get<int>( "@startIdx" );
+   const int startIdx = parser.get<int>( "startIdx" );
+
+   const bool doShow = parser.get<bool>( "show" );
+   const bool doWrite = !parser.get<bool>( "nowrite" );
 
    const filesystem::path outRootPath( parser.get<string>( "@imgOutDir" ) );
 
@@ -437,8 +326,10 @@ int main( int argc, char* argv[] )
    // Create the optical flow estimator
    OclVarOpticalFlow::params_t ofParams = OclVarOpticalFlow::getDefaultParams();
    ofParams.lambda = 0.19;
+   OclVarOpticalFlow ofEstimator( maxSz.x, maxSz.y, false, ofParams );
 
-   OclVarOpticalFlow ofEstimator( 512, 512, false, ofParams );
+   // left / right random swap
+   uniform_int_distribution<> rs_left( 0, 1 );
 
    // Loop through the data
    for ( size_t i = startIdx; i < imgLst.size(); ++i )
@@ -451,6 +342,13 @@ int main( int argc, char* argv[] )
       {
          const string outBasename = filesystem::path( data[j] ).stem().string();
          const string videoIdname = outBasename.substr( 0, outBasename.find_first_of( "_" ) );
+
+         const filesystem::path outVideoPath( videoIdname );
+
+         const bool ignore =
+             find( ignoreVideoIdName.begin(), ignoreVideoIdName.end(), videoIdname ) !=
+             ignoreVideoIdName.end();
+         if ( ignore ) continue;
 
          Mat img = cv_utils::imread32FC3( data[j] );
 
@@ -465,21 +363,26 @@ int main( int argc, char* argv[] )
          // split the current image
          Mat right, left;
          split_hsbs( img, right, left, isStriped ? ( img.rows - img.rows / 1.35 ) / 2 : 0 );
-         resizeToMin( hstrech( right ), maxSz );
-         resizeToMin( hstrech( left ), maxSz );
+         // randomly swap left / right to avoid a potential right bias
+         const bool doLeft = false;  // rs_left( rs_gen );
+         if ( doLeft ) swap( right, left );
+
+         right = hstrech( right );
+         resizeToMin( right, maxSz );
+         left = hstrech( left );
+         resizeToMin( left, maxSz );
 
          // clone the image for output
          Mat oright = right.clone();
 
          // apply a blur to ease the optical flow estimation
-         GaussianBlur( img, img, Size( 3, 3 ), 0.7 );
-         GaussianBlur( img, img, Size( 3, 3 ), 0.7 );
+         GaussianBlur( right, right, Size( 3, 3 ), 0.13 );
+         GaussianBlur( left, left, Size( 3, 3 ), 0.13 );
 
+         // compute the right to left optical flow
          ofEstimator.setImgSize( right.cols, right.rows );
 
          Mat ofRight( right.rows, right.cols, CV_32FC2 );
-         /*ofEstimator.setOpt( OclVarOpticalFlow::OptsDoRightDisparity, true );
-         ofEstimator.setOpt( OclVarOpticalFlow::OptsDoLeftDisparity, false );*/
          ofEstimator.compute(
              reinterpret_cast<const float*>( left.ptr() ),
              reinterpret_cast<const float*>( right.ptr() ),
@@ -490,9 +393,8 @@ int main( int argc, char* argv[] )
          // filter on low disparities
          if ( cv::mean( cv::abs( ofRight ) )[0] < 1.0 ) continue;
 
+         // compute the left to right optical flow
          Mat ofLeft( right.rows, right.cols, CV_32FC2 );
-         /*ofEstimator.setOpt( OclVarOpticalFlow::OptsDoRightDisparity, false );
-         ofEstimator.setOpt( OclVarOpticalFlow::OptsDoLeftDisparity, true );*/
          ofEstimator.compute(
              reinterpret_cast<const float*>( right.ptr() ),
              reinterpret_cast<const float*>( left.ptr() ),
@@ -503,28 +405,40 @@ int main( int argc, char* argv[] )
          // filter on low disparities
          if ( cv::mean( cv::abs( ofLeft ) )[0] < 1.0 ) continue;
 
-         Mat depth = flowToDisp( ofRight, ofLeft, right, left, isInverted );
+         // compute the disparity and disparity mask
+         Mat depth, mask;
+         if ( !flowToDisp( ofRight, ofLeft, right, left, depth, mask, isInverted ^ doLeft ) )
+            continue;
 
-         // display
-         // imshow( "Full", img );
-         /*imshow( "Right", right );
-         imshow( "Left", left );
-         imshow( "Disp", depth );*/
+         const filesystem::path fRight(
+             videoIdname + "/" + outBasename + string( "_rgb" ) + ".png" );
+         const filesystem::path fDepth( videoIdname + "/" + outBasename + string( "_d" ) + ".exr" );
+         const filesystem::path fMask( videoIdname + "/" + outBasename + string( "_a" ) + ".png" );
 
-         const filesystem::path fRight( outBasename + string( "_i" ) + ".png" );
-         const filesystem::path fDepth( outBasename + string( "_d" ) + ".exr" );
+         if ( doWrite )
+         {
+            imwrite( filesystem::path( outRootPath / fRight ).string().c_str(), oright * 255.0 );
+            imwrite( filesystem::path( outRootPath / fDepth ).string().c_str(), depth );
+            imwrite( filesystem::path( outRootPath / fMask ).string().c_str(), mask );
+         }
 
-         imwrite( filesystem::path( outRootPath / fRight ).string().c_str(), oright * 255.0 );
-         imwrite( filesystem::path( outRootPath / fDepth ).string().c_str(), depth );
-
-         cout << fRight.string() << " " << fDepth.string();
+         cout << fRight.string() << " " << fDepth.string() << " " << fMask.string();
 
          // if ( j == 2 )
          cout << endl;
          /*else
             cout << " ";*/
 
-         // waitKey( 0 );
+         // display
+         if ( doShow )
+         {
+            // imshow( "Full", img );
+            imshow( "Right", oright );
+            imshow( "Left", left );
+            imshow( "Disp", depth );
+            imshow( "Mask", mask );
+            waitKey( 0 );
+         }
       }
    }
 

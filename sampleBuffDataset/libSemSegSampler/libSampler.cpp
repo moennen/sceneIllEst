@@ -49,7 +49,7 @@ struct Sampler final
    {
       HOP_PROF_FUNC();
 
-      _data.open( dataSetPath, dataPath );
+      _data.open( dataSetPath, dataPath, ImgNFileLst<nBuffers>::OptsNone );
 
       if ( _data.size() )
       {
@@ -73,7 +73,7 @@ struct Sampler final
          const ImgNFileLst<nBuffers>::Data& data = _data[_dataGen( _rng )];
 
          Mat currImg = cv_utils::imread32FC3( data[0], _toLinear, true /*toRGB*/ );
-         Mat currLabels = cv_utils::imread32FC1( data[1] );
+         Mat currLabels = cv_utils::imread32FC1( data[1], 1.0 );
 
          ivec2 imgSz( currImg.cols, currImg.rows );
 

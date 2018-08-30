@@ -52,7 +52,7 @@ void sampleRN( const size_t d, T* data )
 
 vec3 sampleSkinColourFromData()
 {
-   static uniform_int_distribution<> rs_sample( 0, 50858 );
+   static uniform_int_distribution<> rs_sample( 0, 50859 );
 
    const int sample = rs_sample( rs_gen );
 
@@ -95,11 +95,12 @@ vec3 sampleSkinColourFromModel()
 
 vec3 sampleSkinColourOffset( const vector<vec3>& vtxCol )
 {
-   static uniform_real_distribution<> rs_method( 0, 1.0 );
+   static uniform_real_distribution<float> rs_method( 0, 1.0 );
+   static uniform_real_distribution<float> rs_gain( 0.1, 1.0 );
 
    const float methodRand = rs_method( rs_gen );
 
-   vec3 skinColour( 0.0 );
+   vec3 skinColour( 1.0 );
 
    if ( methodRand < 0.2 ) return skinColour;
 
@@ -112,10 +113,7 @@ vec3 sampleSkinColourOffset( const vector<vec3>& vtxCol )
    }
    vtxColour /= vtxCol.size();
 
-   //
-   skinColour = normalize( skinColour ) * length( vtxColour );
-
-   return skinColour - vtxColour;
+   return  rs_gain(rs_gen) * skinColour / vtxColour;
 }
 
 void fittSz( Mat& img, const uvec2 sampleSz, const float scale, const float tx, const float ty )
@@ -368,15 +366,15 @@ int main( int argc, char* argv[] )
    vector<vec3> vtxNorm( BEFaceMModel::NumVertices, vec3( 0.0f ) );
 
    // Sampler
-   normal_distribution<> rs_fov( 65.0, 7.5 );
+   normal_distribution<> rs_fov( 65.0, 11.5 );
 
    normal_distribution<> rs_yaw( 0.0, 15.0 );
    normal_distribution<> rs_pitch( 0.0, 5.0 );
    normal_distribution<> rs_roll( 0.0, 3.5 );
 
    uniform_real_distribution<> rs_pos_xy( 0.25, 0.75 );
-   uniform_real_distribution<> rs_pos_z( -700.0, -850.0 );
-   normal_distribution<> rs_scale_off( 0.0, 1.35 );
+   uniform_real_distribution<> rs_pos_z( -750.0, -550.0 );
+   normal_distribution<> rs_scale_off( 0.0, 1.325 );
 
    uniform_real_distribution<> rs_shade( 0.05, 1.0 );
    uniform_real_distribution<> rs_lightPos( -500.0, 500.0 );
@@ -390,7 +388,7 @@ int main( int argc, char* argv[] )
 
    const int nRenders = parser.get<int>( "@nRenders" );
    const int startIdx = parser.get<int>( "@startIdx" );
-   normal_distribution<> rs_nfaces( 0.0, 1.5 );
+   normal_distribution<> rs_nfaces( 0.0, 1.778 );
 
    const int nMaxRendersPerGroup = 10000;
    unsigned renderGroupId = startIdx / nMaxRendersPerGroup;
@@ -459,7 +457,8 @@ int main( int argc, char* argv[] )
       const vec3 lightCol = vec3( rs_lightCol( rs_gen ) ) * shade;
 
       // Sample a random number of faces
-      const size_t nfaces = 1 + static_cast<int>( abs( rs_nfaces( rs_gen ) ) );
+      // NB : only one face for now since we have Z-Fighting issues
+      const size_t nfaces = 1; // static_cast<int>( abs( rs_nfaces( rs_gen ) ) );
 
       for ( size_t f = 0; f < nfaces; ++f )
       {
@@ -504,7 +503,7 @@ int main( int argc, char* argv[] )
          // Sample the model view
          mat4 modelView;
 
-         const float z = rs_pos_z( rs_gen );
+         const float z = rs_pos_z( rs_gen ); 
          const vec2 ss_pos = vec2( rs_pos_xy( rs_gen ) * imgSz.x, rs_pos_xy( rs_gen ) * imgSz.y );
          const vec3 cs_pos = vec3(
              ( ss_pos * vec2( camProjectionInfo.x, camProjectionInfo.y ) +
@@ -519,8 +518,9 @@ int main( int argc, char* argv[] )
          const float roll = clamp( rs_roll( rs_gen ), -45.0, 45.0 );
          modelView =
              rotate( modelView, (float)( M_PI + roll * M_PI / 180.0 ), vec3( 0.0, 0.0, 1.0 ) );
-         const float sf = 1.0 + abs( rs_scale_off( rs_gen ) );
+         const float sf = std::min(1.0 + abs( rs_scale_off( rs_gen ) ), 3.5);
          modelView = glm::scale( modelView, vec3( sf ) );
+
 
          // Draw the face
          renderTarget.bind( 3, &rTex[0] );

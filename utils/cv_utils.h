@@ -68,7 +68,7 @@ inline void imToLog( cv::Mat& img )
    }
 }
 
-inline cv::Mat imread32FC1( const std::string& imgPath )
+inline cv::Mat imread32FC1( const std::string& imgPath, const float smax = 255.0 )
 {
    HOP_PROF_FUNC();
 
@@ -86,6 +86,7 @@ inline cv::Mat imread32FC1( const std::string& imgPath )
    {
       HOP_PROF( "cv_convert" );
       img.convertTo( img, CV_32F );
+      img /= smax;
    }
    return img;
 }
@@ -185,6 +186,21 @@ inline TVec imsample32F( const cv::Mat& img, const glm::vec2& in_pt )
    // linear interpolation
    return glm::mix(
        glm::mix( ul, ur, pt.x - ul_pt.x ), glm::mix( bl, br, pt.x - ul_pt.x ), pt.y - ul_pt.y );
+}
+
+template <class TVec>
+inline TVec imnearest32F( const cv::Mat& img, const glm::vec2& in_pt )
+{
+   // compute the positions
+   const glm::ivec2 max_pt( img.cols - 1, img.rows - 1 );
+   const glm::ivec2 b_pt(
+       static_cast<int>( std::floor( in_pt.x ) ), static_cast<int>( std::floor( in_pt.y ) ) );
+
+   glm::ivec2 nearest_pt( (in_pt.x - b_pt.x > 0.5 ? b_pt.x + 1 : b_pt.x),
+                          (in_pt.y - b_pt.y > 0.5 ? b_pt.y + 1 : b_pt.y) );
+   nearest_pt = glm::clamp( nearest_pt, glm::ivec2( 0 ), max_pt );
+   
+   return img.ptr<TVec>( nearest_pt.y )[nearest_pt.x];
 }
 
 inline void imToBuffer( const cv::Mat& img, float* buff, const bool toRGB = false )
