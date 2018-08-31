@@ -123,7 +123,7 @@ struct Sampler final
 
          // random small blur to remove artifacts + copy to destination
          Mat imgSple( _sampleSz.z, _sampleSz.y, CV_32FC3, currBuffImg );
-         GaussianBlur( currImg, imgSple, Size( 5, 5 ), 2.5 * _tsGen( _rng ) );
+         GaussianBlur( currImg, imgSple, Size( 5, 5 ), 0.75 * _tsGen( _rng ) );
 
          // split uvdepth and
          Mat uvd[3];

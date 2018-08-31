@@ -48,7 +48,7 @@ void correctMask( const Mat& imask, Mat& omask )
       float* omaskPtr = omask.ptr<float>( y );
       for ( unsigned x = 0; x < omask.cols; x++ )
       {
-         omaskPtr[x] = ( imaskPtr[x] < 1.0 ? 0.0 : 1.0 );
+         omaskPtr[x] = ( imaskPtr[x] < 0.999 ? 0.0 : 1.0 );
       }
    }
 }
@@ -104,6 +104,8 @@ struct Sampler final
          std::cout << "Read dataset " << dataSetPath << " (" << _data.size() << ") " << std::endl;
       }
       _dataGen = boost::random::uniform_int_distribution<>( 0, _data.size() - 1 );
+
+      cout << endl << "WARNING ! SAMPLER : NO ERODED MASK PRODUCED !!!!!!! " << endl << endl;
    }
 
    bool sample( float* buff )
@@ -193,8 +195,8 @@ struct Sampler final
          depthSple = depthSple.mul(maskSple);
 
          // copy and process eroded mask
-         Mat erodedMaskSple( _sampleSz.z, _sampleSz.y, CV_32FC1, currBuffErodedMask );
-         erode(maskSple, erodedMaskSple, Mat());
+         //Mat erodedMaskSple( _sampleSz.z, _sampleSz.y, CV_32FC1, currBuffErodedMask );
+         //erode(maskSple, erodedMaskSple, Mat());
 
          currBuffImg += _imgBuffSz;
          currBuffDepth += _depthBuffSz;

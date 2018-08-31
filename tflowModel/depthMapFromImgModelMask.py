@@ -75,6 +75,7 @@ def testDataset(imgRootDir, trainPath):
     imgSz = [256, 256]
 
     tf.set_random_seed(rseed)
+    random.seed(rseed)
 
     batchSz = 16
 
@@ -115,7 +116,7 @@ class DepthPredictionModelParams(Pix2PixParams):
     def __init__(self, modelPath, seed=int(time.time())):
 
         #
-        # model 0 : scale / resize / pix2pix_gen_p / bn
+        # model 0 : scale_l2 / resize / pix2pix_gen_p / bn
         #
 
         seed = 0
@@ -156,7 +157,7 @@ class DepthPredictionModelParams(Pix2PixParams):
         # loss function
         self.inMask = tf.placeholder(tf.float32, shape=[
             self.batchSz, self.imgSzTr[0], self.imgSzTr[1], 1], name="input_mask")
-        self.loss = self.loss_masked_logscale_charbonnier
+        self.loss = self.loss_masked_logscale_l2
 
         self.update()
 
@@ -165,24 +166,24 @@ class DepthPredictionModelParams(Pix2PixParams):
         outputs_sc = tf.log(tf.add(tf.multiply(outputs, 3.0), 4.0))
         targets_sc = tf.log(tf.add(tf.multiply(targets, 3.0), 4.0))
 
-        diff = tf.subtract(outputs_sc, targets_sc)
+        diff = tf.multiply(tf.subtract(outputs_sc, targets_sc), self.inMask)
 
-        nvalid = tf.reduce_sum(self.inMask)
+        nvalid_b = tf.add(tf.reduce_sum(self.inMask, axis=[1, 2]), EPS)
 
         log_scales = tf.expand_dims(tf.expand_dims(
-            tf.divide(tf.reduce_sum(diff, axis=[1, 2]), nvalid), axis=1), axis=2)
+            tf.divide(tf.reduce_sum(diff, axis=[1, 2]), nvalid_b), axis=1), axis=2)
         diff = tf.subtract(diff, log_scales)
 
-        return tf.divide(tf.reduce_sum(tf.sqrt(EPS + tf.square(diff))), nvalid)
+        return tf.divide(tf.reduce_sum(tf.sqrt(EPS + tf.square(diff))), tf.reduce_sum(nvalid_b))
 
     def loss_masked_logscale_l2(self, outputs, targets):
 
         outputs_sc = tf.log(tf.add(tf.multiply(outputs, 3.0), 4.0))
         targets_sc = tf.log(tf.add(tf.multiply(targets, 3.0), 4.0))
 
-        nvalid = tf.reduce_sum(self.inMask)
+        nvalid = tf.add(tf.reduce_sum(self.inMask), EPS)
 
-        diff = tf.subtract(outputs_sc, targets_sc)
+        diff = tf.multiply(tf.subtract(outputs_sc, targets_sc), self.inMask)
 
         return tf.divide(tf.reduce_sum(tf.square(diff)), nvalid) - tf.square(tf.divide(tf.reduce_sum(diff), nvalid))
 
@@ -313,7 +314,7 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath, valPath):
     varInit = tf.global_variables_initializer()
 
     # Session configuration
-    sess_config = tf.ConfigProto()  # device_count={'GPU': 2})
+    sess_config = tf.ConfigProto(device_count={'GPU': 1})
     # sess_config.gpu_options.per_process_gpu_memory_fraction = 0.4
     # sess_config.gpu_options.allow_growth = True
 

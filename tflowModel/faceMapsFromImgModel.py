@@ -72,9 +72,10 @@ def loadValidationData(dataPath, dataRootDir, dataSz):
 def testDataset(imgRootDir, trainPath):
 
     rseed = int(time.time())
-    imgSz = [128, 128]
+    imgSz = [256, 256]
 
     tf.set_random_seed(rseed)
+    random.seed(rseed)
 
     batchSz = 16
 
@@ -104,7 +105,8 @@ def testDataset(imgRootDir, trainPath):
             cv.imshow('currU', u)
             cv.imshow('currV', v)
 
-            cv.imshow('currNormals', currNormals[idx])
+            cv.imshow('currNormals', cv.cvtColor(
+                currNormals[idx], cv.COLOR_RGB2BGR))
 
             cv.waitKey(700)
 
@@ -113,34 +115,49 @@ def testDataset(imgRootDir, trainPath):
 #-----------------------------------------------------------------------------------------------------
 
 
-def getParams(modelPath):
+class FaceMapsModelParams(Pix2PixParams):
 
-    lp = Pix2PixParams(modelPath, 20160704)
+    def __init__(self, modelPath, seed=int(time.time())):
 
-    lp.numMaxSteps = 150000
-    lp.numSteps = 150000
+        #
+        # model 0 : charbonnier / resize / pix2pix_gen_p / bn
+        #
 
-    lp.imgSzTr = [128, 128]
-    lp.batchSz = 128
+        seed = 0
 
-    lp.useBatchNorm = True
-    lp.useConv2dTranspose = True
-    lp.convDropOut = tf.placeholder(tf.float32)
-    lp.nbChannels = 64
-    lp.nbOutputChannels = 6
-    lp.kernelSz = 4
-    lp.stridedEncoder = True
-    lp.stridedDecoder = True
-    lp.doNormOutputs = False
-    lp.inDispRange = np.array([[0, 1, 2]])
-    lp.outDispRange = np.array([[0, 1, 2], [3, 4, 5]])
+        Pix2PixParams.__init__(self, modelPath, seed)
 
-    lp.alphaData = 1.0
-    lp.alphaDisc = 0.0
+        self.numMaxSteps = 175000
+        self.numSteps = 175000
+        self.backupStep = 250
+        self.trlogStep = 250
+        self.tslogStep = 250
+        self.vallogStep = 250
 
-    lp.update()
+        self.imgSzTr = [256, 256]
+        self.batchSz = 32
 
-    return lp
+        # bn vs no bn
+        self.useBatchNorm = True
+        self.nbChannels = 32
+        self.nbInChannels = 3
+        self.nbOutputChannels = 6
+        self.kernelSz = 5
+        self.stridedEncoder = True
+        # strided vs resize
+        self.stridedDecoder = False
+        self.inDispRange = np.array([[0, 1, 2]])
+        self.outDispRange = np.array([[0, 1, 2], [3, 4, 5]])
+        self.alphaData = 1.0
+        self.alphaDisc = 0.0
+        self.linearImg = False
+
+        self.model = pix2pix_gen_p
+
+        # loss
+        self.loss = pix2pix_charbonnier_loss
+
+        self.update()
 
 #-----------------------------------------------------------------------------------------------------
 # VALIDATION
@@ -149,9 +166,8 @@ def getParams(modelPath):
 
 def evalModel(modelPath, imgRootDir, imgLst):
 
-    lp = getParams(modelPath)
+    lp = FaceMapsModelParams(modelPath)
     lp.isTraining = False
-    lp.convDropOut = 0.0
 
     evalSz = [1, 256, 256, 3]
 
@@ -199,7 +215,7 @@ def evalModel(modelPath, imgRootDir, imgLst):
 
 def trainModel(modelPath, imgRootDir, trainPath, testPath, valPath):
 
-    lp = getParams(modelPath)
+    lp = FaceMapsModelParams(modelPath)
 
     # Datasets / Iterators
     trDs = DatasetTF(trainPath, imgRootDir, lp.batchSz, lp.imgSzTr, lp.rseed)
@@ -275,8 +291,7 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath, valPath):
             # Get the next training batch
             currImg, currUVs, currDepth, currNormals = sess.run(dsView)
 
-            trFeed = {lp.dropoutProb: 0.01,
-                      lp.isTraining: True,
+            trFeed = {lp.isTraining: True,
                       inImgi: currImg,
                       inUVi: currUVs,
                       inDepthi: currDepth,
@@ -302,8 +317,7 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath, valPath):
             # SUMMARIES
 
             if step % lp.trlogStep == 0:
-                summary = sess.run(tsSum, feed_dict={lp.dropoutProb: 0.0,
-                                                     lp.isTraining: False,
+                summary = sess.run(tsSum, feed_dict={lp.isTraining: False,
                                                      inImgi: currImg,
                                                      inUVi: currUVs,
                                                      inDepthi: currDepth,
@@ -314,8 +328,7 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath, valPath):
 
                 sess.run(tsInit)
                 currImg, currUVs, currDepth, currNormals = sess.run(dsView)
-                tsLoss, summary = sess.run([loss, tsSum], feed_dict={lp.dropoutProb: 0.0,
-                                                                     lp.isTraining: False,
+                tsLoss, summary = sess.run([loss, tsSum], feed_dict={lp.isTraining: False,
                                                                      inImgi: currImg,
                                                                      inUVi: currUVs,
                                                                      inDepthi: currDepth,
@@ -333,8 +346,7 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath, valPath):
             # validation
             if step % lp.vallogStep == 0:
 
-                summary = sess.run(valSum, feed_dict={lp.dropoutProb: 0.0,
-                                                      lp.isTraining: False,
+                summary = sess.run(valSum, feed_dict={lp.isTraining: False,
                                                       inImgi: valImg,
                                                       inUVi: valUVs,
                                                       inDepthi: valDepth,

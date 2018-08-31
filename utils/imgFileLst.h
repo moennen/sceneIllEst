@@ -65,12 +65,12 @@ class ImgFileLst
    std::vector<std::string> _imgFileNames;
 };
 
-template < unsigned N = 1>
+template <unsigned N = 1>
 class ImgNFileLst
 {
   public:
-   using Data = std::array<std::string,N>;
-   
+   using Data = std::array<std::string, N>;
+
    enum Opts
    {
       OptsNone = 0,
@@ -98,7 +98,7 @@ class ImgNFileLst
       close();
 
       const bool doCheck = flags & OptsCheck;
-      
+
       const filesystem::path rootPath( dataRoot );
       ifstream ifs( lstFName );
       if ( ifs.is_open() )
@@ -116,20 +116,20 @@ class ImgNFileLst
             {
                Data d;
                bool success = true;
-               for (unsigned s=0;s<N;++s)
+               for ( unsigned s = 0; s < N; ++s )
                {
                   const filesystem::path f( rootPath / filesystem::path( splitLine[s] ) );
                   if ( !doCheck || filesystem::is_regular_file( f ) )
                   {
                      d[s] = f.string();
                   }
-                  else 
+                  else
                   {
-                    success = false;
-                    break;
+                     success = false;
+                     break;
                   }
                }
-               if ( success ) _data.push_back(d);
+               if ( success ) _data.push_back( d );
             }
          }
          _data.shrink_to_fit();
@@ -233,6 +233,93 @@ class ImgTripletsFileLst
                catch ( ... )
                {
                }
+            }
+         }
+         _data.shrink_to_fit();
+      }
+
+      return size();
+   }
+
+   inline void close() { _data.clear(); }
+
+   inline size_t size() const { return _data.size(); }
+
+   inline const Data& operator[]( size_t i ) const { return _data[i]; }
+   inline Data& operator[]( size_t i ) { return _data[i]; }
+
+  private:
+   std::vector<Data> _data;
+};
+
+template <0u>
+class ImgNFileLst
+{
+  public:
+   using Data = std::vector<std::string>;
+   const unsigned N;
+
+   enum Opts
+   {
+      OptsNone = 0,
+      OptsCheck = 1 << 1,
+      OptsDefault = OptsCheck
+   };
+
+   inline ImgNFileLst( const unsigned n ) : N( n ) { ; }
+   inline ImgNFileLst(
+       const unsigned n,
+       const char* lstFName,
+       const char* dataRoot,
+       const unsigned flags = OptsDefault )
+       : N( n )
+   {
+      (void)open( lstFName, dataRoot, flags );
+   }
+   inline ~ImgNFileLst(){};
+
+   /// open a new image file list
+   inline size_t
+   open( const char* lstFName, const char* dataRoot, const unsigned flags = OptsDefault )
+   {
+      using namespace std;
+      using namespace boost;
+
+      close();
+
+      const bool doCheck = flags & OptsCheck;
+
+      const filesystem::path rootPath( dataRoot );
+      ifstream ifs( lstFName );
+      if ( ifs.is_open() )
+      {
+         _data.reserve( 100000 );
+         vector<string> splitLine;
+         splitLine.reserve( N );
+         string line;
+         while ( ifs.good() )
+         {
+            getline( ifs, line );
+            splitLine.clear();
+            split( splitLine, line, boost::is_any_of( "\t " ) );
+            if ( splitLine.size() >= N )
+            {
+               Data d(N);
+               bool success = true;
+               for ( unsigned s = 0; s < N; ++s )
+               {
+                  const filesystem::path f( rootPath / filesystem::path( splitLine[s] ) );
+                  if ( !doCheck || filesystem::is_regular_file( f ) )
+                  {
+                     d[s] = f.string();
+                  }
+                  else
+                  {
+                     success = false;
+                     break;
+                  }
+               }
+               if ( success ) _data.push_back( d );
             }
          }
          _data.shrink_to_fit();
