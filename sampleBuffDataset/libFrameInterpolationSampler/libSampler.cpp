@@ -13,12 +13,10 @@
 
 #include <boost/filesystem.hpp>
 #include <boost/algorithm/string.hpp>
-#include <boost/random/mersenne_twister.hpp>
-#include <boost/random/uniform_int_distribution.hpp>
-#include <boost/random/uniform_real_distribution.hpp>
 
 #include <glm/glm.hpp>
 
+#include <random>
 #include <fstream>
 #include <string>
 #include <vector>
@@ -38,12 +36,13 @@ namespace
 {
 struct Sampler final
 {
-   boost::random::mt19937 _rng;
-   boost::random::uniform_int_distribution<> _dataGen;
-   boost::random::uniform_real_distribution<> _transGen;
-   boost::random::uniform_real_distribution<> _ldAsBlendGen;
+   mt19937 _rng;
+   normal_distribution<> _rnGen;
+   uniform_int_distribution<> _dataGen;
+   uniform_real_distribution<> _transGen;
+   uniform_real_distribution<> _ldAsBlendGen;
 
-   ImgTripletsFileLst _data;
+   ImgNFileLst _data;
    const ivec3 _sampleSz;
    const bool _toLinear;
    const float _downsample;
@@ -71,6 +70,7 @@ struct Sampler final
        : _rng( seed ),
          _transGen( 0.0, 1.0 ),
          _ldAsBlendGen( 0.0, 1.0 ),
+         _data( 4 ),  // 3 files + 1 alpha
          _sampleSz( sampleSz ),
          _toLinear( toLinear ),
          _downsample( downsampleFactor ),
@@ -81,15 +81,13 @@ struct Sampler final
    {
       HOP_PROF_FUNC();
 
-      _data.open(
-          dataSetPath, dataPath, ImgTripletsFileLst::OptsAlpha | ImgTripletsFileLst::OptsCheck );
-
+      _data.open( dataSetPath, dataPath );
       if ( _data.size() )
       {
          std::cout << "Read dataset " << dataSetPath << " (" << _data.size() << ") "
                    << ldAsBlendFreq << " " << downsampleFactor << std::endl;
       }
-      _dataGen = boost::random::uniform_int_distribution<>( 0, _data.size() - 1 );
+      _dataGen = uniform_int_distribution<>( 0, _data.size() - 1 );
    }
 
    bool write() {}
@@ -109,14 +107,19 @@ struct Sampler final
 
       for ( size_t s = 0; s < _sampleSz.x; ++s )
       {
-         const ImgTripletsFileLst::Data& data = _data[_dataGen( _rng )];
+         const size_t si = _dataGen( _rng );
 
-         const bool swapPrevNext = ( data._alpha > 0.5 ) && ( _mode == PrevIsClosestMode );
-         const float alpha = swapPrevNext ? 1.0 - data._alpha : data._alpha;
+         float alpha = stof( _data( si, 3 ) );
+         const bool swapPrevNext = ( alpha > 0.5 ) && ( _mode == PrevIsClosestMode );
+         alpha = swapPrevNext ? 1.0 - alpha : alpha;
 
-         Mat prevImg = cv_utils::imread32FC3( swapPrevNext ? data._pathC : data._pathA, _toLinear );
-         Mat currImg = cv_utils::imread32FC3( data._pathB, _toLinear );
-         Mat nextImg = cv_utils::imread32FC3( swapPrevNext ? data._pathA : data._pathC, _toLinear );
+         const string pathA = _data.filePath( si, 0 );
+         const string pathB = _data.filePath( si, 1 );
+         const string pathC = _data.filePath( si, 2 );
+
+         Mat prevImg = cv_utils::imread32FC3( swapPrevNext ? pathC : pathA, _toLinear );
+         Mat currImg = cv_utils::imread32FC3( pathB, _toLinear );
+         Mat nextImg = cv_utils::imread32FC3( swapPrevNext ? pathA : pathC, _toLinear );
 
          ivec2 imgSz( currImg.cols, currImg.rows );
 
@@ -137,9 +140,9 @@ struct Sampler final
              mix( 1.0f,
                   std::max( (float)_sampleSz.z / imgSz.y, (float)_sampleSz.y / imgSz.x ),
                   _transGen( _rng ) );
-         resize( prevImg, prevImg, Size(), ds, ds, CV_INTER_AREA );
-         resize( currImg, currImg, Size(), ds, ds, CV_INTER_AREA );
-         resize( nextImg, nextImg, Size(), ds, ds, CV_INTER_AREA );
+         resize( prevImg, prevImg, Size(), ds, ds, INTER_AREA );
+         resize( currImg, currImg, Size(), ds, ds, INTER_AREA );
+         resize( nextImg, nextImg, Size(), ds, ds, INTER_AREA );
          imgSz = ivec2( currImg.cols, currImg.rows );
 
          // random translate
@@ -152,6 +155,12 @@ struct Sampler final
          currImg = currImg( Rect( trans.x, trans.y, _sampleSz.y, _sampleSz.z ) );
          nextImg = nextImg( Rect( trans.x, trans.y, _sampleSz.y, _sampleSz.z ) );
 
+         // preprocess
+         const float contrast = ( 1.0f + 0.11f * _rnGen( _rng ) );
+         const float brightness = 0.11f * _rnGen( _rng );
+         cv_utils::adjustContrastBrightness<vec3>( prevImg, contrast, brightness );
+         cv_utils::adjustContrastBrightness<vec3>( currImg, contrast, brightness );
+         cv_utils::adjustContrastBrightness<vec3>( nextImg, contrast, brightness );
          // random small blur to remove artifacts
          const float blur = 1.5 * _transGen( _rng );
          GaussianBlur( prevImg, prevImg, Size( 5, 5 ), blur );

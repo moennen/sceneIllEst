@@ -233,7 +233,14 @@ void draw( GLuint tex, size_t w, size_t h )
                          (float)0 + (float)h,
                          0};
    GLfloat TexCoord[] = {
-       0, 0, 1, 0, 1, 1, 0, 1,
+       0,
+       0,
+       1,
+       0,
+       1,
+       1,
+       0,
+       1,
    };
    GLubyte indices[] = {0,
                         1,
@@ -276,7 +283,9 @@ const string keys =
     "{@backImgLst    |         | background image list}"
     "{@nRenders      |         | number of renders    }"
     "{@startIdx      |         | idx of the first render }"
-    "{@outDir        |         | output directories   }";
+    "{@outDir        |         | output directories   }"
+    "{show           |         |    }"
+    "{nowrite        |        |    }";
 
 int main( int argc, char* argv[] )
 {
@@ -287,8 +296,11 @@ int main( int argc, char* argv[] )
       return ( 0 );
    }
 
+   const bool doShow = parser.get<bool>( "show" );
+   const bool doWrite = !parser.get<bool>( "nowrite" );
+
    // Load background images
-   ImgNFileLst<1> imgLst( parser.get<string>( "@backImgLst" ).c_str(), "" );
+   ImgNFileLst imgLst( 1, parser.get<string>( "@backImgLst" ).c_str(), "" );
    if ( imgLst.size() == 0 )
    {
       cerr << "Invalid background image list : " << parser.get<string>( "@backImgLst" ) << endl;
@@ -361,12 +373,12 @@ int main( int argc, char* argv[] )
    // Sampler
    normal_distribution<> rs_fov( 65.0, 11.5 );
 
-   normal_distribution<> rs_yaw( 0.0, 15.0 );
-   normal_distribution<> rs_pitch( 0.0, 5.0 );
-   normal_distribution<> rs_roll( 0.0, 3.5 );
+   normal_distribution<> rs_yaw( 0.0, 21.0 );
+   normal_distribution<> rs_pitch( 0.0, 10.5 );
+   normal_distribution<> rs_roll( 0.0, 7.0 );
 
    uniform_real_distribution<> rs_pos_xy( 0.25, 0.75 );
-   uniform_real_distribution<> rs_pos_z( -750.0, -550.0 );
+   uniform_real_distribution<> rs_pos_z( -800.0, -550.0 );
    normal_distribution<> rs_scale_off( 0.0, 1.325 );
 
    uniform_real_distribution<> rs_shade( 0.05, 1.0 );
@@ -381,7 +393,7 @@ int main( int argc, char* argv[] )
 
    const int nRenders = parser.get<int>( "@nRenders" );
    const int startIdx = parser.get<int>( "@startIdx" );
-   normal_distribution<> rs_nfaces( 0.0, 0.63 );
+   normal_distribution<> rs_nfaces( 0.0, 0.915 );
 
    const int nMaxRendersPerGroup = 10000;
    unsigned renderGroupId = startIdx / nMaxRendersPerGroup;
@@ -409,8 +421,8 @@ int main( int argc, char* argv[] )
       }
 
       // Sample a random background images
-      const auto& data = imgLst[rs_img( rs_gen )];
-      Mat backImg = cv_utils::imread32FC4( data[0] );
+      const size_t si = rs_img( rs_gen );
+      Mat backImg = cv_utils::imread32FC4( imgLst.filePath( si, 0 ) );
       if ( ( backImg.cols < imgSz.x ) || ( backImg.rows < imgSz.y ) )
       {
          --s;
@@ -450,8 +462,11 @@ int main( int argc, char* argv[] )
       const vec3 lightCol = vec3( rs_lightCol( rs_gen ) ) * shade;
 
       // Sample a random number of faces
-      // NB : only one face for now since we have Z-Fighting issues
-      const size_t nfaces = 2 + static_cast<int>( abs( rs_nfaces( rs_gen ) ) );
+      const size_t nfaces = 1u + std::max(-1, static_cast<int>( rs_nfaces( rs_gen ) ));
+
+      const float sf = std::min( 1.0 + abs( rs_scale_off( rs_gen ) ), 3.5 );
+      const float gz = rs_pos_z( rs_gen );
+         
 
       for ( size_t f = 0; f < nfaces; ++f )
       {
@@ -496,7 +511,7 @@ int main( int argc, char* argv[] )
          // Sample the model view
          mat4 modelView;
 
-         const float z = rs_pos_z( rs_gen );
+         const float z = gz + 200.0*f;
          const vec2 ss_pos = vec2( rs_pos_xy( rs_gen ) * imgSz.x, rs_pos_xy( rs_gen ) * imgSz.y );
          const vec3 cs_pos = vec3(
              ( ss_pos * vec2( camProjectionInfo.x, camProjectionInfo.y ) +
@@ -511,7 +526,6 @@ int main( int argc, char* argv[] )
          const float roll = clamp( rs_roll( rs_gen ), -45.0, 45.0 );
          modelView =
              rotate( modelView, (float)( M_PI + roll * M_PI / 180.0 ), vec3( 0.0, 0.0, 1.0 ) );
-         const float sf = std::min( 1.0 + abs( rs_scale_off( rs_gen ) ), 3.5 );
          modelView = glm::scale( modelView, vec3( sf ) );
 
          // Draw the face
@@ -543,17 +557,23 @@ int main( int argc, char* argv[] )
          cvtColor( faceUVDepthImg, faceUVDepthImg, cv::COLOR_RGBA2BGR );
          cvtColor( faceNormalsImg, faceNormalsImg, cv::COLOR_RGBA2BGR );
 
-         imwrite( outBasenameFull + "c.png", faceColorImg * 255.0 );
-         imwrite( outBasenameFull + "uvd.exr", faceUVDepthImg );
-         imwrite( outBasenameFull + "n.exr", faceNormalsImg );
+         if ( doWrite )
+         {
+            imwrite( outBasenameFull + "c.png", faceColorImg * 255.0 );
+            imwrite( outBasenameFull + "uvd.exr", faceUVDepthImg );
+            imwrite( outBasenameFull + "n.exr", faceNormalsImg );
+         }
 
          std::cout << outBasename + "c.png " << outBasename + "uvd.exr " << outBasename + "n.exr"
                    << std::endl;
 
-         /*imshow( "color", faceColorImg );
-         imshow( "uvdepth", faceUVDepthImg );
-         imshow( "normals", faceNormalsImg );
-         waitKey( 0 );*/
+         if ( doShow )
+         {
+            imshow( "color", faceColorImg );
+            imshow( "uvdepth", faceUVDepthImg );
+            imshow( "normals", faceNormalsImg );
+            waitKey( 0 );
+         }
       }
    }
 

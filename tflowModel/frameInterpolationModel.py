@@ -124,33 +124,39 @@ class FrameInterpolationModelParams(Pix2PixParams):
 
     def __init__(self, modelPath, seed=int(time.time())):
 
+        #
+        # model 0 : charbonnier / resize / pix2pix_gen_p / bn
+        #
+
         Pix2PixParams.__init__(self, modelPath, seed)
 
-        self.numMaxSteps = 250000
-        self.numSteps = 250000
-        self.backupStep = 150
-        self.trlogStep = 150
-        self.tslogStep = 150
-        self.vallogStep = 150
+        self.numMaxSteps = 175000
+        self.numSteps = 175000
+        self.backupStep = 250
+        self.trlogStep = 250
+        self.tslogStep = 250
+        self.vallogStep = 250
 
         self.imgSzTr = [256, 256]
         self.batchSz = 32
 
-        self.useBatchNorm = False
+        # bn vs no bn
+        self.useBatchNorm = True
         self.nbChannels = 32
         self.nbInChannels = 9
         self.nbOutputChannels = 3
         self.kernelSz = 5
         self.stridedEncoder = True
+        # strided vs resize
         self.stridedDecoder = False
-        self.doLogNormOutputs = False
-        self.inDispRange = np.array([[0, 1, 2]])
+        self.inDispRange = np.array([[0, 1, 2], [3, 4, 5], [6, 7, 8]])
         self.outDispRange = np.array([[0, 1, 2]])
         self.alphaData = 1.0
         self.alphaDisc = 0.0
-        self.linearImg = True
+        self.linearImg = False
 
-        self.model = pix2pix_ngen
+        self.model = pix2pix_gen_p
+        self.loss = pix2pix_charbonnier_loss
 
         self.dsScaleFactor = 0.7
         self.dsBlendInLdFreq = 0.0
@@ -168,16 +174,16 @@ class FrameInterpolationModelParams(Pix2PixParams):
 #-----------------------------------------------------------------------------------------------------
 
 
-def evalModel(modelPath, imgRootDir, imgLst):
+def evalModel(modelPath, imgRootDir, imgLst, forceTrainingSize=True, maxSz=-1):
 
     lp = FrameInterpolationModelParams(modelPath)
     lp.isTraining = False
 
-    evalSz = [1, 620, 480, 3]
+    evalSz = [1, 256, 256, 3]
 
-    prevImgi = tf.placeholder(tf.float32, shape=evalSz, name="prev_img")
+    prevImgi = tf.placeholder(tf.float32, name="prev_img")
     prevImg = preprocess(prevImgi)
-    nextImgi = tf.placeholder(tf.float32, shape=evalSz, name="next_img")
+    nextImgi = tf.placeholder(tf.float32, name="next_img")
     nextImg = preprocess(nextImgi)
     interpFactor = tf.placeholder(tf.float32, name="interp_factor")
     blendImg = tf.add(tf.multiply(prevImg, interpFactor),
@@ -195,7 +201,10 @@ def evalModel(modelPath, imgRootDir, imgLst):
     # Params Initializer
     varInit = tf.global_variables_initializer()
 
-    with tf.Session() as sess:
+    sess_config = tf.ConfigProto(device_count={'GPU': 0})
+    #sess_config.gpu_options.allow_growth = True
+
+    with tf.Session(config=sess_config) as sess:
 
         # initialize params
         sess.run(varInit)
@@ -212,10 +221,16 @@ def evalModel(modelPath, imgRootDir, imgLst):
 
                 alpha = float(data[3])
 
-                prevIm = [loadResizeImgPIL(
-                    imgRootDir + "/" + data[0], [evalSz[1], evalSz[2]], lp.linearImg)]
-                nextIm = [loadResizeImgPIL(
-                    imgRootDir + "/" + data[1], [evalSz[1], evalSz[2]], lp.linearImg)]
+                if forceTrainingSize:
+                    prevIm = [loadResizeImgPIL(
+                        imgRootDir + "/" + data[0], [evalSz[1], evalSz[2]], lp.linearImg)]
+                    nextIm = [loadResizeImgPIL(
+                        imgRootDir + "/" + data[1], [evalSz[1], evalSz[2]], lp.linearImg)]
+                else:
+                    prevIm = [loadImgPIL(
+                        imgRootDir + "/" + data[0], lp.linearImg)]
+                    nextIm = [loadImgPIL(
+                        imgRootDir + "/" + data[1], lp.linearImg)]
 
                 currIm = sess.run(outputs, feed_dict={prevImgi: prevIm,
                                                       nextImgi: nextIm,
@@ -224,7 +239,9 @@ def evalModel(modelPath, imgRootDir, imgLst):
                 # show the sample
                 cv.imshow('Prev', cv.cvtColor(prevIm[0], cv.COLOR_RGB2BGR))
                 cv.imshow('Next', cv.cvtColor(nextIm[0], cv.COLOR_RGB2BGR))
+
                 cv.imshow('Curr', cv.cvtColor(currIm[0], cv.COLOR_RGB2BGR))
+
                 cv.waitKey(0)
 
 #-----------------------------------------------------------------------------------------------------

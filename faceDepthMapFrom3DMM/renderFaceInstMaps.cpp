@@ -179,7 +179,7 @@ int main( int argc, char* argv[] )
    }
 
    // Load background images
-   ImgNFileLst<2> instLst( parser.get<string>( "@faceInstLst" ).c_str(), "" );
+   ImgNFileLst instLst(2, parser.get<string>( "@faceInstLst" ).c_str(), "" );
    if ( instLst.size() == 0 )
    {
       cerr << "Invalid face instances list : " << parser.get<string>( "@faceInstLst" ) << endl;
@@ -232,20 +232,18 @@ int main( int argc, char* argv[] )
 
    for ( int s = 0; s < instLst.size(); ++s )
    {
-      const auto& data = instLst[s];
-
-      Mat instImg = cv_utils::imread32FC4( data[0] );
+      Mat instImg = cv_utils::imread32FC4( instLst.filePath(s,0) );
       if ( instImg.empty() )
       {
-         std::cerr << "Cannot load instance image : " << data[0] << std::endl;
+         std::cerr << "Cannot load instance image : " << instLst.filePath(s,0) << std::endl;
          continue;
       }
       imgSz = uvec2( instImg.cols, instImg.rows );
 
-      BEFaceMModelInstance instModel = {data[1]};
+      BEFaceMModelInstance instModel = { instLst.filePath(s,1) };
       if ( !instModel.initialized() )
       {
-         std::cerr << "Cannot load instance model : " << data[1] << std::endl;
+         std::cerr << "Cannot load instance model : " <<  instLst.filePath(s,1) << std::endl;
          continue;
       }
 

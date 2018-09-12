@@ -61,7 +61,10 @@ FaceDetector::Detector::~Detector() {}
 bool FaceDetector::Detector::init( const char* faceModel, const char* landmarksModel )
 {
    deserialize( faceModel ) >> _net;
-   deserialize( landmarksModel ) >> _sp;
+   if ( landmarksModel != nullptr )
+   {
+      deserialize( landmarksModel ) >> _sp;
+   }
    return true;
 }
 
@@ -72,9 +75,11 @@ void FaceDetector::Detector::getFaces( cv::Mat& cvimg, std::vector<glm::vec4>& f
    assign_image( img, cv_image<rgb_pixel>( cvimg ) );
 
    // upsample the image to detect low res faces
-   // TODO : downscale the detected faces 
+   // TODO : downscale the detected faces
    // while ( img.size() < 2048 * 2048 ) pyramid_up( img );
-   
+   pyramid_up( img );
+   const glm::vec2 scaleFactor( (float)cvimg.cols / img.nc(), (float)cvimg.rows / img.nr() );
+
    // run the model
    auto dets = _net( img );
 
@@ -82,11 +87,14 @@ void FaceDetector::Detector::getFaces( cv::Mat& cvimg, std::vector<glm::vec4>& f
    faces.reserve( dets.size() );
    for ( size_t i = 0; i < dets.size(); ++i )
    {
-      const auto faceRect = dets[i].rect;
+      const auto& faceRect = dets[i].rect;
       const glm::vec2 faceSz(
           faceRect.right() - faceRect.left(), faceRect.bottom() - faceRect.top() );
       faces.emplace_back(
-          faceRect.left(), faceRect.top(), faceRect.right(), faceRect.bottom() + 0.1f * faceSz.y );
+          scaleFactor.x * faceRect.left(),
+          scaleFactor.y * faceRect.top(),
+          scaleFactor.x * faceRect.right(),
+          scaleFactor.y * ( faceRect.bottom() + 0.1f * faceSz.y ) );
    }
 }
 

@@ -41,7 +41,11 @@ def freeze_graph(model_dir, output_node_names):
         # We restore the weights
         saver.restore(sess, input_checkpoint)
 
-        for n in tf.get_default_graph().as_graph_def().node:
+        tf.train.write_graph(sess.graph, '', '/tmp/graph.pb', as_text=False)
+
+        output_graph_def = tf.get_default_graph().as_graph_def()
+
+        for n in output_graph_def.node:
             print(n.name)
 
         # We use a built-in TF helper to export variables to constants
@@ -53,8 +57,8 @@ def freeze_graph(model_dir, output_node_names):
             output_node_names.split(",")
         )
         # remove unused training nodes
-        output_graph_def = tf.graph_util.remove_training_nodes(
-            output_graph_def)
+        # output_graph_def = tf.graph_util.remove_training_nodes(
+        #    output_graph_def)
 
         print("%d ops in the final graph." % len(output_graph_def.node))
 

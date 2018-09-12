@@ -27,9 +27,11 @@ class DatasetTF(object):
     __lib = BufferDataSamplerLibrary(
         "/mnt/p4/avila/moennen_wkspce/sceneIllEst/sampleBuffDataset/libSemSegSampler/libSemSegSampler.so")
 
-    def __init__(self, dbPath, imgRootDir, batchSz, imgSz, linearCS, seed):
+    def __init__(self, dbPath, imgRootDir, batchSz, imgSz, linearCS, rescale, mapping, seed):
         params = np.array([batchSz, imgSz[0], imgSz[1],
-                           1.0 if linearCS else 0.0], dtype=np.float32)
+                           1.0 if linearCS else 0.0,
+                           1.0 if rescale else 0.0, mapping],
+                          dtype=np.float32)
         self.__ds = BufferDataSampler(
             DatasetTF.__lib, dbPath, imgRootDir, params, seed)
         self.data = tf.data.Dataset.from_generator(
@@ -53,11 +55,13 @@ def loadValidationData(dataPath, dataRootDir, dataSz, linearCS):
 
         for data in img_names_file:
 
+            data = data.rstrip('\n').split()
+
             if n >= dataSz[0]:
                 break
 
             im[n, :, :, :] = loadResizeImgPIL(dataRootDir + "/" +
-                                              data.rstrip('\n'), [dataSz[1], dataSz[2]], linearCS)
+                                              data[0], [dataSz[1], dataSz[2]], linearCS)
             n = n + 1
 
     return im, labels
@@ -86,7 +90,8 @@ def testDataset(imgRootDir, trainPath):
 
     batchSz = 16
 
-    trDs = DatasetTF(trainPath, imgRootDir, batchSz, imgSz, False, rseed)
+    trDs = DatasetTF(trainPath, imgRootDir, batchSz,
+                     imgSz, False, True, 0, rseed)
 
     dsIt = tf.data.Iterator.from_structure(
         trDs.data.output_types, trDs.data.output_shapes)
@@ -120,15 +125,14 @@ class SemSegModelParams(Pix2PixParams):
     def __init__(self, modelPath, seed=int(time.time())):
 
         #
-        # model 0 : resize / pix2pix_gen_p / bn
+        # model 0 : resize / pix2pix_gen_p / bn / mapping#-1
+        # model 1 : resize / pix2pix_gen_p / bn / mapping#0
         #
-
-        seed = 0
 
         Pix2PixParams.__init__(self, modelPath, seed)
 
-        self.numMaxSteps = 175000
-        self.numSteps = 175000
+        self.numMaxSteps = 250000
+        self.numSteps = 200000
         self.backupStep = 250
         self.trlogStep = 250
         self.tslogStep = 250
@@ -141,7 +145,7 @@ class SemSegModelParams(Pix2PixParams):
         self.useBatchNorm = True
         self.nbChannels = 32
         self.nbInChannels = 3
-        self.nbOutputChannels = 151
+        self.nbOutputChannels = 6  # 151
         self.kernelSz = 5
         self.stridedEncoder = True
         # strided vs resize
@@ -151,6 +155,9 @@ class SemSegModelParams(Pix2PixParams):
         self.alphaData = 1.0
         self.alphaDisc = 0.0
         self.linearImg = False
+        self.dsRescale = False
+        # Mapping
+        self.dsMapping = 0
 
         self.model = pix2pix_gen_p
 
@@ -219,9 +226,9 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath, valPath):
 
     # Datasets / Iterators
     trDs = DatasetTF(trainPath, imgRootDir, lp.batchSz,
-                     lp.imgSzTr, lp.linearImg, lp.rseed)
+                     lp.imgSzTr, lp.linearImg, lp.dsRescale, lp.dsMapping, lp.rseed)
     tsDs = DatasetTF(testPath, imgRootDir, lp.batchSz,
-                     lp.imgSzTr, lp.linearImg, lp.rseed)
+                     lp.imgSzTr, lp.linearImg, lp.dsRescale, lp.dsMapping, lp.rseed)
 
     dsIt = tf.data.Iterator.from_structure(
         trDs.data.output_types, trDs.data.output_shapes)
@@ -258,8 +265,7 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath, valPath):
     # Session configuration
     sess_config = tf.ConfigProto()
     #sess_config = tf.ConfigProto(device_count={'GPU': 1})
-    sess_config.gpu_options.allow_growth = True
-    sess_config.gpu_options.per_process_gpu_memory_fraction = 0.7
+    #sess_config.gpu_options.allow_growth = True
 
     with tf.Session(config=sess_config) as sess:
         # with tf.Session() as sess:

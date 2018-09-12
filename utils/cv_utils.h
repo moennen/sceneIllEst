@@ -68,6 +68,20 @@ inline void imToLog( cv::Mat& img )
    }
 }
 
+template <class T>
+inline void adjustContrastBrightness( cv::Mat& img, const float alpha, const float beta )
+{
+#pragma omp parallel for
+   for ( size_t y = 0; y < img.rows; y++ )
+   {
+      T* row_data = img.ptr<T>( y );
+      for ( size_t x = 0; x < img.cols; x++ )
+      {
+         row_data[x] = clamp( alpha * row_data[x] + beta, T( 0.0f ), T( 1.0f ) );
+      }
+   }
+}
+
 inline cv::Mat imread32FC1( const std::string& imgPath, const float smax = 255.0 )
 {
    HOP_PROF_FUNC();
@@ -196,10 +210,11 @@ inline TVec imnearest32F( const cv::Mat& img, const glm::vec2& in_pt )
    const glm::ivec2 b_pt(
        static_cast<int>( std::floor( in_pt.x ) ), static_cast<int>( std::floor( in_pt.y ) ) );
 
-   glm::ivec2 nearest_pt( (in_pt.x - b_pt.x > 0.5 ? b_pt.x + 1 : b_pt.x),
-                          (in_pt.y - b_pt.y > 0.5 ? b_pt.y + 1 : b_pt.y) );
+   glm::ivec2 nearest_pt(
+       ( in_pt.x - b_pt.x > 0.5 ? b_pt.x + 1 : b_pt.x ),
+       ( in_pt.y - b_pt.y > 0.5 ? b_pt.y + 1 : b_pt.y ) );
    nearest_pt = glm::clamp( nearest_pt, glm::ivec2( 0 ), max_pt );
-   
+
    return img.ptr<TVec>( nearest_pt.y )[nearest_pt.x];
 }
 

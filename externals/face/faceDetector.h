@@ -19,7 +19,7 @@ class FaceDetector final
    FaceDetector();
    ~FaceDetector();
 
-   bool init( const char* faceDetectorModel, const char* landmarksDetectorModel );
+   bool init( const char* faceDetectorModel, const char* landmarksDetectorModel=nullptr );
 
    void getFaces( cv::Mat& img, std::vector<glm::vec4>& ) const;
 

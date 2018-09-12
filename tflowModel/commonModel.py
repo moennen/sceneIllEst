@@ -5,7 +5,7 @@ import sys
 import os
 import time
 import tensorflow as tf
-from matplotlib import pyplot as plt
+#from matplotlib import pyplot as plt
 import numpy as np
 from PIL import Image
 
@@ -24,14 +24,22 @@ EPS = 1e-12
 #-----------------------------------------------------------------------------------------------------
 # Set tensorflow logging
 #
-tf.logging.set_verbosity(tf.logging.INFO)
+tf.logging.set_verbosity(tf.logging.FATAL)
 
 #-----------------------------------------------------------------------------------------------------
 # Tensorflow Utils
 #
 
 
+def printSessionConfigProto(sess_config):
+
+    serialized = sess_config.SerializeToString()
+    result = ["0x"+c.encode('hex') for c in serialized]
+    print(result)
+
+
 def printVarTF(sess):
+
     tvars = tf.trainable_variables()
     for var in tvars:
         print var.name
@@ -42,35 +50,35 @@ def printVarTF(sess):
 #
 
 
-def showImgs(batch, img_depths):
+# def showImgs(batch, img_depths):
 
-    n_imgs = len(img_depths)
+#     n_imgs = len(img_depths)
 
-    if np.sum(img_depths) != batch.shape[3]:
-        raise ValueError()
+#     if np.sum(img_depths) != batch.shape[3]:
+#         raise ValueError()
 
-    batch_im = np.zeros(
-        (batch.shape[0] * batch.shape[1], n_imgs * batch.shape[2], 3))
+#     batch_im = np.zeros(
+#         (batch.shape[0] * batch.shape[1], n_imgs * batch.shape[2], 3))
 
-    for b in range(batch.shape[0]):
+#     for b in range(batch.shape[0]):
 
-        n_offset = 0
-        for n in range(n_imgs):
+#         n_offset = 0
+#         for n in range(n_imgs):
 
-            im_d = img_depths[n]
-            im = batch[b, :, :, n_offset:n_offset + im_d]
+#             im_d = img_depths[n]
+#             im = batch[b, :, :, n_offset:n_offset + im_d]
 
-            if im_d > 3:
-                gray = np.mean(im, axis=2)
-                im = np.stack([gray, gray, gray], 2)
+#             if im_d > 3:
+#                 gray = np.mean(im, axis=2)
+#                 im = np.stack([gray, gray, gray], 2)
 
-            batch_im[b * batch.shape[1]:(b + 1) * batch.shape[1],
-                     n * batch.shape[2]:(n + 1) * batch.shape[2], 0:im_d] = im
+#             batch_im[b * batch.shape[1]:(b + 1) * batch.shape[1],
+#                      n * batch.shape[2]:(n + 1) * batch.shape[2], 0:im_d] = im
 
-            n_offset += im_d
+#             n_offset += im_d
 
-    plt.imshow(batch_im)
-    plt.show()
+#     plt.imshow(batch_im)
+#     plt.show()
 
 
 def writeExrRGB(img, output_filename):
@@ -144,7 +152,7 @@ class LearningParams:
         self.globalStep = tf.Variable(0, trainable=False, name='globalStep')
         self.globalStepInc = tf.assign_add(self.globalStep, 1)
 
-        self.baseLearningRate = 0.0001
+        self.baseLearningRate = 0.0005
         self.learningRate = tf.train.polynomial_decay(self.baseLearningRate, self.globalStep, self.numSteps, 0.0,
                                                       power=0.7)
 
@@ -153,6 +161,8 @@ class LearningParams:
         self.tbLogsPath = modelPath + "/tbLogs"
         self.modelFilename = modelPath + "/tfData"
         self.modelNbToKeep = 3
+
+        self.doExtSummary = True
 
         self.rseed = seed
 
@@ -366,11 +376,11 @@ def pix2pix_deconv_bn(inputs, ref, i_n, o_n, ks, ss, strided, bn, train):
                                            use_bias=not bn,
                                            kernel_initializer=tf.contrib.layers.xavier_initializer())
         # should pad the layer tensor to be able to concat it with the ref tensor
-        if ss > 1:
-            pad_mat = np.array([[0, 0], [0, ref.shape[1]-ref.shape[1]],
-                                [0, ref.shape[2]-ref.shape[2]], [0, 0]])
-            layer = tf.pad(layer, pad_mat)
-            #layer = pix2pix_conv(layer, i_n, o_n, ks, 1, not bn)
+        # if ss > 1:
+        #    pad_mat = np.array([[0, 0], [0, ref.shape[1]-ref.shape[1]],
+        #                        [0, ref.shape[2]-ref.shape[2]], [0, 0]])
+        #    layer = tf.pad(layer, pad_mat)
+        #layer = pix2pix_conv(layer, i_n, o_n, ks, 1, not bn)
 
     else:
         layer_shape = tf.shape(ref)
@@ -880,8 +890,7 @@ def pix2pix_logscale_charbonnier_loss(outputs, targets):
     targets_sc = tf.log(tf.add(tf.multiply(targets, 3.0), 4.0))
 
     diff = tf.subtract(outputs_sc, targets_sc)
-    log_scales = tf.expand_dims(tf.expand_dims(
-        tf.reduce_mean(diff, axis=[1, 2]), axis=1), axis=2)
+    log_scales = tf.reduce_mean(diff, axis=[1, 2], keepdims=True)
     diff = tf.subtract(diff, log_scales)
 
     return tf.reduce_mean(tf.sqrt(EPS + tf.square(diff)))
@@ -967,11 +976,12 @@ def pix2pix_optimizer(imgs, targets_in, params):
         "generator_loss", gen_loss, family="lossGen"))
     tsSum.append(tf.summary.scalar("generator_loss_data",
                                    gen_loss_data, family="lossGen"))
-    for var in gen_tvars:
-        trSum.append(tf.summary.histogram(var.name, var, family="varGen"))
-    for grad, var in gen_grads_and_vars:
-        trSum.append(tf.summary.histogram(
-            var.name + '_gradient', grad, family="gradGen"))
+    if (params.doExtSummary):
+        for var in gen_tvars:
+            trSum.append(tf.summary.histogram(var.name, var, family="varGen"))
+        for grad, var in gen_grads_and_vars:
+            trSum.append(tf.summary.histogram(
+                var.name + '_gradient', grad, family="gradGen"))
 
     if disc:
 
@@ -983,11 +993,13 @@ def pix2pix_optimizer(imgs, targets_in, params):
             "discriminator_loss_gen", disc_loss_outputs, family="lossDisc"))
         tsSum.append(tf.summary.scalar("generator_loss_dis",
                                        gen_loss_disc, family="lossGen"))
-        for var in disc_tvars:
-            trSum.append(tf.summary.histogram(var.name, var, family="varDisc"))
-        for grad, var in disc_grads_and_vars:
-            trSum.append(tf.summary.histogram(
-                var.name + '_gradient', grad, family="gradDisc"))
+        if (params.doExtSummary):
+            for var in disc_tvars:
+                trSum.append(tf.summary.histogram(
+                    var.name, var, family="varDisc"))
+            for grad, var in disc_grads_and_vars:
+                trSum.append(tf.summary.histogram(
+                    var.name + '_gradient', grad, family="gradDisc"))
 
         disc_targets_out = tf.constant(
             1., shape=disc_targets.shape) - tf.nn.sigmoid(disc_targets)
@@ -1004,8 +1016,7 @@ def pix2pix_optimizer(imgs, targets_in, params):
         targetsSamples = tf.multiply(
             tf.subtract(tf.to_float(targets)/params.nbOutputChannels, 0.5), 2.0)
         outputSamples = tf.multiply(
-            tf.subtract(tf.to_float(tf.expand_dims(tf.argmax(
-                outputs, axis=3), axis=3))/params.nbOutputChannels, 0.5), 2.0)
+            tf.subtract(tf.to_float(tf.argmax(outputs, axis=3))/params.nbOutputChannels, 0.5), 2.0)
     else:
         targetsSamples = targets
         outputSamples = outputs
@@ -1020,14 +1031,14 @@ def pix2pix_optimizer(imgs, targets_in, params):
             [tf.slice(imgs, [0, 0, 0, it], sliceSz) for it in params.inDispRange[i]], axis=3)
         inSamples = tf.concat([[inSamples[it, :, :, 0:3]]
                                for it in range(16)], axis=2)
-        imgSamples.append(inSamples)
+        imgSamples.append(tf.clip_by_value(inSamples, -1.0, 1.0))
 
     for i in range(params.outDispRange.shape[0]):
         outSamples = tf.concat(
             [tf.slice(outputSamples, [0, 0, 0, it], sliceSz) for it in params.outDispRange[i]], axis=3)
         outSamples = tf.concat([[outSamples[it, :, :, 0:3]]
                                 for it in range(16)], axis=2)
-        imgSamples.append(outSamples)
+        imgSamples.append(tf.clip_by_value(outSamples, -1.0, 1.0))
 
     ioSamples = tf.concat(imgSamples, axis=1)
 
@@ -1038,7 +1049,7 @@ def pix2pix_optimizer(imgs, targets_in, params):
             [tf.slice(targetsSamples, [0, 0, 0, it], sliceSz) for it in params.outDispRange[i]], axis=3)
         outSamples = tf.concat([[outSamples[it, :, :, 0:3]]
                                 for it in range(16)], axis=2)
-        imgSamples.append(outSamples)
+        imgSamples.append(tf.clip_by_value(outSamples, -1.0, 1.0))
 
     iotSamples = tf.concat(imgSamples, axis=1)
 

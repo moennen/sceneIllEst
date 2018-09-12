@@ -8,6 +8,7 @@ import sys
 import time
 import tensorflow as tf
 from tensorflow.python.client import timeline
+from tensorflow.python.tools import freeze_graph
 import itertools
 import numpy as np
 import random
@@ -55,11 +56,13 @@ def loadValidationData(dataPath, dataRootDir, dataSz):
 
         for data in img_names_file:
 
+            data = data.rstrip('\n').split()
+
             if n >= dataSz[0]:
                 break
 
-            im[n, :, :, :] = loadResizeImgPIL(dataRootDir + "/" +
-                                              data.rstrip('\n'), [dataSz[1], dataSz[2]], False)
+            im[n, :, :, :] = loadResizeImgPIL(
+                dataRootDir + "/" + data[0], [dataSz[1], dataSz[2]], False)
             n = n + 1
 
     return im, uv, depth, normal
@@ -120,22 +123,24 @@ class FaceMapsModelParams(Pix2PixParams):
     def __init__(self, modelPath, seed=int(time.time())):
 
         #
-        # model 0 : charbonnier / resize / pix2pix_gen_p / bn
+        # exp0000 : 256x256x32 / charbonnier / resize / pix2pix_gen_p / bn / d00
+        # exp0001 : 296x296x32 / charbonnier / resize / pix2pix_gen_p / bn / d01
+        # exp0002 : 256x256x32 / charbonnier / deconv / pix2pix_gen_p / bn / d01
         #
-
-        seed = 0
+        #
 
         Pix2PixParams.__init__(self, modelPath, seed)
 
-        self.numMaxSteps = 175000
-        self.numSteps = 175000
+        self.numMaxSteps = 217500
+        self.numSteps = 2175000
         self.backupStep = 250
         self.trlogStep = 250
         self.tslogStep = 250
         self.vallogStep = 250
 
+        # dimensions
         self.imgSzTr = [256, 256]
-        self.batchSz = 32
+        self.batchSz = 36
 
         # bn vs no bn
         self.useBatchNorm = True
@@ -145,15 +150,15 @@ class FaceMapsModelParams(Pix2PixParams):
         self.kernelSz = 5
         self.stridedEncoder = True
         # strided vs resize
-        self.stridedDecoder = False
+        self.stridedDecoder = True
         self.inDispRange = np.array([[0, 1, 2]])
         self.outDispRange = np.array([[0, 1, 2], [3, 4, 5]])
         self.alphaData = 1.0
         self.alphaDisc = 0.0
         self.linearImg = False
 
+        # model
         self.model = pix2pix_gen_p
-
         # loss
         self.loss = pix2pix_charbonnier_loss
 
@@ -164,18 +169,18 @@ class FaceMapsModelParams(Pix2PixParams):
 #-----------------------------------------------------------------------------------------------------
 
 
-def evalModel(modelPath, imgRootDir, imgLst):
+def evalModel(modelPath, imgRootDir, imgLst, forceTrainingSize=True, maxSz=-1, writeResults=False):
 
     lp = FaceMapsModelParams(modelPath)
     lp.isTraining = False
 
     evalSz = [1, 256, 256, 3]
 
-    inputsi = tf.placeholder(tf.float32, shape=evalSz, name="input")
+    inputsi = tf.placeholder(tf.float32, name="input")
     inputs = preprocess(inputsi)
 
     with tf.variable_scope("generator"):
-        outputs = pix2pix_gen(inputs, 1, baseN, 0.0, False)
+        outputs = lp.model(inputs, lp)
 
     # Persistency
     persistency = tf.train.Saver(filename=lp.modelFilename)
@@ -183,7 +188,10 @@ def evalModel(modelPath, imgRootDir, imgLst):
     # Params Initializer
     varInit = tf.global_variables_initializer()
 
-    with tf.Session() as sess:
+    sess_config = tf.ConfigProto(device_count={'GPU': 0})
+    #sess_config.gpu_options.allow_growth = True
+
+    with tf.Session(config=sess_config) as sess:
 
         # initialize params
         sess.run(varInit)
@@ -194,19 +202,111 @@ def evalModel(modelPath, imgRootDir, imgLst):
         # input
         with open(imgLst, 'r') as img_names_file:
 
+            videoId = 0
             for data in img_names_file:
 
-                img = [loadResizeImgPIL(imgRootDir + "/" +
-                                        data.rstrip('\n'), [evalSz[1], evalSz[2]], False)]
+                data = data.rstrip('\n').split()
+
+                imgName = imgRootDir + "/" + data[0]
+
+                if forceTrainingSize:
+                    img = [loadResizeImgPIL(
+                        imgName, [evalSz[1], evalSz[2]], lp.linearImg)]
+                else:
+                    img = [loadImgPIL(imgName, lp.linearImg)]
+
+                if maxSz > 0:
+                    ds = min(
+                        1.0, min(float(maxSz)/img[0].shape[0], float(maxSz)/img[0].shape[1]))
+                    img[0] = cv.resize(img[0], dsize=(
+                        0, 0), fx=ds, fy=ds, interpolation=cv.INTER_AREA)
 
                 uvdn = sess.run(outputs, feed_dict={inputsi: img})
 
+                inputImg = (cv.cvtColor(
+                    img[0], cv.COLOR_RGB2BGR)*255.0).astype(np.uint8)
+                uvd = cv.cvtColor(
+                    0.5*(uvdn[0, :, :, 0:3]+1.0), cv.COLOR_RGB2BGR)
+                n = cv.cvtColor(uvdn[0, :, :, 3:6], cv.COLOR_RGB2BGR)
+
                 # show the sample
-                cv.imshow('Input', cv.cvtColor(img[0], cv.COLOR_RGB2BGR))
-                cv.imshow('Output_UVD', uvdn[0, :, :, 0:3])
-                cv.imshow('Output_DNorm', uvdn[0, :, :, 2:5])
+                cv.imshow('Input', inputImg)
+                cv.imshow('UVDepth', uvd)
+                cv.imshow('Normals', 0.5*(n+1.0))
+
+                if writeResults:
+
+                    outUVDName = imgRootDir + \
+                        '/evalOutput/uvd_{:06d}.exr'.format(videoId)
+                    cv.imwrite(outUVDName, uvd)
+
+                    outNormName = imgRootDir + \
+                        '/evalOutput/norm_{:06d}.exr'.format(videoId)
+                    cv.imwrite(outNormName, n)
+
+                    outRGBName = imgRootDir + \
+                        '/evalOutput/rgb_{:06d}.png'.format(videoId)
+                    cv.imwrite(outRGBName, inputImg)
 
                 cv.waitKey(0)
+
+                videoId += 1
+
+#-----------------------------------------------------------------------------------------------------
+# EXPORT
+#-----------------------------------------------------------------------------------------------------
+
+
+def saveModel(modelPath, asText=False):
+
+    lp = FaceMapsModelParams(modelPath)
+    lp.isTraining = False
+
+    mdSuff = '-last.pb.txt' if asText else '-last.pb'
+
+    inputsi = tf.placeholder(tf.float32, name="adsk_inFront")
+    inputs = preprocess(inputsi)
+
+    with tf.variable_scope("generator"):
+        outputs = lp.model(inputs, lp)
+
+    outputsSz = outputs.get_shape()
+    sliceSz = [outputsSz[0], outputsSz[1], outputsSz[2], 1]
+
+    outputNames = "adsk_outNormals,adsk_outUVD"
+    #outputNames = "adsk_outNormals"
+    outputUVD, outputNormals = tf.split(
+        outputs, [3, 3], axis=3)
+
+    outputUVD = tf.multiply(tf.add(outputUVD, 1.0), 0.5, name="adsk_outUVD")
+    outputNormals = tf.identity(outputNormals, name="adsk_outNormals")
+
+    # Persistency
+    persistency = tf.train.Saver(filename=lp.modelFilename)
+
+    # Params Initializer
+    varInit = tf.global_variables_initializer()
+
+    sess_config = tf.ConfigProto(device_count={'GPU': 0})
+
+    with tf.Session(config=sess_config) as sess:
+
+        # initialize params
+        sess.run(varInit)
+
+        # Restore model if needed
+        persistency.restore(sess, tf.train.latest_checkpoint(modelPath))
+
+        tf.train.write_graph(
+            sess.graph, '', lp.modelFilename + mdSuff, as_text=asText)
+
+        freeze_graph.freeze_graph(
+            lp.modelFilename + mdSuff,
+            '',
+            not asText,
+            tf.train.latest_checkpoint(modelPath),
+            outputNames,  # 'outFront',
+            '', '', lp.modelFilename + mdSuff, True, '')
 
 #-----------------------------------------------------------------------------------------------------
 # TRAINING
@@ -391,8 +491,8 @@ if __name__ == "__main__":
 
     #------------------------------------------------------------------------------------------------
 
-    trainModel(args.modelPath, args.imgRootDir,
-               args.trainLstPath, args.testLstPath, args.valLstPath)
+    # trainModel(args.modelPath, args.imgRootDir,
+    #           args.trainLstPath, args.testLstPath, args.valLstPath)
 
     #------------------------------------------------------------------------------------------------
 
@@ -400,4 +500,8 @@ if __name__ == "__main__":
 
     #------------------------------------------------------------------------------------------------
 
-    # evalModel(args.modelPath, args.imgRootDir, args.valLstPath)
+    evalModel(args.modelPath, args.imgRootDir, args.valLstPath, True, 256)
+
+    #------------------------------------------------------------------------------------------------
+
+    #saveModel(args.modelPath, False)

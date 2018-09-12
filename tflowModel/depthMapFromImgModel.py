@@ -289,7 +289,7 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath, valPath):
     # Session configuration
     sess_config = tf.ConfigProto()  # device_count={'GPU': 2})
     # sess_config.gpu_options.per_process_gpu_memory_fraction = 0.4
-    # sess_config.gpu_options.allow_growth = True
+    sess_config.gpu_options.allow_growth = True
 
     with tf.Session(config=sess_config) as sess:
         # with tf.Session() as sess:
@@ -422,4 +422,4 @@ if __name__ == "__main__":
 
     #------------------------------------------------------------------------------------------------
 
-    evalModel(args.modelPath, args.imgRootDir, args.valLstPath, False, 512)
+    #evalModel(args.modelPath, args.imgRootDir, args.valLstPath, False, 512)

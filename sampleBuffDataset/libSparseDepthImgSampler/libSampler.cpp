@@ -13,12 +13,10 @@
 
 #include <boost/filesystem.hpp>
 #include <boost/algorithm/string.hpp>
-#include <boost/random/mersenne_twister.hpp>
-#include <boost/random/uniform_int_distribution.hpp>
-#include <boost/random/uniform_real_distribution.hpp>
 
 #include <glm/glm.hpp>
 
+#include <random>
 #include <fstream>
 #include <string>
 #include <vector>
@@ -36,11 +34,9 @@ using namespace glm;
 
 namespace
 {
-
 // copy the input mask to the output and set null the averaged mask values
 void correctMask( const Mat& imask, Mat& omask )
 {
-
 #pragma omp parallel for
    for ( unsigned y = 0; y < omask.rows; y++ )
    {
@@ -53,14 +49,12 @@ void correctMask( const Mat& imask, Mat& omask )
    }
 }
 
-
 struct Sampler final
 {
-   boost::random::mt19937 _rng;
-   boost::random::uniform_int_distribution<> _dataGen;
-   boost::random::uniform_real_distribution<> _tsGen;
-
-   static constexpr float maxDsScaleFactor = 3.5;
+   mt19937 _rng;
+   uniform_int_distribution<> _dataGen;
+   uniform_real_distribution<> _tsGen;
+   normal_distribution<> _rnGen;
 
    const ivec3 _sampleSz;
    const bool _toLinear;
@@ -75,7 +69,7 @@ struct Sampler final
       nInBuffers = 3,
       nOutBuffers = 4
    };
-   ImgNFileLst<nInBuffers> _data;
+   ImgNFileLst _data;
 
    inline static unsigned getBufferDepth( const unsigned buffId ) { return buffId == 0 ? 3 : 1; }
 
@@ -93,17 +87,18 @@ struct Sampler final
          _doRescale( doRescale ),
          _depthBuffSz( _sampleSz.y * _sampleSz.z ),
          _maskBuffSz( _depthBuffSz ),
-         _imgBuffSz( _depthBuffSz * 3 )
+         _imgBuffSz( _depthBuffSz * 3 ),
+         _data( nInBuffers )
    {
       HOP_PROF_FUNC();
 
-      _data.open( dataSetPath, dataPath, ImgNFileLst<nInBuffers>::OptsNone );
+      _data.open( dataSetPath, dataPath );
 
       if ( _data.size() )
       {
          std::cout << "Read dataset " << dataSetPath << " (" << _data.size() << ") " << std::endl;
       }
-      _dataGen = boost::random::uniform_int_distribution<>( 0, _data.size() - 1 );
+      _dataGen = uniform_int_distribution<>( 0, _data.size() - 1 );
 
       cout << endl << "WARNING ! SAMPLER : NO ERODED MASK PRODUCED !!!!!!! " << endl << endl;
    }
@@ -119,11 +114,11 @@ struct Sampler final
 
       for ( size_t s = 0; s < _sampleSz.x; ++s )
       {
-         const ImgNFileLst<nInBuffers>::Data& data = _data[_dataGen( _rng )];
+         const size_t si = _dataGen( _rng );
 
-         Mat currImg = cv_utils::imread32FC3( data[0], _toLinear, true /*toRGB*/ );
-         Mat currDepth = cv_utils::imread32FC1( data[1] );
-         Mat currMask = cv_utils::imread32FC1( data[2] );
+         Mat currImg = cv_utils::imread32FC3( _data.filePath( si, 0 ), _toLinear, true /*toRGB*/ );
+         Mat currDepth = cv_utils::imread32FC1( _data.filePath( si, 1 ) );
+         Mat currMask = cv_utils::imread32FC1( _data.filePath( si, 2 ) );
 
          ivec2 imgSz( currImg.cols, currImg.rows );
 
@@ -133,8 +128,6 @@ struct Sampler final
             --s;
             continue;
          }
-
-         //
 
          // padd too small samples
          if ( ( imgSz.x < _sampleSz.y ) || ( imgSz.y < _sampleSz.z ) )
@@ -153,14 +146,13 @@ struct Sampler final
          {
             const float minDs =
                 std::max( (float)_sampleSz.z / imgSz.y, (float)_sampleSz.y / imgSz.x );
-            const float ds =
-                mix( std::min( 1.0f, maxDsScaleFactor * minDs ), minDs, _tsGen( _rng ) );
-            if (ds < 1.0)
+            const float ds = mix( 1.0f, minDs, _tsGen( _rng ) );
+            if ( ds < 1.0 )
             {
-               rescaled = true; 
-               resize( currImg, currImg, Size(), ds, ds, CV_INTER_AREA );
-               resize( currDepth, currDepth, Size(), ds, ds, CV_INTER_AREA );
-               resize( currMask, currMask, Size(), ds, ds, CV_INTER_AREA );
+               rescaled = true;
+               resize( currImg, currImg, Size(), ds, ds, INTER_AREA );
+               resize( currDepth, currDepth, Size(), ds, ds, INTER_AREA );
+               resize( currMask, currMask, Size(), ds, ds, INTER_AREA );
                imgSz = ivec2( currImg.cols, currImg.rows );
             }
          }
@@ -169,34 +161,43 @@ struct Sampler final
          const ivec2 trans(
              std::floor( _tsGen( _rng ) * ( imgSz.x - _sampleSz.y ) ),
              std::floor( _tsGen( _rng ) * ( imgSz.y - _sampleSz.z ) ) );
-         
+
          // crop
          currImg = currImg( Rect( trans.x, trans.y, _sampleSz.y, _sampleSz.z ) );
          currDepth = currDepth( Rect( trans.x, trans.y, _sampleSz.y, _sampleSz.z ) );
          currMask = currMask( Rect( trans.x, trans.y, _sampleSz.y, _sampleSz.z ) );
 
-         
-         // random small blur to remove artifacts + copy to destination
-         Mat imgSple( _sampleSz.z, _sampleSz.y, CV_32FC3, currBuffImg );
-         GaussianBlur( currImg, imgSple, Size( 5, 5 ), 0.75 * _tsGen( _rng ) );
-
          // copy and correct mask
          Mat maskSple( _sampleSz.z, _sampleSz.y, CV_32FC1, currBuffMask );
-         if ( rescaled ) 
+         if ( rescaled )
             correctMask( currMask, maskSple );
          else
             currMask.copyTo( maskSple );
+         if (sum(maskSple)[0] < 20)
+         {
+            --s;
+            continue;
+         }
+
+         // random small blur to remove artifacts + copy to destination
+         Mat imgSple( _sampleSz.z, _sampleSz.y, CV_32FC3, currBuffImg );
+         cv_utils::adjustContrastBrightness<vec3>(
+             currImg, ( 1.0f + 0.11f * _rnGen( _rng ) ), 0.11f * _rnGen( _rng ) );
+         GaussianBlur( currImg, imgSple, Size( 5, 5 ), 0.31 * abs( _rnGen( _rng ) ) );
 
          // copy and process depth
          Mat depthSple( _sampleSz.z, _sampleSz.y, CV_32FC1, currBuffDepth );
-         maskSple.convertTo(currMask,CV_8UC1, 255.0, 0.0);
-         normalize( currDepth, depthSple, 0.0, 1.0, NORM_MINMAX, -1, currMask );
+         maskSple.convertTo( currMask, CV_8UC1, 255.0, 0.0 );
+         cv::Mat mean, std;
+         cv::meanStdDev( currDepth, mean, std, currMask );
+         depthSple = (( currDepth - mean ) / std);
+         //normalize( currDepth, depthSple, 0.0, 1.0, NORM_MINMAX, -1, currMask );
          // this is for debugging !!!
-         depthSple = depthSple.mul(maskSple);
+         depthSple = depthSple.mul( maskSple );
 
          // copy and process eroded mask
-         //Mat erodedMaskSple( _sampleSz.z, _sampleSz.y, CV_32FC1, currBuffErodedMask );
-         //erode(maskSple, erodedMaskSple, Mat());
+         // Mat erodedMaskSple( _sampleSz.z, _sampleSz.y, CV_32FC1, currBuffErodedMask );
+         // erode(maskSple, erodedMaskSple, Mat());
 
          currBuffImg += _imgBuffSz;
          currBuffDepth += _depthBuffSz;

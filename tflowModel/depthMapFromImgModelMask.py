@@ -8,6 +8,7 @@ import sys
 import time
 import tensorflow as tf
 from tensorflow.python.client import timeline
+from tensorflow.python.tools import freeze_graph
 import itertools
 import numpy as np
 import random
@@ -99,12 +100,21 @@ def testDataset(imgRootDir, trainPath):
             idx = random.randint(0, batchSz-1)
 
             cv.imshow('currImg', cv.cvtColor(currImg[idx], cv.COLOR_RGB2BGR))
+
+            currDepth = currDepth[idx]
+            currDepthMin = np.amin(currDepth)
+            currDepthMax = np.amax(currDepth)
+            currDepth = (currDepth - currDepthMin) / \
+                (currDepthMax-currDepthMin)
+
             cv.imshow('currDepth', cv.applyColorMap(
-                (currDepth[idx]*255.0).astype(np.uint8), cv.COLORMAP_JET))
+                (currDepth*255.0).astype(np.uint8), cv.COLORMAP_JET))
+
             cv.imshow('currMask', currMask[idx])
+
             cv.imshow('currErodedMask', currErodedMask[idx])
 
-            cv.waitKey(500)
+            cv.waitKey(250)
 
 #-----------------------------------------------------------------------------------------------------
 # PARAMETERS
@@ -117,21 +127,23 @@ class DepthPredictionModelParams(Pix2PixParams):
 
         #
         # model 0 : scale_l2 / resize / pix2pix_gen_p / bn
+        # model 1 : scale_charbonnier / resize / pix2pix_gen_p / bn
+        # model 2 : MeanStdDev_charbonnier / resize / pix2pix_gen_p / bn
         #
 
         seed = 0
 
         Pix2PixParams.__init__(self, modelPath, seed)
 
-        self.numMaxSteps = 175000
-        self.numSteps = 175000
+        self.numMaxSteps = 217500
+        self.numSteps = 217500
         self.backupStep = 250
         self.trlogStep = 250
         self.tslogStep = 250
         self.vallogStep = 250
 
-        self.imgSzTr = [256, 256]
-        self.batchSz = 32
+        self.imgSzTr = [296, 296]
+        self.batchSz = 48
 
         # bn vs no bn
         self.useBatchNorm = True
@@ -157,9 +169,28 @@ class DepthPredictionModelParams(Pix2PixParams):
         # loss function
         self.inMask = tf.placeholder(tf.float32, shape=[
             self.batchSz, self.imgSzTr[0], self.imgSzTr[1], 1], name="input_mask")
-        self.loss = self.loss_masked_logscale_l2
+        self.loss = self.loss_masked_meanstd_norm_charbonnier
 
         self.update()
+
+    def loss_masked_meanstd_norm_charbonnier(self, outputs, targets):
+
+        # output depth map mean / stdDev normalization
+        outputs_means = tf.reduce_mean(outputs, axis=[1, 2], keepdims=True)
+        outputs_centered = tf.subtract(outputs, outputs_means)
+        outputs_stdDev = tf.add(tf.sqrt(tf.reduce_mean(
+            tf.square(outputs_centered), axis=[1, 2], keepdims=True)), EPS)
+        outputs_sc = tf.divide(outputs_centered, outputs_stdDev)
+
+        # targets should be already mean / stdDev normalized
+        targets_sc = targets
+
+        # per image diff masking
+        diff = tf.multiply(tf.subtract(outputs_sc, targets_sc), self.inMask)
+        nvalid_b = tf.reduce_sum(self.inMask, axis=[1, 2])
+
+        return tf.reduce_mean(tf.divide(
+            tf.reduce_sum(tf.sqrt(EPS + tf.square(diff)), axis=[1, 2]), nvalid_b))
 
     def loss_masked_logscale_charbonnier(self, outputs, targets):
 
@@ -170,8 +201,8 @@ class DepthPredictionModelParams(Pix2PixParams):
 
         nvalid_b = tf.add(tf.reduce_sum(self.inMask, axis=[1, 2]), EPS)
 
-        log_scales = tf.expand_dims(tf.expand_dims(
-            tf.divide(tf.reduce_sum(diff, axis=[1, 2]), nvalid_b), axis=1), axis=2)
+        log_scales = tf.divide(tf.reduce_sum(
+            diff, axis=[1, 2], keepdims=True), nvalid_b)
         diff = tf.subtract(diff, log_scales)
 
         return tf.divide(tf.reduce_sum(tf.sqrt(EPS + tf.square(diff))), tf.reduce_sum(nvalid_b))
@@ -192,7 +223,7 @@ class DepthPredictionModelParams(Pix2PixParams):
 #-----------------------------------------------------------------------------------------------------
 
 
-def evalModel(modelPath, imgRootDir, imgLst, forceTrainingSize=True, maxSz=-1):
+def evalModel(modelPath, imgRootDir, imgLst, forceTrainingSize=True, maxSz=-1, writeResults=False):
 
     lp = DepthPredictionModelParams(modelPath)
     lp.isTraining = False
@@ -211,7 +242,12 @@ def evalModel(modelPath, imgRootDir, imgLst, forceTrainingSize=True, maxSz=-1):
     # Params Initializer
     varInit = tf.global_variables_initializer()
 
-    with tf.Session() as sess:
+    sess_config = tf.ConfigProto(device_count={'GPU': 0})
+    # sess_config.gpu_options.allow_growth = True
+
+    printSessionConfigProto(sess_config)
+
+    with tf.Session(config=sess_config) as sess:
 
         # initialize params
         sess.run(varInit)
@@ -225,7 +261,9 @@ def evalModel(modelPath, imgRootDir, imgLst, forceTrainingSize=True, maxSz=-1):
             videoId = 0
             for data in img_names_file:
 
-                imgName = imgRootDir + "/" + data.rstrip('\n')
+                data = data.rstrip('\n').split()
+
+                imgName = imgRootDir + "/" + data[0]
                 if forceTrainingSize:
                     img = [loadResizeImgPIL(
                         imgName, [evalSz[1], evalSz[2]], lp.linearImg)]
@@ -239,7 +277,8 @@ def evalModel(modelPath, imgRootDir, imgLst, forceTrainingSize=True, maxSz=-1):
                         0, 0), fx=ds, fy=ds, interpolation=cv.INTER_AREA)
 
                 depth = sess.run(outputs, feed_dict={inputsi: img})
-                cv.normalize(depth[0], depth[0], 0, 1.0, cv.NORM_MINMAX)
+                depth = (depth + 1.0)*0.5
+                # cv.normalize(depth[0], depth[0], 0, 1.0, cv.NORM_MINMAX)
 
                 inputImg = (cv.cvtColor(
                     img[0], cv.COLOR_RGB2BGR)*255.0).astype(np.uint8)
@@ -248,23 +287,74 @@ def evalModel(modelPath, imgRootDir, imgLst, forceTrainingSize=True, maxSz=-1):
 
                 # show the sample
                 cv.imshow('Input', inputImg)
-                cv.imshow('Output', coloredDepth)
+                cv.imshow('Output', depth[0])  # coloredDepth)
 
-                outDName = imgRootDir + \
-                    '/evalOutput/{:06d}_d.exr'.format(videoId)
-                cv.imwrite(outDName, depth[0])
+                # write the results
+                if writeResults:
+                    outDName = imgRootDir + \
+                        '/evalOutputMask/{:06d}_d.exr'.format(videoId)
+                    cv.imwrite(outDName, depth[0])
 
-                outCDName = imgRootDir + \
-                    '/evalOutput/{:06d}_cd.png'.format(videoId)
-                cv.imwrite(outCDName, coloredDepth)
+                    outCDName = imgRootDir + \
+                        '/evalOutputMask/{:06d}_cd.png'.format(videoId)
+                    cv.imwrite(outCDName, coloredDepth)
 
-                outRGBName = imgRootDir + \
-                    '/evalOutput/{:06d}_rgb.png'.format(videoId)
-                cv.imwrite(outRGBName, inputImg)
+                    outRGBName = imgRootDir + \
+                        '/evalOutputMask/{:06d}_rgb.png'.format(videoId)
+                    cv.imwrite(outRGBName, inputImg)
 
-                cv.waitKey(500)
+                cv.waitKey(0)
 
                 videoId += 1
+
+#-----------------------------------------------------------------------------------------------------
+# EXPORT
+#-----------------------------------------------------------------------------------------------------
+
+
+def saveModel(modelPath, asText=False):
+
+    lp = DepthPredictionModelParams(modelPath)
+    lp.isTraining = False
+
+    mdSuff = '-last.pb.txt' if asText else '-last.pb'
+
+    inputsi = tf.placeholder(tf.float32, name="adsk_inFront")
+    inputs = preprocess(inputsi)
+
+    with tf.variable_scope("generator"):
+        outputs = lp.model(inputs, lp)
+
+    outputName = "adsk_outZ-Depth"
+    outputs = tf.multiply(tf.add(outputs, 1.0), 0.5, name=outputName)
+
+    # Persistency
+    persistency = tf.train.Saver(filename=lp.modelFilename)
+
+    # Params Initializer
+    varInit = tf.global_variables_initializer()
+
+    sess_config = tf.ConfigProto(device_count={'GPU': 0})
+
+    with tf.Session(config=sess_config) as sess:
+
+        # initialize params
+        sess.run(varInit)
+
+        # Restore model if needed
+        persistency.restore(sess, tf.train.latest_checkpoint(modelPath))
+
+        tf.train.write_graph(
+            sess.graph, '', lp.modelFilename + mdSuff, as_text=asText)
+
+        freeze_graph.freeze_graph(
+            lp.modelFilename + mdSuff,
+            '',
+            not asText,
+            tf.train.latest_checkpoint(modelPath),
+            outputName,  # 'outFront',
+            '', '', lp.modelFilename + mdSuff, True, '')
+
 
 #-----------------------------------------------------------------------------------------------------
 # TRAINING
@@ -294,7 +384,8 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath, valPath):
     inImg = preprocess(inImgi)
     inDepthi = tf.placeholder(tf.float32, shape=[
         lp.batchSz, lp.imgSzTr[0], lp.imgSzTr[1], 1], name="input_depth")
-    inDepth = tf.multiply(tf.subtract(inDepthi, 0.5), 2.0)
+    # inDepthi is meanStdDev normalized : no need to centered it
+    inDepth = inDepthi  # tf.multiply(tf.subtract(inDepthi, 0.5), 2.0)
 
     # Optimizers
     [opts, loss, trSum, tsSum, valSum] = pix2pix_optimizer(inImg, inDepth, lp)
@@ -412,7 +503,6 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath, valPath):
                                  global_step=lp.globalStep)
 
 
-
 #-----------------------------------------------------------------------------------------------------
 #-----------------------------------------------------------------------------------------------------
 if __name__ == "__main__":
@@ -439,7 +529,7 @@ if __name__ == "__main__":
 
     #------------------------------------------------------------------------------------------------
 
-    #testDataset(args.imgRootDir, args.trainLstPath)
+    # testDataset(args.imgRootDir, args.trainLstPath)
 
     #------------------------------------------------------------------------------------------------
 
@@ -452,4 +542,8 @@ if __name__ == "__main__":
 
     #------------------------------------------------------------------------------------------------
 
-    #evalModel(args.modelPath, args.imgRootDir, args.valLstPath, False, 512)
+    #evalModel(args.modelPath, args.imgRootDir, args.valLstPath, True, 512)
+
+    #------------------------------------------------------------------------------------------------
+
+    #saveModel(args.modelPath, False)

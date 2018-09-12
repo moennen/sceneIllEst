@@ -28,17 +28,19 @@ struct Sampler final
    mt19937 _rng;
    uniform_int_distribution<> _dataGen;
    uniform_real_distribution<> _tsGen;
+   normal_distribution<> _rnGen;
 
    static constexpr float maxDsScaleFactor = 3.5;
 
    const ivec3 _sampleSz;
    const bool _toLinear;
+   const bool _doRescale;
 
    enum
    {
       nBuffers = 4
    };
-   ImgNFileLst<nBuffers - 1> _data;
+   ImgNFileLst _data;
 
    inline static unsigned getBufferDepth( const unsigned buffId )
    {
@@ -55,12 +57,18 @@ struct Sampler final
        const char* dataPath,
        const ivec3 sampleSz,
        const bool toLinear,
+       const bool doRescale,
        const int seed )
-       : _rng( seed ), _tsGen( 0.0, 1.0 ), _sampleSz( sampleSz ), _toLinear( toLinear )
+       : _rng( seed ),
+         _tsGen( 0.0, 1.0 ),
+         _sampleSz( sampleSz ),
+         _toLinear( toLinear ),
+         _doRescale( doRescale ),
+         _data( nBuffers - 1 )
    {
       HOP_PROF_FUNC();
 
-      _data.open( dataSetPath, dataPath, ImgNFileLst<nBuffers - 1>::OptsNone /*No Check*/ );
+      _data.open( dataSetPath, dataPath );
 
       if ( _data.size() )
       {
@@ -84,19 +92,23 @@ struct Sampler final
 
       for ( size_t s = 0; s < _sampleSz.x; ++s )
       {
-         const ImgNFileLst<nBuffers - 1>::Data& data = _data[_dataGen( _rng )];
+         const size_t si = _dataGen( _rng );
 
-         Mat currImg = cv_utils::imread32FC3( data[0], _toLinear, true /*toRGB*/ );
-         Mat currUVDepth = cv_utils::imread32FC3( data[1], false, true );
-         Mat currNormals = cv_utils::imread32FC3( data[2], false, true );
+         Mat currImg = cv_utils::imread32FC3( _data.filePath( si, 0 ), _toLinear, true /*toRGB*/ );
+         Mat currUVDepth = cv_utils::imread32FC3( _data.filePath( si, 1 ), false, true );
+         Mat currNormals = cv_utils::imread32FC3( _data.filePath( si, 2 ), false, true );
 
          ivec2 imgSz( currImg.cols, currImg.rows );
 
-         // ignore too small samples
+         // padd too small samples
          if ( ( imgSz.x < _sampleSz.y ) || ( imgSz.y < _sampleSz.z ) )
          {
-            --s;
-            continue;
+            const ivec2 topright(
+                max( ivec2( _sampleSz.y - imgSz.x, _sampleSz.z - imgSz.y ), ivec2( 0 ) ) );
+            copyMakeBorder( currImg, currImg, topright.y, 0, 0, topright.x, BORDER_CONSTANT );
+            copyMakeBorder( currUVDepth, currUVDepth, topright.y, 0, 0, topright.x, BORDER_CONSTANT );
+            copyMakeBorder( currNormals, currNormals, topright.y, 0, 0, topright.x, BORDER_CONSTANT );
+            imgSz = ivec2( currImg.cols, currImg.rows );
          }
 
          // bad dataset : the samples o be of the same size
@@ -104,12 +116,17 @@ struct Sampler final
          if ( ( currNormals.cols != imgSz.x ) || ( currNormals.rows != imgSz.y ) ) return false;
 
          // random rescale
-         const float minDs = std::max( (float)_sampleSz.z / imgSz.y, (float)_sampleSz.y / imgSz.x );
-         const float ds = mix( std::min( 1.0f, maxDsScaleFactor * minDs ), minDs, _tsGen( _rng ) );
-         resize( currImg, currImg, Size(), ds, ds, CV_INTER_AREA );
-         resize( currUVDepth, currUVDepth, Size(), ds, ds, CV_INTER_AREA );
-         resize( currNormals, currNormals, Size(), ds, ds, CV_INTER_AREA );
-         imgSz = ivec2( currImg.cols, currImg.rows );
+         if ( _doRescale )
+         {
+            const float minDs =
+                std::max( (float)_sampleSz.z / imgSz.y, (float)_sampleSz.y / imgSz.x );
+            const float ds =
+                mix( std::min( 1.0f, maxDsScaleFactor * minDs ), minDs, _tsGen( _rng ) );
+            resize( currImg, currImg, Size(), ds, ds, CV_INTER_AREA );
+            resize( currUVDepth, currUVDepth, Size(), ds, ds, CV_INTER_AREA );
+            resize( currNormals, currNormals, Size(), ds, ds, CV_INTER_AREA );
+            imgSz = ivec2( currImg.cols, currImg.rows );
+         }
 
          // random translate
          const ivec2 trans(
@@ -123,7 +140,9 @@ struct Sampler final
 
          // random small blur to remove artifacts + copy to destination
          Mat imgSple( _sampleSz.z, _sampleSz.y, CV_32FC3, currBuffImg );
-         GaussianBlur( currImg, imgSple, Size( 5, 5 ), 0.75 * _tsGen( _rng ) );
+         cv_utils::adjustContrastBrightness<vec3>(
+             currImg, ( 1.0f + 0.11f * _rnGen( _rng ) ), 0.11f * _rnGen( _rng ) );
+         GaussianBlur( currImg, imgSple, Size( 5, 5 ), 0.31 * abs( _rnGen( _rng ) ) );
 
          // split uvdepth and
          Mat uvd[3];
@@ -211,7 +230,8 @@ extern "C" int initBuffersDataSampler(
    // parse params
    const ivec3 sz( params[0], params[1], params[2] );
    const bool toLinear( nParams > 3 ? params[3] > 0.0 : false );
-   g_samplers[sidx].reset( new Sampler( datasetPath, dataPath, sz, toLinear, seed ) );
+   const bool doRescale( nParams > 4 ? params[4] > 0.0 : false );
+   g_samplers[sidx].reset( new Sampler( datasetPath, dataPath, sz, toLinear, doRescale, seed ) );
 
    return g_samplers[sidx]->nSamples() ? SUCCESS : ERROR_BAD_DB;
 }

@@ -8,3 +8,15 @@ install_manifest.txt
 compile_commands.json
 CTestTestfile.cmake
 *.swp
+*.so
+data/*
+
+depthMapCreation/createDepthMapHSBS
+depthMapCreation/createDepthMapKitti
+faceDepthMapFrom3DMM/createFaceMap
+faceDepthMapFrom3DMM/createFaceMapsFromBEInst
+faceDepthMapFrom3DMM/detectFaceInst
+faceDepthMapFrom3DMM/renderFaceInstMaps
+faceDepthMapFrom3DMM/renderFaceMaps
+sampleBuffDataset/libFrameInterpolationSampler/filterDataset/filterDataset
+shFromEnvMap/shFromEnvMap

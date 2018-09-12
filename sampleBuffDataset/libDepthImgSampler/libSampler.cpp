@@ -51,7 +51,7 @@ struct Sampler final
    {
       nBuffers = 2
    };
-   ImgNFileLst<nBuffers> _data;
+   ImgNFileLst _data;
 
    inline static unsigned getBufferDepth( const unsigned buffId ) { return buffId == 0 ? 3 : 1; }
 
@@ -61,7 +61,7 @@ struct Sampler final
        const ivec3 sampleSz,
        const bool toLinear,
        const int seed )
-       : _rng( seed ), _tsGen( 0.0, 1.0 ), _sampleSz( sampleSz ), _toLinear( toLinear )
+       : _rng( seed ), _tsGen( 0.0, 1.0 ), _sampleSz( sampleSz ), _toLinear( toLinear ), _data(nBuffers)
    {
       HOP_PROF_FUNC();
 
@@ -86,10 +86,10 @@ struct Sampler final
 
       for ( size_t s = 0; s < _sampleSz.x; ++s )
       {
-         const ImgNFileLst<nBuffers>::Data& data = _data[_dataGen( _rng )];
+         const size_t si = _dataGen( _rng );
 
-         Mat currImg = cv_utils::imread32FC3( data[0], _toLinear, true /*toRGB*/ );
-         Mat currDepth = cv_utils::imread32FC1( data[1] );
+         Mat currImg = cv_utils::imread32FC3( _data.filePath(si,0), _toLinear, true /*toRGB*/ );
+         Mat currDepth = cv_utils::imread32FC1( _data.filePath(si,1) );
 
          ivec2 imgSz( currImg.cols, currImg.rows );
 
