@@ -98,7 +98,9 @@ def testDataset(imgRootDir, trainPath):
 
     trInit = dsIt.make_initializer(trDs.data)
 
-    with tf.Session() as sess:
+    sess_config = tf.ConfigProto(device_count={'GPU': 0})
+
+    with tf.Session(config=sess_config) as sess:
 
         sess.run(trInit)
 
@@ -113,7 +115,7 @@ def testDataset(imgRootDir, trainPath):
             cv.imshow('blendImg', cv.cvtColor(
                 blendSple[idx], cv.COLOR_RGB2BGR))
             cv.imshow('currImg', cv.cvtColor(currHD[idx], cv.COLOR_RGB2BGR))
-            cv.waitKey(700)
+            cv.waitKey(0)
 
 #-----------------------------------------------------------------------------------------------------
 # PARAMETERS
@@ -125,20 +127,20 @@ class FrameInterpolationModelParams(Pix2PixParams):
     def __init__(self, modelPath, seed=int(time.time())):
 
         #
-        # model 0 : charbonnier / resize / pix2pix_gen_p / bn
+        # model 0 : 296x296x32 / charbonnier / resize / pix2pix_gen_p / bn
         #
 
         Pix2PixParams.__init__(self, modelPath, seed)
 
-        self.numMaxSteps = 175000
-        self.numSteps = 175000
+        self.numMaxSteps = 217500
+        self.numSteps = 217500
         self.backupStep = 250
         self.trlogStep = 250
         self.tslogStep = 250
         self.vallogStep = 250
 
-        self.imgSzTr = [256, 256]
-        self.batchSz = 32
+        self.imgSzTr = [296, 296]
+        self.batchSz = 24
 
         # bn vs no bn
         self.useBatchNorm = True
@@ -156,7 +158,9 @@ class FrameInterpolationModelParams(Pix2PixParams):
         self.linearImg = False
 
         self.model = pix2pix_gen_p
-        self.loss = pix2pix_charbonnier_loss
+        self.inErr = tf.placeholder(tf.float32, shape=[
+            self.batchSz, self.imgSzTr[0], self.imgSzTr[1], 1], name="input_mask")
+        self.loss = loss_errw_charbonnier
 
         self.dsScaleFactor = 0.7
         self.dsBlendInLdFreq = 0.0
@@ -167,6 +171,22 @@ class FrameInterpolationModelParams(Pix2PixParams):
         self.dsMaxPrevNextSqDiff = 0.001
 
         self.update()
+
+        def loss_errw_charbonnier(self, outputs, targets):
+
+            outputs_sc = tf.log(tf.add(tf.multiply(outputs, 3.0), 4.0))
+            targets_sc = tf.log(tf.add(tf.multiply(targets, 3.0), 4.0))
+
+            diff = tf.multiply(tf.subtract(
+                outputs_sc, targets_sc), self.inMask)
+
+            nvalid_b = tf.add(tf.reduce_sum(self.inMask, axis=[1, 2]), EPS)
+
+            log_scales = tf.divide(tf.reduce_sum(
+                diff, axis=[1, 2], keepdims=True), nvalid_b)
+            diff = tf.subtract(diff, log_scales)
+
+            return tf.divide(tf.reduce_sum(tf.sqrt(EPS + tf.square(diff))), tf.reduce_sum(nvalid_b))
 
 
 #-----------------------------------------------------------------------------------------------------
@@ -279,7 +299,7 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath, valPath):
     inNexti = tf.placeholder(tf.float32, shape=sampleShape, name="input_next")
     inNext = tf.subtract(inBlend, preprocess(inNexti))
     inCurri = tf.placeholder(tf.float32, shape=sampleShape, name="input_curr")
-    inCurr = preprocess(inCurri)
+    inCurr = tf.subtract(inBlend, preprocess(inCurri))
 
     # Optimizers
     [opts, loss, trSum, tsSum, valSum] = pix2pix_optimizer(
@@ -430,12 +450,12 @@ if __name__ == "__main__":
 
     #------------------------------------------------------------------------------------------------
 
-    #testDataset(args.imgRootDir, args.trainLstPath)
+    testDataset(args.imgRootDir, args.trainLstPath)
 
     #------------------------------------------------------------------------------------------------
 
-    trainModel(args.modelPath, args.imgRootDir,
-               args.trainLstPath, args.testLstPath, args.valLstPath)
+    # trainModel(args.modelPath, args.imgRootDir,
+    #           args.trainLstPath, args.testLstPath, args.valLstPath)
 
     #------------------------------------------------------------------------------------------------
 

@@ -111,7 +111,7 @@ def testDataset(imgRootDir, trainPath):
             cv.imshow('currNormals', cv.cvtColor(
                 currNormals[idx], cv.COLOR_RGB2BGR))
 
-            cv.waitKey(700)
+            cv.waitKey(10)
 
 #-----------------------------------------------------------------------------------------------------
 # PARAMETERS
@@ -139,8 +139,8 @@ class FaceMapsModelParams(Pix2PixParams):
         self.vallogStep = 250
 
         # dimensions
-        self.imgSzTr = [256, 256]
-        self.batchSz = 36
+        self.imgSzTr = [296, 296]
+        self.batchSz = 24
 
         # bn vs no bn
         self.useBatchNorm = True
@@ -150,7 +150,7 @@ class FaceMapsModelParams(Pix2PixParams):
         self.kernelSz = 5
         self.stridedEncoder = True
         # strided vs resize
-        self.stridedDecoder = True
+        self.stridedDecoder = False
         self.inDispRange = np.array([[0, 1, 2]])
         self.outDispRange = np.array([[0, 1, 2], [3, 4, 5]])
         self.alphaData = 1.0
@@ -305,7 +305,7 @@ def saveModel(modelPath, asText=False):
             '',
             not asText,
             tf.train.latest_checkpoint(modelPath),
-            outputNames,  # 'outFront',
+            outputNames,
             '', '', lp.modelFilename + mdSuff, True, '')
 
 #-----------------------------------------------------------------------------------------------------
@@ -361,7 +361,11 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath, valPath):
     # Params Initializer
     varInit = tf.global_variables_initializer()
 
-    with tf.Session(config=tf.ConfigProto(device_count={'GPU': 1})) as sess:
+    # Sessions options
+    sess_config = tf.ConfigProto(device_count={'GPU': 1})
+    sess_config.gpu_options.allow_growth = True
+
+    with tf.Session(config=sess_config) as sess:
         # with tf.Session() as sess:
 
         train_summary_writer = tf.summary.FileWriter(
@@ -491,8 +495,8 @@ if __name__ == "__main__":
 
     #------------------------------------------------------------------------------------------------
 
-    # trainModel(args.modelPath, args.imgRootDir,
-    #           args.trainLstPath, args.testLstPath, args.valLstPath)
+    trainModel(args.modelPath, args.imgRootDir,
+               args.trainLstPath, args.testLstPath, args.valLstPath)
 
     #------------------------------------------------------------------------------------------------
 
@@ -500,7 +504,7 @@ if __name__ == "__main__":
 
     #------------------------------------------------------------------------------------------------
 
-    evalModel(args.modelPath, args.imgRootDir, args.valLstPath, True, 256)
+    #evalModel(args.modelPath, args.imgRootDir, args.valLstPath, True, 256)
 
     #------------------------------------------------------------------------------------------------
 

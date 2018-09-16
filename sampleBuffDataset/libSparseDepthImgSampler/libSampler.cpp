@@ -16,6 +16,8 @@
 
 #include <glm/glm.hpp>
 
+#include <future>
+
 #include <random>
 #include <fstream>
 #include <string>
@@ -64,10 +66,15 @@ struct Sampler final
    const unsigned _maskBuffSz;
    const unsigned _imgBuffSz;
 
+   const unsigned _fullBuffSz;
+   future<bool> _asyncSample;
+   vector<float> _asyncBuff;
+
    enum
    {
       nInBuffers = 3,
-      nOutBuffers = 4
+      nOutBuffers = 3,
+      nOutPlanes = 5  // RGB : 3 / Depth : 1 / Mask : 1
    };
    ImgNFileLst _data;
 
@@ -79,6 +86,7 @@ struct Sampler final
        const ivec3 sampleSz,
        const bool toLinear,
        const bool doRescale,
+       const bool doAsync,
        const int seed )
        : _rng( seed ),
          _tsGen( 0.0, 1.0 ),
@@ -88,6 +96,7 @@ struct Sampler final
          _depthBuffSz( _sampleSz.y * _sampleSz.z ),
          _maskBuffSz( _depthBuffSz ),
          _imgBuffSz( _depthBuffSz * 3 ),
+         _fullBuffSz( _sampleSz.y * _sampleSz.z * nOutPlanes ),
          _data( nInBuffers )
    {
       HOP_PROF_FUNC();
@@ -101,115 +110,145 @@ struct Sampler final
       _dataGen = uniform_int_distribution<>( 0, _data.size() - 1 );
 
       cout << endl << "WARNING ! SAMPLER : NO ERODED MASK PRODUCED !!!!!!! " << endl << endl;
+
+      if ( _data.size() && doAsync )
+      {
+         _asyncBuff.resize( sampleSz.x * _fullBuffSz );
+         _asyncSample = async( launch::async, [&]() { return sample_internal( &_asyncBuff[0] ); } );
+      }
    }
 
    bool sample( float* buff )
+   {
+      if ( _asyncBuff.empty() )
+         return sample_internal( buff );
+      else
+      {
+         bool success = _asyncSample.get();
+         if ( success )
+         {
+#pragma omp parallel for
+            for ( int b = 0; b < _sampleSz.x; ++b )
+            {
+               const size_t off = b * _fullBuffSz;
+               memcpy( buff + off, &_asyncBuff[off], sizeof( float ) * _fullBuffSz );
+            }
+         }
+         _asyncSample = async( launch::async, [&]() { return sample_internal( &_asyncBuff[0] ); } );
+         return success;
+      }
+   }
+
+   size_t nSamples() const { return _data.size(); }
+   ivec3 sampleSizes() const { return _sampleSz; }
+
+  private:
+   bool sample_internal( float* buff )
    {
       HOP_PROF_FUNC();
 
       float* currBuffImg = buff;
       float* currBuffDepth = buff + _imgBuffSz * _sampleSz.x;
       float* currBuffMask = buff + ( _imgBuffSz + _depthBuffSz ) * _sampleSz.x;
-      float* currBuffErodedMask = buff + ( _imgBuffSz + _depthBuffSz + _maskBuffSz ) * _sampleSz.x;
+      // float* currBuffErodedMask = buff + ( _imgBuffSz + _depthBuffSz + _maskBuffSz ) *
+      // _sampleSz.x;
 
-      for ( size_t s = 0; s < _sampleSz.x; ++s )
+      std::vector<char> sampled( _sampleSz.x, 0 );
+      std::vector<size_t> v_si( _sampleSz.x );
+      do
       {
-         const size_t si = _dataGen( _rng );
+         for ( auto& si : v_si ) si = _dataGen( _rng );
 
-         Mat currImg = cv_utils::imread32FC3( _data.filePath( si, 0 ), _toLinear, true /*toRGB*/ );
-         Mat currDepth = cv_utils::imread32FC1( _data.filePath( si, 1 ) );
-         Mat currMask = cv_utils::imread32FC1( _data.filePath( si, 2 ) );
-
-         ivec2 imgSz( currImg.cols, currImg.rows );
-
-         // ignore failed samples
-         if ( currImg.empty() || currDepth.empty() || currMask.empty() )
+#pragma omp parallel for
+         for ( size_t s = 0; s < _sampleSz.x; ++s )
          {
-            --s;
-            continue;
-         }
+            if ( sampled[s] ) continue;
 
-         // padd too small samples
-         if ( ( imgSz.x < _sampleSz.y ) || ( imgSz.y < _sampleSz.z ) )
-         {
-            const ivec2 topright(
-                max( ivec2( _sampleSz.y - imgSz.x, _sampleSz.z - imgSz.y ), ivec2( 0 ) ) );
-            copyMakeBorder( currImg, currImg, topright.y, 0, 0, topright.x, BORDER_CONSTANT );
-            copyMakeBorder( currDepth, currDepth, topright.y, 0, 0, topright.x, BORDER_CONSTANT );
-            copyMakeBorder( currMask, currMask, topright.y, 0, 0, topright.x, BORDER_CONSTANT );
-            imgSz = ivec2( currImg.cols, currImg.rows );
-         }
+            const size_t si = v_si[s];
 
-         // random rescale
-         bool rescaled = false;
-         if ( _doRescale )
-         {
-            const float minDs =
-                std::max( (float)_sampleSz.z / imgSz.y, (float)_sampleSz.y / imgSz.x );
-            const float ds = mix( 1.0f, minDs, _tsGen( _rng ) );
-            if ( ds < 1.0 )
+            Mat currImg =
+                cv_utils::imread32FC3( _data.filePath( si, 0 ), _toLinear, true /*toRGB*/ );
+            Mat currDepth = cv_utils::imread32FC1( _data.filePath( si, 1 ) );
+            Mat currMask = cv_utils::imread32FC1( _data.filePath( si, 2 ) );
+
+            ivec2 imgSz( currImg.cols, currImg.rows );
+
+            // ignore failed samples
+            if ( currImg.empty() || currDepth.empty() || currMask.empty() ) continue;
+
+            // padd too small samples
+            if ( ( imgSz.x < _sampleSz.y ) || ( imgSz.y < _sampleSz.z ) )
             {
-               rescaled = true;
-               resize( currImg, currImg, Size(), ds, ds, INTER_AREA );
-               resize( currDepth, currDepth, Size(), ds, ds, INTER_AREA );
-               resize( currMask, currMask, Size(), ds, ds, INTER_AREA );
+               const ivec2 topright(
+                   max( ivec2( _sampleSz.y - imgSz.x, _sampleSz.z - imgSz.y ), ivec2( 0 ) ) );
+               copyMakeBorder( currImg, currImg, topright.y, 0, 0, topright.x, BORDER_CONSTANT );
+               copyMakeBorder(
+                   currDepth, currDepth, topright.y, 0, 0, topright.x, BORDER_CONSTANT );
+               copyMakeBorder( currMask, currMask, topright.y, 0, 0, topright.x, BORDER_CONSTANT );
                imgSz = ivec2( currImg.cols, currImg.rows );
             }
+
+            // random rescale
+            bool rescaled = false;
+            if ( _doRescale )
+            {
+               const float minDs =
+                   std::max( (float)_sampleSz.z / imgSz.y, (float)_sampleSz.y / imgSz.x );
+               const float ds = mix( 1.0f, minDs, _tsGen( _rng ) );
+               if ( ds < 1.0 )
+               {
+                  rescaled = true;
+                  resize( currImg, currImg, Size(), ds, ds, INTER_AREA );
+                  resize( currDepth, currDepth, Size(), ds, ds, INTER_AREA );
+                  resize( currMask, currMask, Size(), ds, ds, INTER_AREA );
+                  imgSz = ivec2( currImg.cols, currImg.rows );
+               }
+            }
+
+            // random translate
+            const ivec2 trans(
+                std::floor( _tsGen( _rng ) * ( imgSz.x - _sampleSz.y ) ),
+                std::floor( _tsGen( _rng ) * ( imgSz.y - _sampleSz.z ) ) );
+
+            // crop
+            currImg = currImg( Rect( trans.x, trans.y, _sampleSz.y, _sampleSz.z ) );
+            currDepth = currDepth( Rect( trans.x, trans.y, _sampleSz.y, _sampleSz.z ) );
+            currMask = currMask( Rect( trans.x, trans.y, _sampleSz.y, _sampleSz.z ) );
+
+            // copy and correct mask
+            Mat maskSple( _sampleSz.z, _sampleSz.y, CV_32FC1, currBuffMask + s * _maskBuffSz );
+            if ( rescaled )
+               correctMask( currMask, maskSple );
+            else
+               currMask.copyTo( maskSple );
+            if ( sum( maskSple )[0] < 20 ) continue;
+
+            // random small blur to remove artifacts + copy to destination
+            Mat imgSple( _sampleSz.z, _sampleSz.y, CV_32FC3, currBuffImg + s * _imgBuffSz );
+            cv_utils::adjustContrastBrightness<vec3>(
+                currImg, ( 1.0f + 0.11f * _rnGen( _rng ) ), 0.11f * _rnGen( _rng ) );
+            GaussianBlur( currImg, imgSple, Size( 5, 5 ), 0.31 * abs( _rnGen( _rng ) ) );
+
+            // copy and process depth
+            Mat depthSple( _sampleSz.z, _sampleSz.y, CV_32FC1, currBuffDepth + s * _depthBuffSz );
+            maskSple.convertTo( currMask, CV_8UC1, 255.0, 0.0 );
+            cv::Mat mean, std;
+            cv::meanStdDev( currDepth, mean, std, currMask );
+            depthSple = ( ( currDepth - mean ) / std );
+            // normalize( currDepth, depthSple, 0.0, 1.0, NORM_MINMAX, -1, currMask );
+            // this is for debugging !!!
+            depthSple = depthSple.mul( maskSple );
+
+            // copy and process eroded mask
+            // Mat erodedMaskSple( _sampleSz.z, _sampleSz.y, CV_32FC1, currBuffErodedMask );
+            // erode(maskSple, erodedMaskSple, Mat());
+
+            sampled[s] = 1;
          }
-
-         // random translate
-         const ivec2 trans(
-             std::floor( _tsGen( _rng ) * ( imgSz.x - _sampleSz.y ) ),
-             std::floor( _tsGen( _rng ) * ( imgSz.y - _sampleSz.z ) ) );
-
-         // crop
-         currImg = currImg( Rect( trans.x, trans.y, _sampleSz.y, _sampleSz.z ) );
-         currDepth = currDepth( Rect( trans.x, trans.y, _sampleSz.y, _sampleSz.z ) );
-         currMask = currMask( Rect( trans.x, trans.y, _sampleSz.y, _sampleSz.z ) );
-
-         // copy and correct mask
-         Mat maskSple( _sampleSz.z, _sampleSz.y, CV_32FC1, currBuffMask );
-         if ( rescaled )
-            correctMask( currMask, maskSple );
-         else
-            currMask.copyTo( maskSple );
-         if (sum(maskSple)[0] < 20)
-         {
-            --s;
-            continue;
-         }
-
-         // random small blur to remove artifacts + copy to destination
-         Mat imgSple( _sampleSz.z, _sampleSz.y, CV_32FC3, currBuffImg );
-         cv_utils::adjustContrastBrightness<vec3>(
-             currImg, ( 1.0f + 0.11f * _rnGen( _rng ) ), 0.11f * _rnGen( _rng ) );
-         GaussianBlur( currImg, imgSple, Size( 5, 5 ), 0.31 * abs( _rnGen( _rng ) ) );
-
-         // copy and process depth
-         Mat depthSple( _sampleSz.z, _sampleSz.y, CV_32FC1, currBuffDepth );
-         maskSple.convertTo( currMask, CV_8UC1, 255.0, 0.0 );
-         cv::Mat mean, std;
-         cv::meanStdDev( currDepth, mean, std, currMask );
-         depthSple = (( currDepth - mean ) / std);
-         //normalize( currDepth, depthSple, 0.0, 1.0, NORM_MINMAX, -1, currMask );
-         // this is for debugging !!!
-         depthSple = depthSple.mul( maskSple );
-
-         // copy and process eroded mask
-         // Mat erodedMaskSple( _sampleSz.z, _sampleSz.y, CV_32FC1, currBuffErodedMask );
-         // erode(maskSple, erodedMaskSple, Mat());
-
-         currBuffImg += _imgBuffSz;
-         currBuffDepth += _depthBuffSz;
-         currBuffMask += _maskBuffSz;
-         currBuffErodedMask += _maskBuffSz;
-      }
+      } while ( accumulate( sampled.begin(), sampled.end(), 0 ) != _sampleSz.x );
 
       return true;
    }
-
-   size_t nSamples() const { return _data.size(); }
-   ivec3 sampleSizes() const { return _sampleSz; }
 };
 
 array<unique_ptr<Sampler>, 33> g_samplers;
@@ -253,7 +292,9 @@ extern "C" int initBuffersDataSampler(
    const ivec3 sz( params[0], params[1], params[2] );
    const bool toLinear( nParams > 3 ? params[3] > 0.0 : false );
    const bool doRescale( nParams > 4 ? params[4] > 0.0 : false );
-   g_samplers[sidx].reset( new Sampler( datasetPath, dataPath, sz, toLinear, doRescale, seed ) );
+   const bool doAsync( nParams > 5 ? params[5] > 0.0 : true );
+   g_samplers[sidx].reset(
+       new Sampler( datasetPath, dataPath, sz, toLinear, doRescale, doAsync, seed ) );
 
    return g_samplers[sidx]->nSamples() ? SUCCESS : ERROR_BAD_DB;
 }

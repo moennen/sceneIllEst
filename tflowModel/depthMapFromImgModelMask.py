@@ -34,12 +34,12 @@ class DatasetTF(object):
         self.__ds = BufferDataSampler(
             DatasetTF.__lib, dbPath, imgRootDir, params, seed)
         self.data = tf.data.Dataset.from_generator(
-            self.sample, (tf.float32, tf.float32, tf.float32, tf.float32))
+            self.sample, (tf.float32, tf.float32, tf.float32))
 
     def sample(self):
         for i in itertools.count(1):
-            currImg, currDepth, currMask, currErodedMask = self.__ds.getDataBuffers()
-            yield (currImg, currDepth, currMask, currErodedMask)
+            currImg, currDepth, currMask = self.__ds.getDataBuffers()
+            yield (currImg, currDepth, currMask)
 
 
 def loadValidationData(dataPath, dataRootDir, dataSz, linearCS=False):
@@ -95,7 +95,7 @@ def testDataset(imgRootDir, trainPath):
 
         for step in range(100):
 
-            currImg, currDepth, currMask, currErodedMask = sess.run(dsView)
+            currImg, currDepth, currMask = sess.run(dsView)
 
             idx = random.randint(0, batchSz-1)
 
@@ -112,9 +112,7 @@ def testDataset(imgRootDir, trainPath):
 
             cv.imshow('currMask', currMask[idx])
 
-            cv.imshow('currErodedMask', currErodedMask[idx])
-
-            cv.waitKey(250)
+            cv.waitKey(10)
 
 #-----------------------------------------------------------------------------------------------------
 # PARAMETERS
@@ -128,7 +126,7 @@ class DepthPredictionModelParams(Pix2PixParams):
         #
         # model 0 : scale_l2 / resize / pix2pix_gen_p / bn
         # model 1 : scale_charbonnier / resize / pix2pix_gen_p / bn
-        # model 2 : MeanStdDev_charbonnier / resize / pix2pix_gen_p / bn
+        # model 2 : 296x296x3 / MeanStdDev_charbonnier_0.7 / resize / pix2pix_gen_p / bn
         #
 
         seed = 0
@@ -161,15 +159,16 @@ class DepthPredictionModelParams(Pix2PixParams):
         self.linearImg = False
         self.rescaleImg = True
 
-        self.modelNbToKeep = 5
-
         # network arch function
         self.model = pix2pix_gen_p
 
         # loss function
         self.inMask = tf.placeholder(tf.float32, shape=[
             self.batchSz, self.imgSzTr[0], self.imgSzTr[1], 1], name="input_mask")
+        self.varLossAlpha = 0.7
         self.loss = self.loss_masked_meanstd_norm_charbonnier
+
+        self.doProfile = False
 
         self.update()
 
@@ -178,8 +177,9 @@ class DepthPredictionModelParams(Pix2PixParams):
         # output depth map mean / stdDev normalization
         outputs_means = tf.reduce_mean(outputs, axis=[1, 2], keepdims=True)
         outputs_centered = tf.subtract(outputs, outputs_means)
-        outputs_stdDev = tf.add(tf.sqrt(tf.reduce_mean(
-            tf.square(outputs_centered), axis=[1, 2], keepdims=True)), EPS)
+        outputs_var = tf.reduce_mean(
+            tf.square(outputs_centered), axis=[1, 2], keepdims=True)
+        outputs_stdDev = tf.add(tf.sqrt(outputs_var), EPS)
         outputs_sc = tf.divide(outputs_centered, outputs_stdDev)
 
         # targets should be already mean / stdDev normalized
@@ -189,8 +189,15 @@ class DepthPredictionModelParams(Pix2PixParams):
         diff = tf.multiply(tf.subtract(outputs_sc, targets_sc), self.inMask)
         nvalid_b = tf.reduce_sum(self.inMask, axis=[1, 2])
 
-        return tf.reduce_mean(tf.divide(
+        data_loss = tf.reduce_mean(tf.divide(
             tf.reduce_sum(tf.sqrt(EPS + tf.square(diff)), axis=[1, 2]), nvalid_b))
+
+        # variance loss : to bias the outputs toward high precision
+        outputs_var_masked = tf.divide(tf.reduce_sum(
+            tf.multiply(outputs_centered, self.inMask), axis=[1, 2]), nvalid_b)
+        var_loss = tf.reduce_mean(tf.subtract(1.0, outputs_var_masked))
+
+        return data_loss + self.varLossAlpha * var_loss
 
     def loss_masked_logscale_charbonnier(self, outputs, targets):
 
@@ -406,11 +413,9 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath, valPath):
 
     # Session configuration
     sess_config = tf.ConfigProto(device_count={'GPU': 1})
-    # sess_config.gpu_options.per_process_gpu_memory_fraction = 0.4
-    # sess_config.gpu_options.allow_growth = True
+    sess_config.gpu_options.allow_growth = True
 
     with tf.Session(config=sess_config) as sess:
-        # with tf.Session() as sess:
 
         train_summary_writer = tf.summary.FileWriter(
             lp.tbLogsPath + "/Train", graph=sess.graph)
@@ -418,8 +423,12 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath, valPath):
         val_summary_writer = tf.summary.FileWriter(lp.tbLogsPath + "/Val")
 
         # profiling
-        # run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
-        # run_metadata = tf.RunMetadata()
+        if lp.doProfile:
+            run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
+            run_metadata = tf.RunMetadata()
+        else:
+            run_options = None
+            run_metadata = None
 
         # initialize params
         sess.run(varInit)
@@ -433,33 +442,49 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath, valPath):
 
         sess.run(trInit)
 
+        step = lp.globalStep.eval(sess)
+
         # get each element of the training dataset until the end is reached
-        while lp.globalStep.eval(sess) < lp.numSteps:
+        while step < lp.numSteps:
+
+            # print "------------------------------------------"
 
             # Get the next training batch
-            currImg, currDepth, currMask, _ = sess.run(dsView)
+            # print "dsView"
+            #start_ms = time.time()*1000.0
+            currImg, currDepth, currMask = sess.run(
+                dsView, options=run_options, run_metadata=run_metadata)
+            #end_ms = time.time()*1000.0
+            # print(end_ms-start_ms)
+
+            if lp.doProfile:
+                lp.profiler.update(timeline.Timeline(
+                    run_metadata.step_stats).generate_chrome_trace_format(), "dsView")
 
             trFeed = {lp.isTraining: True,
                       inImgi: currImg,
                       inDepthi: currDepth,
                       lp.inMask: currMask}
 
-            step = lp.globalStep.eval(sess) + 1
+            step = step + 1
 
+            # print "opts"
+            #start_ms = time.time()*1000.0
             # Run optimization
             if step % lp.trlogStep == 0:
-                _, summary, _ = sess.run(
+                _, summary, step = sess.run(
                     [opts, trSum, lp.globalStepInc], feed_dict=trFeed)
                 train_summary_writer.add_summary(summary, step)
             else:
-                sess.run([opts, lp.globalStepInc], feed_dict=trFeed)
+                _, step = sess.run([opts, lp.globalStepInc], feed_dict=trFeed,
+                                   options=run_options, run_metadata=run_metadata)
 
-            # if profile:
-            #     # Create the Timeline object, and write it to a json
-            #     tl = timeline.Timeline(run_metadata.step_stats)
-            #     ctf = tl.generate_chrome_trace_format()
-            #     with open('timeline.json', 'w') as f:
-            #         f.write(ctf)
+                if lp.doProfile:
+                    lp.profiler.update(timeline.Timeline(
+                        run_metadata.step_stats).generate_chrome_trace_format(), "opts")
+
+            #end_ms = time.time()*1000.0
+            # print(end_ms-start_ms)
 
             # SUMMARIES
 
@@ -473,7 +498,7 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath, valPath):
             if step % lp.tslogStep == 0:
 
                 sess.run(tsInit)
-                currImg, currDepth, currMask, _ = sess.run(dsView)
+                currImg, currDepth, currMask = sess.run(dsView)
                 tsLoss, summary = sess.run([loss, tsSum], feed_dict={lp.isTraining: False,
                                                                      inImgi: currImg,
                                                                      inDepthi: currDepth,
@@ -502,6 +527,10 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath, valPath):
                 persistency.save(sess, lp.modelFilename,
                                  global_step=lp.globalStep)
 
+        # WRITE PROFILER
+        if lp.doProfile:
+            lp.profiler.save()
+
 
 #-----------------------------------------------------------------------------------------------------
 #-----------------------------------------------------------------------------------------------------
@@ -529,7 +558,7 @@ if __name__ == "__main__":
 
     #------------------------------------------------------------------------------------------------
 
-    # testDataset(args.imgRootDir, args.trainLstPath)
+    #testDataset(args.imgRootDir, args.trainLstPath)
 
     #------------------------------------------------------------------------------------------------
 
@@ -542,8 +571,8 @@ if __name__ == "__main__":
 
     #------------------------------------------------------------------------------------------------
 
-    #evalModel(args.modelPath, args.imgRootDir, args.valLstPath, True, 512)
+    # evalModel(args.modelPath, args.imgRootDir, args.valLstPath, True, 512)
 
     #------------------------------------------------------------------------------------------------
 
-    #saveModel(args.modelPath, False)
+    # saveModel(args.modelPath, False)

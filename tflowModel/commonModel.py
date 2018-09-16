@@ -4,6 +4,7 @@
 import sys
 import os
 import time
+import json
 import tensorflow as tf
 #from matplotlib import pyplot as plt
 import numpy as np
@@ -128,6 +129,42 @@ def loadResizeImgPIL(img_name, imgSz, linearCS):
     return im
 
 #-----------------------------------------------------------------------------------------------------
+# PROFILER
+#-----------------------------------------------------------------------------------------------------
+
+
+class Profiler:
+
+    def __init__(self, tl_path):
+        self._tl_path = tl_path
+        self._timeline_dict = {}
+
+    def update(self, chrome_trace, event_id):
+        # convert crome trace to python dict
+        chrome_trace_dict = json.loads(chrome_trace)
+        # for first run store full trace
+        if event_id not in self._timeline_dict:
+            self._timeline_dict[event_id] = chrome_trace_dict
+        # for other - update only time consumption, not definitions
+        else:
+            for event in chrome_trace_dict['traceEvents']:
+                # events time consumption started with 'ts' prefix
+                if 'ts' in event:
+                    self._timeline_dict[event_id]['traceEvents'].append(event)
+
+    def save(self):
+        try:
+            i = 0
+            for event_id in self._timeline_dict:
+                with open(self._tl_path + '_02_step_%d.json' % i, 'w') as f:
+                    # with open(self._tl_path + '_step_{:02d}.json'.format(i), 'w') as f:
+                    json.dump(self._timeline_dict[event_id], f)
+                i += 1
+        except:
+            print "Cannot save profiler data :", sys.exc_info()[0]
+
+
+#-----------------------------------------------------------------------------------------------------
 # PARAMETERS
 #-----------------------------------------------------------------------------------------------------
 
@@ -160,7 +197,10 @@ class LearningParams:
 
         self.tbLogsPath = modelPath + "/tbLogs"
         self.modelFilename = modelPath + "/tfData"
-        self.modelNbToKeep = 3
+        self.modelNbToKeep = 7
+
+        self.doProfile = False
+        self.profiler = None
 
         self.doExtSummary = True
 
@@ -169,6 +209,9 @@ class LearningParams:
         tf.set_random_seed(self.rseed)
 
     def update(self):
+
+        if self.doProfile:
+            self.profiler = Profiler(self.modelFilename + "-tl")
 
         self.numMaxSteps = max(self.numMaxSteps, self.numSteps)
         self.learningRate = tf.train.polynomial_decay(self.baseLearningRate, self.globalStep, self.numMaxSteps, 0.0,
@@ -377,8 +420,10 @@ def pix2pix_deconv_bn(inputs, ref, i_n, o_n, ks, ss, strided, bn, train):
                                            kernel_initializer=tf.contrib.layers.xavier_initializer())
         # should pad the layer tensor to be able to concat it with the ref tensor
         # if ss > 1:
-        #    pad_mat = np.array([[0, 0], [0, ref.shape[1]-ref.shape[1]],
-        #                        [0, ref.shape[2]-ref.shape[2]], [0, 0]])
+        #    ref_shape = tf.shape(ref)
+        #    layer_shape = tf.shape(layer)
+        #    pad_mat = [[0, 0], [0, layer_shape[1]-ref_shape[1]],
+        #               [0, ref_shape[2]-layer_shape[2]], [0, 0]]
         #    layer = tf.pad(layer, pad_mat)
         #layer = pix2pix_conv(layer, i_n, o_n, ks, 1, not bn)
 
