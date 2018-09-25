@@ -63,9 +63,6 @@ int main( int argc, char* argv[] )
       return -1;
    }
 
-   unsigned startIdx = 0;
-   const int nMaxRendersPerGroup = 10000;
-
    // Loop through the data
    for ( size_t i = 0; i < imgLst.size(); ++i )
    {

@@ -1,0 +1,46 @@
+#version 450
+
+layout (local_size_x = 16, local_size_y = 16) in;
+
+layout(binding = 0) uniform UniformBufferObject 
+{
+    uvec3 inBufferSize;
+    uvec3 outBufferSize;
+};
+
+// diffuse buffer to be splatted
+layout (binding = 1, std430) readonly buffer rgbBuffer
+{
+   float rgbBuff[];
+};
+
+// uv+depth buffer : uv are texture coordinate to the destination texture
+layout (binding = 2, std430) readonly buffer uvdBuffer
+{
+   float uvdBuff[];
+};
+
+// splatted diffuse buffer
+layout (binding = 3, std430) writeonly buffer rgbSplatBuffer
+{
+   float rgbSplatBuff[];
+};
+
+void main()
+{
+   const uvec2 pos = uvec2( gl_GlobalInvocationID.x, gl_GlobalInvocationID.y);
+   if (any(greaterThanEqual(pos,inBufferSize.xy))) return;
+   const uint id = (pos.y*inBufferSize.x + pos.x)* inBufferSize.z;
+   
+   const vec4 rgb = vec4(rgbBuff[id],rgbBuff[id+1],rgbBuff[id+2],0.0);
+   const vec2 uv = vec2(uvdBuff[id],uvdBuff[id+1]);
+
+   const vec2 posOut = (((vec2(pos)/vec2(inBufferSize.xy))*vec2(outBufferSize)));
+   //const uint idOut = (posOut.y*outBufferSize.x + posOut.x) * outBufferSize.z;
+   /*rgbSplatBuff[idOut] = rgb.r;
+   rgbSplatBuff[idOut+1] = rgb.g;
+   rgbSplatBuff[idOut+2] = rgb.b;*/
+   rgbSplatBuff[id] = float(posOut.x) / outBufferSize.x;
+   rgbSplatBuff[id+1] = float(posOut.y) / outBufferSize.y;
+   rgbSplatBuff[id+2] = 0.0;
+}

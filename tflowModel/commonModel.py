@@ -6,7 +6,7 @@ import os
 import time
 import json
 import tensorflow as tf
-#from matplotlib import pyplot as plt
+# from matplotlib import pyplot as plt
 import numpy as np
 from PIL import Image
 
@@ -171,7 +171,7 @@ class Profiler:
 
 class LearningParams:
 
-    def __init__(self, modelPath, seed=int(time.time())):
+    def __init__(self, modelPath, data_format='NHWC', seed=int(time.time())):
 
         self.numMaxSteps = 175000
         self.numSteps = self.numMaxSteps
@@ -194,6 +194,7 @@ class LearningParams:
                                                       power=0.7)
 
         self.isTraining = tf.placeholder(tf.bool)
+        self.data_format = data_format
 
         self.tbLogsPath = modelPath + "/tbLogs"
         self.modelFilename = modelPath + "/tfData"
@@ -203,6 +204,8 @@ class LearningParams:
         self.profiler = None
 
         self.doExtSummary = True
+
+        self.dispProcessOutputs = None
 
         self.rseed = seed
 
@@ -220,39 +223,37 @@ class LearningParams:
 
 
 #-----------------------------------------------------------------------------------------------------
-# OPERATORS
+# PREPARE INPUT
 #-----------------------------------------------------------------------------------------------------
 
+def preprocess(ins, center, data_format):
 
-def preprocess(imgs):
-    # -----> preprocessing : put the pix values in [-1..1]
-    with tf.name_scope('preprocess') as scope:
-
-        img_mean = tf.constant([0.5, 0.5, 0.5], dtype=tf.float32, shape=[
-            1, 1, 1, 3], name='img_mean')
-
-        return tf.multiply(tf.subtract(imgs, img_mean), 2.0)
+    outs = tf.transpose(
+        ins, [0, 3, 1, 2]) if data_format == 'NCHW' else ins
+    if center:
+        outs = tf.multiply(tf.subtract(outs, 0.5), 2.0)
+    return outs
 
 
-def postprocess(imgs):
-    # -----> preprocessing : put the pix values in [0..1]
-    with tf.name_scope('postprocess') as scope:
+def postprocess(ins, center, data_format):
 
-        img_mean = tf.constant([1.0, 1.0, 1.0], dtype=tf.float32, shape=[
-            1, 1, 1, 3], name='img_mean')
-
-        return tf.multiply(tf.add(imgs, img_mean), 0.5)
+    outs = tf.transpose(
+        ins, [0, 2, 3, 1]) if data_format == 'NCHW' else ins
+    if center:
+        outs = tf.multiply(tf.add(outs, 1.0), 0.5)
+    return outs
 
 
 #-----------------------------------------------------------------------------------------------------
 # IMG2IMG MODELS
 #-----------------------------------------------------------------------------------------------------
 
+
 class Pix2PixParams(LearningParams):
 
-    def __init__(self, modelPath, seed=int(time.time())):
+    def __init__(self, modelPath, data_format='NHWC', seed=int(time.time())):
 
-        LearningParams.__init__(self, modelPath, seed)
+        LearningParams.__init__(self, modelPath, data_format, seed)
 
         self.useBatchNorm = True
 
@@ -279,128 +280,216 @@ class Pix2PixParams(LearningParams):
 #
 
 
-def pix2pix_convo(inputs, i_n, o_n, ks, ss, bias):
+def increaseSize2x(inputs, i_n, data_format):
+
+    kernels = np.zeros((2, 2, i_n, i_n), dtype=np.float32)
+    v = 1.0
+    for i in range(i_n):
+        kernels[0, 0, i, i] = v
+        kernels[0, 1, i, i] = v
+        kernels[1, 0, i, i] = v
+        kernels[1, 1, i, i] = v
+
+    w = tf.constant(kernels)
+    strides = [1, 2, 2, 1] if data_format == 'NHWC' else [1, 1, 2, 2]
+    ref_shape = tf.shape(inputs)
+    if data_format == 'NHWC':
+        ref_shape = [ref_shape[0], 2*ref_shape[1], 2*ref_shape[2], i_n]
+    else:
+        ref_shape = [ref_shape[0], i_n, 2*ref_shape[2], 2*ref_shape[3]]
+
+    x = tf.nn.conv2d_transpose(
+        inputs, w, ref_shape, strides=strides, padding='SAME', data_format=data_format)
+
+    return x
+
+
+def increaseSize2xWithRef(inputs, ref, i_n, data_format):
+
+    kernels = np.zeros((2, 2, i_n, i_n), dtype=np.float32)
+    v = 1.0
+    for i in range(i_n):
+        kernels[0, 0, i, i] = v
+        kernels[0, 1, i, i] = v
+        kernels[1, 0, i, i] = v
+        kernels[1, 1, i, i] = v
+
+    w = tf.constant(kernels)
+    strides = [1, 2, 2, 1] if data_format == 'NHWC' else [1, 1, 2, 2]
+    ref_shape = tf.shape(ref)
+    if data_format == 'NHWC':
+        ref_shape = [ref_shape[0], ref_shape[1], ref_shape[2], i_n]
+    else:
+        ref_shape = [ref_shape[0], i_n, ref_shape[2], ref_shape[3]]
+
+    x = tf.nn.conv2d_transpose(
+        inputs, w, ref_shape, strides=strides, padding='SAME', data_format=data_format)
+
+    return x
+
+
+def reduceSize2x(inputs, i_n, data_format):
+
+    kernel = [[[0.125], [0.25], [0.125]], [
+        [0.25], [0.5], [0.25]], [[0.125], [0.25], [0.125]]]
+    w = tf.divide(tf.constant(kernel), 2.0)
+    w = tf.expand_dims(tf.concat([w for i in range(i_n)], axis=2), axis=3)
+    pad_size = 3//2
+    if data_format == 'NHWC':
+        pad_mat = np.array([[0, 0], [pad_size, pad_size],
+                            [pad_size, pad_size], [0, 0]])
+        strides = [1, 2, 2, 1]
+    else:
+        pad_mat = np.array(
+            [[0, 0], [0, 0], [pad_size, pad_size], [pad_size, pad_size]])
+        strides = [1, 1, 2, 2]
+
+    x = tf.pad(inputs, pad_mat)
+    x = tf.nn.depthwise_conv2d(
+        x, w, strides=strides, padding='VALID', data_format=data_format)
+
+    return x
+
+
+def filterLoG_5x5(inputs, i_n, data_format):
+
+    kernel = [[[0.0], [0.0], [0.3125], [0.0], [0.0]], [[0.0], [0.03125], [0.0625], [0.03125], [0.0]], [[0.03125], [0.0625], [-0.5], [0.0625], [0.03125]],
+              [[0.0], [0.03125], [0.0625], [0.03125], [0.0]], [[0.0], [0.0], [0.3125], [0.0], [0.0]]]
+    w = tf.constant(kernel)
+    w = tf.expand_dims(tf.concat([w for i in range(i_n)], axis=2), axis=3)
+    pad_size = 5//2
+    if data_format == 'NHWC':
+        pad_mat = np.array([[0, 0], [pad_size, pad_size],
+                            [pad_size, pad_size], [0, 0]])
+    else:
+        pad_mat = np.array(
+            [[0, 0], [0, 0], [pad_size, pad_size], [pad_size, pad_size]])
+    x = tf.pad(inputs, pad_mat)
+    x = tf.nn.depthwise_conv2d(
+        x, w, strides=[1, 1, 1, 1], padding='VALID', data_format=data_format)
+
+    return x
+
+
+def filterLoG_3x3(inputs, i_n, data_format):
+
+    kernel = [[[0.125], [0.125], [0.125]], [
+        [0.125], [-1.0], [0.125]], [[0.125], [0.125], [0.125]]]
+    w = tf.divide(tf.constant(kernel), 2.0)
+    w = tf.constant(kernel)
+    w = tf.expand_dims(tf.concat([w for i in range(i_n)], axis=2), axis=3)
+    pad_size = 3//2
+    if data_format == 'NHWC':
+        pad_mat = np.array([[0, 0], [pad_size, pad_size],
+                            [pad_size, pad_size], [0, 0]])
+    else:
+        pad_mat = np.array(
+            [[0, 0], [0, 0], [pad_size, pad_size], [pad_size, pad_size]])
+    x = tf.pad(inputs, pad_mat)
+    x = tf.nn.depthwise_conv2d(
+        x, w, strides=[1, 1, 1, 1], padding='VALID', data_format=data_format)
+
+    return x
+
+
+def pix2pix_convo(inputs, i_n, o_n, ks, ss, bias, data_format):
 
     return tf.layers.conv2d(inputs, o_n, ks, ss,
                             padding='same',
                             use_bias=bias,
+                            data_format=data_format,
                             kernel_initializer=tf.contrib.layers.xavier_initializer())
 
 
-def pix2pix_conv(inputs, i_n, o_n, ks, ss, bias):
+def pix2pix_conv(inputs, i_n, o_n, ks, ss, bias, data_format):
 
     initializer = tf.contrib.layers.xavier_initializer()
 
     shape = [ks, ks, i_n, o_n]
     w = tf.Variable(initializer(shape))
     pad_size = ks//2
-    pad_mat = np.array([[0, 0], [pad_size, pad_size],
-                        [pad_size, pad_size], [0, 0]])
+    if data_format == 'NHWC':
+        pad_mat = np.array([[0, 0], [pad_size, pad_size],
+                            [pad_size, pad_size], [0, 0]])
+        strides = [1, ss, ss, 1]
+    else:
+        pad_mat = np.array(
+            [[0, 0], [0, 0], [pad_size, pad_size], [pad_size, pad_size]])
+        strides = [1, 1, ss, ss]
     x = tf.pad(inputs, pad_mat)
-    x = tf.nn.conv2d(x, w, strides=[1, ss, ss, 1], padding='VALID')
+    x = tf.nn.conv2d(x, w, strides=strides,
+                     data_format=data_format, padding='VALID')
     if bias:
-        x = tf.nn.bias_add(x, tf.Variable(initializer([o_n])))
+        x = tf.nn.bias_add(x, tf.Variable(initializer([o_n])), data_format)
 
     return x
 
 
-def pix2pix_nconv(inputs, i_n, o_n, ks, ss):
+def pix2pix_deconv(inputs, ref, i_n, o_n, ks, ss, bias, data_format):
 
-    return tf.nn.relu(pix2pix_conv(inputs, i_n, o_n, ks, ss, True))
+    initializer = tf.contrib.layers.xavier_initializer()
+    shape = [ks, ks, o_n, i_n]
+    strides = [1, ss, ss, 1] if data_format == 'NHWC' else [1, 1, ss, ss]
+    w = tf.Variable(initializer(shape))
+    ref_shape = tf.shape(ref)
+    if data_format == 'NHWC':
+        ref_shape = [ref_shape[0], ref_shape[1], ref_shape[2], o_n]
+    else:
+        ref_shape = [ref_shape[0], o_n, ref_shape[2], ref_shape[3]]
+    x = tf.nn.conv2d_transpose(
+        inputs, w, ref_shape, strides=strides, padding='SAME', data_format=data_format)
+
+    if bias:
+        x = tf.nn.bias_add(x, tf.Variable(initializer([o_n])), data_format)
+
+    return x
 
 
-def pix2pix_nencoder(inputs, i_n, o_n, ks, ss, name):
+def pix2pix_cdeconv(inputs, ref, i_n, o_n, ks, ss, bias, data_format):
+
+    if ss == 2:
+        x = increaseSize2xWithRef(inputs, ref, i_n, data_format)
+        return pix2pix_conv(x, i_n, o_n, ks, 1, bias, data_format)
+
+    if ks == ss:
+        return pix2pix_deconv(inputs, ref, i_n, o_n, ks, ss, bias, data_format)
+    else:
+        x = pix2pix_deconv(inputs, ref, i_n, o_n, ss, ss, False, data_format)
+        return pix2pix_conv(x, o_n, o_n, ks, 1, bias, data_format)
+
+
+def pix2pix_nconv(inputs, i_n, o_n, ks, ss, data_format):
+
+    return tf.nn.relu(pix2pix_conv(inputs, i_n, o_n, ks, ss, True, data_format))
+
+
+def pix2pix_nencoder(inputs, i_n, o_n, ks, ss, name, data_format):
 
     with tf.variable_scope(name):
-        layer = pix2pix_nconv(inputs, i_n, o_n, ks, ss)
+        layer = pix2pix_nconv(inputs, i_n, o_n, ks, ss, data_format)
         layer = tf.nn.relu(layer)
         return layer
 
 
-def pix2pix_ndecoder(inputs, skip, i_n, o_n, ks, no_skip, name):
-
-    with tf.variable_scope(name):
-
-        layer_shape = tf.shape(skip)
-        layer = tf.image.resize_images(inputs,
-                                       [layer_shape[1], layer_shape[2]])
-        layer = pix2pix_nconv(layer, i_n, o_n, ks, 1)
-
-        if not no_skip:
-            layer = tf.concat([skip, layer], axis=3)
-
-        return layer
-
-
-def pix2pix_ngen(imgs, params):
-
-    n = params.nbChannels
-    nIn = params.nbInChannels
-    nOut = params.nbOutputChannels
-
-    ks = params.kernelSz
-    ess = params.stridedEncoder
-    dss = params.stridedDecoder
-
-    bn = params.useBatchNorm
-
-    train = params.isTraining
-
-    # encoder part
-
-    # S x I --> S x N
-    encoder_0 = pix2pix_nencoder(imgs, nIn, n, 3, 1, "encoder_0")
-    # S x N --> S/2 x 2*N
-    encoder_1 = pix2pix_nencoder(encoder_0, n, n*2, ks, 2, "encoder_1")
-    # S/2 x 2*N --> S/4 x 4*N
-    encoder_2 = pix2pix_nencoder(encoder_1, n*2, n*4, ks, 2, "encoder_2")
-    # S/4 x 4*N --> S/8 x 4*N
-    encoder_3 = pix2pix_nencoder(encoder_2, n*4, n*4, ks, 2, "encoder_3")
-    # S/8 x 8*N --> S/16 x 8*N
-    encoder_4 = pix2pix_nencoder(encoder_3, n*4, n*8, ks, 2, "encoder_4")
-    # S/16 x 8*N --> S/32 x 8*N
-    encoder_5 = pix2pix_nencoder(encoder_4, n*8, n*8, ks, 2, "encoder_5")
-
-    # decoder with skip connections
-
-    # S/32 x 8*N --> S/16 x 12*N
-    decoder_5 = pix2pix_ndecoder(
-        encoder_5, encoder_4, n*8, n*4, ks, False, "decoder_5")
-    # S/16 x 12*N --> S/8 x 8*N
-    decoder_4 = pix2pix_ndecoder(
-        decoder_5, encoder_3, n*12, n*4, ks, False, "decoder_4")
-    # S/8 x 8*N --> S/4 x 6*N
-    decoder_3 = pix2pix_ndecoder(
-        decoder_4, encoder_2, n*8, n*2, ks, False, "decoder_3")
-    # S/4 x 6*N --> S/2 x 4*N
-    decoder_2 = pix2pix_ndecoder(
-        decoder_3, encoder_1, n*6, n*2, ks, False, "decoder_2")
-    # S/2 x 4*N --> S x 2*N
-    decoder_1 = pix2pix_ndecoder(
-        decoder_2, encoder_0, n*4, n, ks, False, "decoder_1")
-    # S x N --> S x I
-    with tf.variable_scope("decoder_0"):
-        output = pix2pix_nconv(decoder_1, n*2, nOut, 3, 1)
-        if not params.doClassOut:
-            output = tf.nn.tanh(output)
-
-    return output
-
-
-def pix2pix_conv_bn(inputs, i_n, o_n, ks, ss, strided, bn, train):
+def pix2pix_conv_bn(inputs, i_n, o_n, ks, ss, strided, bn, train, data_format):
 
     if strided:
-        layer = pix2pix_conv(inputs, i_n, o_n, ks, ss, not bn)
+        layer = pix2pix_conv(inputs, i_n, o_n, ks, ss, not bn, data_format)
 
     else:
-        layer = layer = pix2pix_conv(inputs, i_n, o_n, ks, 1, not bn)
+        layer = pix2pix_conv(
+            inputs, i_n, o_n, ks, 1, not bn, data_format)
+        if data_format == 'NCHW':
+            layer = tf.transpose(layer, [0, 2, 3, 1])
         layer_shape = tf.shape(layer)
         layer = tf.image.resize_area(
             layer, [layer_shape[1] / ss, layer_shape[2] / ss])
+        if data_format == 'NCHW':
+            layer = tf.transpose(layer, [0, 3, 1, 2])
 
     if bn:
         layer = tf.layers.batch_normalization(layer,
-                                              axis=3,
+                                              axis=3 if data_format == 'NHWC' else 1,
                                               momentum=0.1,
                                               epsilon=1e-5,
                                               center=True,
@@ -409,33 +498,40 @@ def pix2pix_conv_bn(inputs, i_n, o_n, ks, ss, strided, bn, train):
     return layer
 
 
-def pix2pix_deconv_bn(inputs, ref, i_n, o_n, ks, ss, strided, bn, train):
+def pix2pix_deconv_bn(inputs, ref, i_n, o_n, ks, ss, strided, bn, train, data_format):
 
+    # image resize does not exist in NCHW
     if strided:
-        layer = tf.layers.conv2d_transpose(inputs, o_n,
-                                           kernel_size=ks,
-                                           strides=(ss, ss),
-                                           padding="same",
-                                           use_bias=not bn,
-                                           kernel_initializer=tf.contrib.layers.xavier_initializer())
-        # should pad the layer tensor to be able to concat it with the ref tensor
+        layer = pix2pix_cdeconv(inputs, ref, i_n, o_n,
+                                ks, ss, not bn, data_format)
+        # layer = tf.layers.conv2d_transpose(inputs, o_n,
+        #                                    kernel_size=ks,
+        #                                    strides=(ss, ss),
+        #                                    padding="same",
+        #                                    data_format='channels_last' if data_format == 'NHWC' else 'channels_first',
+        #                                    use_bias=not bn,
+        #                                    kernel_initializer=tf.contrib.layers.xavier_initializer())
+        # # should pad the layer tensor to be able to concat it with the ref tensor
         # if ss > 1:
-        #    ref_shape = tf.shape(ref)
-        #    layer_shape = tf.shape(layer)
-        #    pad_mat = [[0, 0], [0, layer_shape[1]-ref_shape[1]],
-        #               [0, ref_shape[2]-layer_shape[2]], [0, 0]]
-        #    layer = tf.pad(layer, pad_mat)
-        #layer = pix2pix_conv(layer, i_n, o_n, ks, 1, not bn)
+        #     layer = tf.slice(layer, [0, 0, 0, 0], tf.shape(ref))
+        # #layer = pix2pix_conv(layer, i_n, o_n, ks, 1, not bn, data_format)
 
     else:
         layer_shape = tf.shape(ref)
-        layer = tf.image.resize_bilinear(inputs,
-                                         [layer_shape[1], layer_shape[2]])
-        layer = pix2pix_conv(layer, i_n, o_n, ks, 1, not bn)
+        if data_format == 'NCHW':
+            inputs = tf.transpose(inputs, [0, 2, 3, 1])
+            layer_wh = [layer_shape[2], layer_shape[3]]
+        else:
+            layer_wh = [layer_shape[1], layer_shape[2]]
+        layer = tf.image.resize_bilinear(inputs, layer_wh)
+        if data_format == 'NCHW':
+            layer = tf.transpose(layer, [0, 3, 1, 2])
+
+        layer = pix2pix_conv(layer, i_n, o_n, ks, 1, not bn, data_format)
 
     if bn:
         layer = tf.layers.batch_normalization(layer,
-                                              axis=3,
+                                              axis=3 if data_format == 'NHWC' else 1,
                                               momentum=0.1,
                                               epsilon=1e-5,
                                               center=True,
@@ -445,85 +541,97 @@ def pix2pix_deconv_bn(inputs, ref, i_n, o_n, ks, ss, strided, bn, train):
     return layer
 
 
-def pix2pix_deception_bn(inputs, i_n, n, o_n, ss, strided, bn, name, train):
+def pix2pix_deception_bn(inputs, i_n, n, o_n, ss, strided, bn, name, train, data_format):
 
     with tf.variable_scope(name):
 
-        c3 = pix2pix_conv_bn(inputs, i_n, n, 1, 1, True, False, train)
+        c3 = pix2pix_conv_bn(inputs, i_n, n, 1, 1, True,
+                             False, train, data_format)
         c3 = tf.nn.relu(c3)
-        c3 = pix2pix_conv_bn(c3, n, o_n//2, 3, ss, strided, bn, train)
+        c3 = pix2pix_conv_bn(c3, n, o_n//2, 3, ss,
+                             strided, bn, train, data_format)
         c3 = tf.nn.relu(c3)
 
-        c7 = pix2pix_conv_bn(inputs, i_n, n, 1, 1, True, False, train)
+        c7 = pix2pix_conv_bn(inputs, i_n, n, 1, 1, True,
+                             False, train, data_format)
         c7 = tf.nn.relu(c7)
-        c7 = pix2pix_conv_bn(c7, n, o_n//2, 7, ss, strided, bn, train)
+        c7 = pix2pix_conv_bn(c7, n, o_n//2, 7, ss,
+                             strided, bn, train, data_format)
         c7 = tf.nn.relu(c7)
 
-        layer = tf.concat([c3, c7], axis=3)
+        layer = tf.concat([c3, c7], axis=3 if data_format ==
+                          'NHWC' else 1)
 
         return layer
 
 
-def pix2pix_uception_bn(inputs, ref, i_n, n, o_n, ss, strided, bn, name, train):
+def pix2pix_uception_bn(inputs, ref, i_n, n, o_n, ss, strided, bn, name, train, data_format):
 
     with tf.variable_scope(name):
 
-        c3 = pix2pix_conv_bn(inputs, i_n, n, 1, 1, True, False, train)
+        c3 = pix2pix_conv_bn(inputs, i_n, n, 1, 1, True,
+                             False, train, data_format)
         c3 = tf.nn.relu(c3)
-        c3 = pix2pix_deconv_bn(c3, ref, n, o_n//2, 3, ss, strided, bn, train)
+        c3 = pix2pix_deconv_bn(c3, ref, n, o_n//2, 3, ss,
+                               strided, bn, train, data_format)
         c3 = tf.nn.relu(c3)
 
-        c7 = pix2pix_conv_bn(inputs, i_n, n, 1, 1, True, False, train)
+        c7 = pix2pix_conv_bn(inputs, i_n, n, 1, 1, True,
+                             False, train, data_format)
         c7 = tf.nn.relu(c7)
-        c7 = pix2pix_deconv_bn(c7, ref, n, o_n//2, 7, ss, strided, bn, train)
+        c7 = pix2pix_deconv_bn(c7, ref, n, o_n//2, 7, ss,
+                               strided, bn, train, data_format)
         c7 = tf.nn.relu(c7)
 
-        layer = tf.concat([c3, c7], axis=3)
+        layer = tf.concat([c3, c7], axis=3 if data_format ==
+                          'NHWC' else 1)
         layer = tf.add(layer, ref)
 
         return layer
 
 
-def pix2pix_encoder_bn(inputs, i_n, o_n, ks, ss, strided, bn, name, train):
+def pix2pix_encoder_bn(inputs, i_n, o_n, ks, ss, strided, bn, name, train, data_format):
 
     with tf.variable_scope(name):
 
-        layer = pix2pix_conv_bn(inputs, i_n, o_n, ks, ss, strided, bn, train)
+        layer = pix2pix_conv_bn(inputs, i_n, o_n, ks,
+                                ss, strided, bn, train, data_format)
         layer = tf.nn.relu(layer)
 
         return layer
 
 
-def pix2pix_decoder(inputs, ref, i_n, o_n, ks, ss, strided, bn, name, train):
+def pix2pix_decoder(inputs, ref, i_n, o_n, ks, ss, strided, bn, name, train, data_format):
 
     with tf.variable_scope(name):
 
         layer = pix2pix_deconv_bn(
-            inputs, ref, i_n, o_n, ks, ss, strided, bn, train)
+            inputs, ref, i_n, o_n, ks, ss, strided, bn, train, data_format)
         layer = tf.nn.relu(layer)
 
         return layer
 
 
-def pix2pix_decoder_skip(inputs, skip, i_n, o_n, ks, ss, strided, bn, name, train):
+def pix2pix_decoder_skip(inputs, skip, i_n, o_n, ks, ss, strided, bn, name, train, data_format):
 
     with tf.variable_scope(name):
 
         layer = pix2pix_deconv_bn(
-            inputs, skip, i_n, o_n, ks, ss, strided, bn, train)
+            inputs, skip, i_n, o_n, ks, ss, strided, bn, train, data_format)
         layer = tf.nn.relu(layer)
 
-        layer = tf.concat([skip, layer], axis=3)
+        layer = tf.concat(
+            [skip, layer], axis=3 if data_format == 'NHWC' else 1)
 
         return layer
 
 
-def pix2pix_decoder_res(inputs, res, i_n, o_n, ks, ss, strided, bn, name, train):
+def pix2pix_decoder_res(inputs, res, i_n, o_n, ks, ss, strided, bn, name, train, data_format):
 
     with tf.variable_scope(name):
 
         layer = pix2pix_deconv_bn(
-            inputs, res, i_n, o_n, ks, ss, strided, bn, train)
+            inputs, res, i_n, o_n, ks, ss, strided, bn, train, data_format)
         layer = tf.nn.relu(layer)
 
         layer = tf.add(layer, res)
@@ -536,6 +644,7 @@ def pix2pix_gen(imgs, params):
     n = params.nbChannels
     nIn = params.nbInChannels
     nOut = params.nbOutputChannels
+    data_format = params.data_format
 
     ks = params.kernelSz
     ess = params.stridedEncoder
@@ -549,44 +658,44 @@ def pix2pix_gen(imgs, params):
 
     # S x I --> S x N
     encoder_0 = pix2pix_encoder_bn(
-        imgs, nIn, n, 3, 1, True, False, "encoder_0", train)
+        imgs, nIn, n, 3, 1, True, False, "encoder_0", train, data_format)
     # S x N --> S/2 x 2*N
     encoder_1 = pix2pix_encoder_bn(
-        encoder_0, n, n*2, ks, 2, ess, bn, "encoder_1", train)
+        encoder_0, n, n*2, ks, 2, ess, bn, "encoder_1", train, data_format)
     # S/2 x 2*N --> S/4 x 4*N
     encoder_2 = pix2pix_encoder_bn(
-        encoder_1, n*2, n*4, ks, 2, ess, bn, "encoder_2", train)
+        encoder_1, n*2, n*4, ks, 2, ess, bn, "encoder_2", train, data_format)
     # S/4 x 4*N --> S/8 x 4*N
     encoder_3 = pix2pix_encoder_bn(
-        encoder_2, n*4, n*4, ks, 2, ess, bn, "encoder_3", train)
+        encoder_2, n*4, n*4, ks, 2, ess, bn, "encoder_3", train, data_format)
     # S/8 x 8*N --> S/16 x 8*N
     encoder_4 = pix2pix_encoder_bn(
-        encoder_3, n*4, n*8, ks, 2, ess, bn, "encoder_4", train)
+        encoder_3, n*4, n*8, ks, 2, ess, bn, "encoder_4", train, data_format)
     # S/16 x 8*N --> S/32 x 8*N
     encoder_5 = pix2pix_encoder_bn(
-        encoder_4, n*8, n*8, ks, 2, ess, bn, "encoder_5", train)
+        encoder_4, n*8, n*8, ks, 2, ess, bn, "encoder_5", train, data_format)
 
     # decoder with skip connections
 
     # S/32 x 8*N --> S/16 x 12*N
     decoder_5 = pix2pix_decoder_skip(
-        encoder_5, encoder_4, n*8, n*4, ks, 2, dss, bn, "decoder_5", train)
+        encoder_5, encoder_4, n*8, n*4, ks, 2, dss, bn, "decoder_5", train, data_format)
     # S/16 x 12*N --> S/8 x 8*N
     decoder_4 = pix2pix_decoder_skip(
-        decoder_5, encoder_3, n*12, n*4, ks, 2, dss, bn, "decoder_4", train)
+        decoder_5, encoder_3, n*12, n*4, ks, 2, dss, bn, "decoder_4", train, data_format)
     # S/8 x 8*N --> S/4 x 6*N
     decoder_3 = pix2pix_decoder_skip(
-        decoder_4, encoder_2, n*8, n*2, ks, 2, dss, bn, "decoder_3", train)
+        decoder_4, encoder_2, n*8, n*2, ks, 2, dss, bn, "decoder_3", train, data_format)
     # S/4 x 6*N --> S/2 x 4*N
     decoder_2 = pix2pix_decoder_skip(
-        decoder_3, encoder_1, n*6, n*2, ks, 2, dss, bn, "decoder_2", train)
+        decoder_3, encoder_1, n*6, n*2, ks, 2, dss, bn, "decoder_2", train, data_format)
     # S/2 x 4*N --> S x 2*N
     decoder_1 = pix2pix_decoder_skip(
-        decoder_2, encoder_0, n*4, n, ks, 2, dss, bn, "decoder_1", train)
+        decoder_2, encoder_0, n*4, n, ks, 2, dss, bn, "decoder_1", train, data_format)
     # S x N --> S x I
     with tf.variable_scope("decoder_0"):
         output = pix2pix_conv_bn(decoder_1, n*2, nOut,
-                                 3, 1, True, False, train)
+                                 3, 1, True, False, train, data_format)
         if not params.doClassOut:
             output = tf.nn.tanh(output)
 
@@ -598,6 +707,7 @@ def pix2pix_gen_p(imgs, params):
     n = params.nbChannels
     nIn = params.nbInChannels
     nOut = params.nbOutputChannels
+    data_format = params.data_format
 
     ks = params.kernelSz
     ess = params.stridedEncoder
@@ -611,53 +721,53 @@ def pix2pix_gen_p(imgs, params):
 
     # S x I --> S x N
     encoder_0 = pix2pix_encoder_bn(
-        imgs, nIn, n, ks, 1, True, False, "encoder_0", train)
+        imgs, nIn, n, ks, 1, True, False, "encoder_0", train, data_format)
     # S x N --> S/2 x 2*N
     encoder_1 = pix2pix_encoder_bn(
-        encoder_0, n, n*2, ks, 2, ess, bn, "encoder_1", train)
+        encoder_0, n, n*2, ks, 2, ess, bn, "encoder_1", train, data_format)
     # S/2 x 2*N --> S/4 x 4*N
     encoder_2 = pix2pix_encoder_bn(
-        encoder_1, n*2, n*4, ks, 2, ess, bn, "encoder_2", train)
+        encoder_1, n*2, n*4, ks, 2, ess, bn, "encoder_2", train, data_format)
     # S/4 x 4*N --> S/8 x 4*N
     encoder_3 = pix2pix_encoder_bn(
-        encoder_2, n*4, n*4, ks, 2, ess, bn, "encoder_3", train)
+        encoder_2, n*4, n*4, ks, 2, ess, bn, "encoder_3", train, data_format)
     # S/8 x 8*N --> S/16 x 8*N
     encoder_4 = pix2pix_encoder_bn(
-        encoder_3, n*4, n*8, ks, 2, ess, bn, "encoder_4", train)
+        encoder_3, n*4, n*8, ks, 2, ess, bn, "encoder_4", train, data_format)
     # S/16 x 8*N --> S/32 x 8*N
     encoder_5 = pix2pix_encoder_bn(
-        encoder_4, n*8, n*8, ks, 2, ess, bn, "encoder_5", train)
+        encoder_4, n*8, n*8, ks, 2, ess, bn, "encoder_5", train, data_format)
     # S/32 x 8*N --> S/64 x 4*N
     encoder_6 = pix2pix_encoder_bn(
-        encoder_5, n*8, n*4, ks, 2, ess, bn, "encoder_6", train)
+        encoder_5, n*8, n*4, ks, 2, ess, bn, "encoder_6", train, data_format)
     # S/64 x 4*N --> S/64 x 4*N
     encoder_7 = pix2pix_encoder_bn(
-        encoder_6, n*4, n*4, ks, 1, ess, bn, "encoder_7", train)
+        encoder_6, n*4, n*4, ks, 1, ess, bn, "encoder_7", train, data_format)
 
     # decoder with skip connections
 
     # S/64 x 4*N --> S/32 x 12*N
     decoder_6 = pix2pix_decoder_skip(
-        encoder_7, encoder_5, n*4, n*4, ks, 2, dss, bn, "decoder_6", train)
+        encoder_7, encoder_5, n*4, n*4, ks, 2, dss, bn, "decoder_6", train, data_format)
     # S/32 x 12*N --> S/16 x 12*N
     decoder_5 = pix2pix_decoder_skip(
-        decoder_6, encoder_4, n*12, n*4, ks, 2, dss, bn, "decoder_5", train)
+        decoder_6, encoder_4, n*12, n*4, ks, 2, dss, bn, "decoder_5", train, data_format)
     # S/16 x 12*N --> S/8 x 8*N
     decoder_4 = pix2pix_decoder_skip(
-        decoder_5, encoder_3, n*12, n*4, ks, 2, dss, bn, "decoder_4", train)
+        decoder_5, encoder_3, n*12, n*4, ks, 2, dss, bn, "decoder_4", train, data_format)
     # S/8 x 8*N --> S/4 x 6*N
     decoder_3 = pix2pix_decoder_skip(
-        decoder_4, encoder_2, n*8, n*2, ks, 2, dss, bn, "decoder_3", train)
+        decoder_4, encoder_2, n*8, n*2, ks, 2, dss, bn, "decoder_3", train, data_format)
     # S/4 x 6*N --> S/2 x 4*N
     decoder_2 = pix2pix_decoder_skip(
-        decoder_3, encoder_1, n*6, n*2, ks, 2, dss, bn, "decoder_2", train)
+        decoder_3, encoder_1, n*6, n*2, ks, 2, dss, bn, "decoder_2", train, data_format)
     # S/2 x 4*N --> S x 2*N
     decoder_1 = pix2pix_decoder_skip(
-        decoder_2, encoder_0, n*4, n, ks, 2, dss, bn, "decoder_1", train)
+        decoder_2, encoder_0, n*4, n, ks, 2, dss, bn, "decoder_1", train, data_format)
     # S x N --> S x I
     with tf.variable_scope("decoder_0"):
         output = pix2pix_conv_bn(decoder_1, n*2, nOut,
-                                 ks, 1, True, False, train)
+                                 ks, 1, True, False, train, data_format)
         if not params.doClassOut:
             output = tf.nn.tanh(output)
 
@@ -669,6 +779,7 @@ def pix2pix_res(imgs, params):
     n = params.nbChannels
     nIn = params.nbInChannels
     nOut = params.nbOutputChannels
+    data_format = params.data_format
 
     ks = params.kernelSz
     ess = params.stridedEncoder
@@ -682,44 +793,44 @@ def pix2pix_res(imgs, params):
 
     # S x I --> S x N
     encoder_0 = pix2pix_encoder_bn(
-        imgs, nIn, n, 3, 1, True, False, "encoder_0", train)
+        imgs, nIn, n, 3, 1, True, False, "encoder_0", train, data_format)
     # S x N --> S/2 x 2*N
     encoder_1 = pix2pix_encoder_bn(
-        encoder_0, n, n*2, ks, 2, ess, bn, "encoder_1", train)
+        encoder_0, n, n*2, ks, 2, ess, bn, "encoder_1", train, data_format)
     # S/2 x 2*N --> S/4 x 4*N
     encoder_2 = pix2pix_encoder_bn(
-        encoder_1, n*2, n*4, ks, 2, ess, bn, "encoder_2", train)
+        encoder_1, n*2, n*4, ks, 2, ess, bn, "encoder_2", train, data_format)
     # S/4 x 4*N --> S/8 x 4*N
     encoder_3 = pix2pix_encoder_bn(
-        encoder_2, n*4, n*4, ks, 2, ess, bn, "encoder_3", train)
+        encoder_2, n*4, n*4, ks, 2, ess, bn, "encoder_3", train, data_format)
     # S/8 x 8*N --> S/16 x 8*N
     encoder_4 = pix2pix_encoder_bn(
-        encoder_3, n*4, n*8, ks, 2, ess, bn, "encoder_4", train)
+        encoder_3, n*4, n*8, ks, 2, ess, bn, "encoder_4", train, data_format)
     # S/16 x 8*N --> S/32 x 8*N
     encoder_5 = pix2pix_encoder_bn(
-        encoder_4, n*8, n*8, ks, 2, ess, bn, "encoder_5", train)
+        encoder_4, n*8, n*8, ks, 2, ess, bn, "encoder_5", train, data_format)
 
     # decoder with skip connections
 
     # S/32 x 8*N --> S/16 x 8*N
     decoder_5 = pix2pix_decoder_res(
-        encoder_5, encoder_4, n*8, n*8, ks, 2, dss, bn, "decoder_5", train)
+        encoder_5, encoder_4, n*8, n*8, ks, 2, dss, bn, "decoder_5", train, data_format)
     # S/16 x 12*N --> S/8 x 4*N
     decoder_4 = pix2pix_decoder_res(
-        decoder_5, encoder_3, n*8, n*4, ks, 2, dss, bn, "decoder_4", train)
+        decoder_5, encoder_3, n*8, n*4, ks, 2, dss, bn, "decoder_4", train, data_format)
     # S/8 x 8*N --> S/4 x 4*N
     decoder_3 = pix2pix_decoder_res(
-        decoder_4, encoder_2, n*4, n*4, ks, 2, dss, bn, "decoder_3", train)
+        decoder_4, encoder_2, n*4, n*4, ks, 2, dss, bn, "decoder_3", train, data_format)
     # S/4 x 6*N --> S/2 x 2*N
     decoder_2 = pix2pix_decoder_res(
-        decoder_3, encoder_1, n*4, n*2, ks, 2, dss, bn, "decoder_2", train)
+        decoder_3, encoder_1, n*4, n*2, ks, 2, dss, bn, "decoder_2", train, data_format)
     # S/2 x 4*N --> S x N
     decoder_1 = pix2pix_decoder_res(
-        decoder_2, encoder_0, n*2, n, ks, 2, dss, bn, "decoder_1", train)
+        decoder_2, encoder_0, n*2, n, ks, 2, dss, bn, "decoder_1", train, data_format)
     # S x N --> S x I
     with tf.variable_scope("decoder_0"):
         output = pix2pix_conv_bn(decoder_1, n, nOut,
-                                 3, 1, True, False, train)
+                                 3, 1, True, False, train, data_format)
         if not params.doClassOut:
             output = tf.nn.tanh(output)
 
@@ -731,6 +842,7 @@ def pix2pix_ires(imgs, params):
     n = params.nbChannels
     nIn = params.nbInChannels
     nOut = params.nbOutputChannels
+    data_format = params.data_format
 
     ks = params.kernelSz
     ess = params.stridedEncoder
@@ -744,121 +856,45 @@ def pix2pix_ires(imgs, params):
 
     # S x I --> S x 2*N
     encoder_0 = pix2pix_encoder_bn(
-        imgs, nIn, n*2, 3, 1, True, False, "encoder_0", train)
+        imgs, nIn, n*2, 3, 1, True, False, "encoder_0", train, data_format)
     # S x N --> S/2 x 2*N
     encoder_1 = pix2pix_deception_bn(
-        encoder_0, n*2, n, n*2, 2, ess, bn, "encoder_1", train)
+        encoder_0, n*2, n, n*2, 2, ess, bn, "encoder_1", train, data_format)
     # S/2 x 2*N --> S/4 x 4*N
     encoder_2 = pix2pix_deception_bn(
-        encoder_1, n*2, n, n*4, 2, ess, bn, "encoder_2", train)
+        encoder_1, n*2, n, n*4, 2, ess, bn, "encoder_2", train, data_format)
     # S/4 x 4*N --> S/8 x 4*N
     encoder_3 = pix2pix_deception_bn(
-        encoder_2, n*4, n, n*4, 2, ess, bn, "encoder_3", train)
+        encoder_2, n*4, n, n*4, 2, ess, bn, "encoder_3", train, data_format)
     # S/8 x 4*N --> S/16 x 8*N
     encoder_4 = pix2pix_deception_bn(
-        encoder_3, n*4, n, n*8, 2, ess, bn, "encoder_4", train)
+        encoder_3, n*4, n, n*8, 2, ess, bn, "encoder_4", train, data_format)
     # S/16 x 8*N --> S/32 x 8*N
     encoder_5 = pix2pix_deception_bn(
-        encoder_4, n*8, n, n*8, 2, ess, bn, "encoder_5", train)
+        encoder_4, n*8, n, n*8, 2, ess, bn, "encoder_5", train, data_format)
 
     # decoder with skip connections
 
     # S/32 x 8*N --> S/16 x 8*N
     decoder_5 = pix2pix_uception_bn(
-        encoder_5, encoder_4, n*8, n, n*8, 2, dss, bn, "decoder_5", train)
+        encoder_5, encoder_4, n*8, n, n*8, 2, dss, bn, "decoder_5", train, data_format)
     # S/16 x 8*N --> S/8 x 4*N
     decoder_4 = pix2pix_uception_bn(
-        decoder_5, encoder_3, n*8, n, n*4, 2, dss, bn, "decoder_4", train)
+        decoder_5, encoder_3, n*8, n, n*4, 2, dss, bn, "decoder_4", train, data_format)
     # S/8 x 4*N --> S/4 x 4*N
     decoder_3 = pix2pix_uception_bn(
-        decoder_4, encoder_2, n*4, n, n*4, 2, dss, bn, "decoder_3", train)
+        decoder_4, encoder_2, n*4, n, n*4, 2, dss, bn, "decoder_3", train, data_format)
     # S/4 x 4*N --> S/2 x 2*N
     decoder_2 = pix2pix_uception_bn(
-        decoder_3, encoder_1, n*4, n, n*2, 2, dss, bn, "decoder_2", train)
+        decoder_3, encoder_1, n*4, n, n*2, 2, dss, bn, "decoder_2", train, data_format)
     # S/2 x 2*N --> S x 2*N
     decoder_1 = pix2pix_uception_bn(
-        decoder_2, encoder_0, n*2, n, n*2, 2, dss, bn, "decoder_1", train)
+        decoder_2, encoder_0, n*2, n, n*2, 2, dss, bn, "decoder_1", train, data_format)
     # S x N --> S x I
     with tf.variable_scope("decoder_0"):
         output = pix2pix_conv_bn(decoder_1, n*2, nOut,
-                                 3, 1, True, False, train)
+                                 3, 1, True, False, train, data_format)
         if not params.doClassOut:
-            output = tf.nn.tanh(output)
-
-    return output
-
-
-def pix2pix_gen_orig(imgs, params):
-
-    nIn = params.nbChannels
-    nOut = params.nbOutputChannels
-
-    ks = params.kernelSz
-    ess = params.stridedEncoder
-    dss = params.stridedDecoder
-
-    bn = params.useBatchNorm
-
-    train = params.isTraining
-
-    # encoder part
-
-    # encoder_1: [batch, 256, 256, in_channels] => [batch, 128, 128, n]
-    # no batch norm for the first layer : why ?
-    encoder_1 = pix2pix_encoder_bn(
-        imgs, nIn, ks, 2, ess, False, "encoder_1", train)
-    # encoder_2: [batch, 128, 128, n] => [batch, 64, 64, n * 2]
-    encoder_2 = pix2pix_encoder_bn(
-        encoder_1, nIn*2, ks, 2, ess, bn, "encoder_2", train)
-    # encoder_3: [batch, 64, 64, n * 2] => [batch, 32, 32, n * 4]
-    encoder_3 = pix2pix_encoder_bn(
-        encoder_2, nIn*4, ks, 2, ess, bn, "encoder_3", train)
-    # encoder_4: [batch, 32, 32, n * 4] => [batch, 16, 16, n * 8]
-    encoder_4 = pix2pix_encoder_bn(
-        encoder_3, nIn*8, ks, 2, ess, bn, "encoder_4", train)
-    # encoder_5: [batch, 16, 16, n * 8] => [batch, 8, 8, n * 8]
-    encoder_5 = pix2pix_encoder_bn(
-        encoder_4, nIn*8, ks, 2, ess, bn, "encoder_5", train)
-    # encoder_6: [batch, 8, 8, n * 8] => [batch, 4, 4, n * 8]
-    encoder_6 = pix2pix_encoder_bn(
-        encoder_5, nIn*8, ks, 2, ess, bn, "encoder_6", train)
-    # encoder_7: [batch, 4, 4, n * 8] => [batch, 2, 2, n * 8]
-    encoder_7 = pix2pix_encoder_bn(
-        encoder_6, nIn*8, ks, 1, True, bn, "encoder_7", train)
-    # encoder_8: [batch, 2, 2, n * 8] => [batch, 1, 1, n * 8]
-    # encoder_8 = pix2pix_encoder_bn(
-    #    encoder_7, n*8, "encoder_8", train)
-
-    # decoder with skip connections
-
-    # decoder_8: [batch, 1, 1, ngf * 8] => [batch, 2, 2, ngf * 8 * 2]
-    # decoder_8 = pix2pix_decoder_skip(
-    #    encoder_8, encoder_7, n*8, "decoder_8", dropout, train)
-    # decoder_7: [batch, 2, 2, ngf * 8 * 2] => [batch, 4, 4, ngf * 8 * 2]
-    decoder_7 = pix2pix_decoder_skip(
-        encoder_7, encoder_6, nIn*8, ks, 1, True, bn, False, "decoder_7", train)  # , params.convDropOut)
-    # decoder_6: [batch, 4, 4, ngf * 8 * 2] => [batch, 8, 8, ngf * 8 * 2]
-    decoder_6 = pix2pix_decoder_skip(
-        decoder_7, encoder_5, nIn*8, ks, 2, dss, bn, False, "decoder_6", train)  # , params.convDropOut)
-    # decoder_5: [batch, 8, 8, ngf * 8 * 2] => [batch, 16, 16, ngf * 8 * 2]
-    decoder_5 = pix2pix_decoder_skip(
-        decoder_6, encoder_4, nIn*4, ks, 2, dss, bn, False, "decoder_5", train)
-    # decoder_4: [batch, 16, 16, ngf * 8 * 2] => [batch, 32, 32, ngf * 4 * 2]
-    decoder_4 = pix2pix_decoder_skip(
-        decoder_5, encoder_3, nIn*4, ks, 2, dss, bn, False, "decoder_4", train)
-    # decoder_3: [batch, 32, 32, ngf * 4 * 2] => [batch, 64, 64, ngf * 2 * 2]
-    decoder_3 = pix2pix_decoder_skip(
-        decoder_4, encoder_2, nIn*2, ks, 2, dss, bn, False, "decoder_3", train)
-    # decoder_2: [batch, 64, 64, ngf * 2 * 2] => [batch, 128, 128, ngf * 2]
-    decoder_2 = pix2pix_decoder_skip(
-        decoder_3, encoder_1, nIn*2, ks, 2, dss, bn, False, "decoder_2", train)
-    # decoder_1: output
-    decoder_1 = pix2pix_decoder_skip(
-        decoder_2, imgs, nIn, ks, 2, dss, bn, True, "decoder_1", train)
-
-    with tf.variable_scope("gen_output"):
-        output = pix2pix_conv_bn(decoder_1, nOut, ks, 1, True, False, train)
-        if not lp.doClassOut:
             output = tf.nn.tanh(output)
 
     return output
@@ -871,6 +907,7 @@ def pix2pix_disc(gen_inputs, gen_outputs, params):
     n = params.nbChannels
     nIn = params.nbInChannels
     nOut = params.nbOutputChannels
+    data_format = params.data_format
 
     ks = params.kernelSz
     ess = params.stridedEncoder
@@ -878,27 +915,28 @@ def pix2pix_disc(gen_inputs, gen_outputs, params):
 
     with tf.variable_scope("discriminator", reuse=tf.AUTO_REUSE):
 
-        inputs = tf.concat([gen_inputs, gen_outputs], axis=3)
+        inputs = tf.concat([gen_inputs, gen_outputs],
+                           axis=3 if data_format == 'NHWC' else 1)
 
         # layer_1: [batch, 256, 256, in_channels] => [batch, 128, 128, ndf]
         layer_1 = pix2pix_encoder_bn(
-            inputs, nIn, n, ks, ess, False, "layer_1", train)
+            inputs, nIn, n, ks, ess, False, "layer_1", train, data_format)
         # layer_2: [batch, 128, 128, ndf] => [batch, 64, 64, ndf * 2]
         layer_2 = pix2pix_encoder_bn(
-            layer_1, n, n*2, ks, 2, ess, bn, "layer_2", train)
+            layer_1, n, n*2, ks, 2, ess, bn, "layer_2", train, data_format)
         # layer_3: [batch, 64, 64, ndf * 2] => [batch, 32, 32, ndf * 4]
         layer_3 = pix2pix_encoder_bn(
-            layer_2, n*2, n*4, ks, 1, True, bn, "layer_3", train)
+            layer_2, n*2, n*4, ks, 1, True, bn, "layer_3", train, data_format)
         # layer_4: [batch, 32, 32, ndf * 4] => [batch, 31, 31, ndf * 8]
         layer_4 = pix2pix_encoder_bn(
-            layer_3, n*4, n*8, ks, 2, ess, bn, "layer_4", train)
+            layer_3, n*4, n*8, ks, 2, ess, bn, "layer_4", train, data_format)
         # layer_5: [batch, 32, 32, ndf * 4] => [batch, 31, 31, ndf * 8]
         layer_5 = pix2pix_encoder_bn(
-            layer_4, n*8, n*8, ks, 1, True, bn, "layer_5", train)
+            layer_4, n*8, n*8, ks, 1, True, bn, "layer_5", train, data_format)
 
         # layer_6
         with tf.variable_scope("layer_6"):
-            layer_6 = pix2pix_conv(layer_5, n*8, 1, ks, ess, True)
+            layer_6 = pix2pix_conv(layer_5, n*8, 1, ks, ess, True, data_format)
             # layer_6 = tf.nn.sigmoid(layer_6)
 
     return layer_6
@@ -929,13 +967,25 @@ def pix2pix_logscale_l2_loss(outputs, targets):
     return tf.reduce_mean(tf.square(diff)) - tf.square(tf.reduce_mean(diff))
 
 
-def pix2pix_logscale_charbonnier_loss(outputs, targets):
+def pix2pix_logscale_charbonnier_loss_nhwc(outputs, targets):
 
     outputs_sc = tf.log(tf.add(tf.multiply(outputs, 3.0), 4.0))
     targets_sc = tf.log(tf.add(tf.multiply(targets, 3.0), 4.0))
 
     diff = tf.subtract(outputs_sc, targets_sc)
     log_scales = tf.reduce_mean(diff, axis=[1, 2], keepdims=True)
+    diff = tf.subtract(diff, log_scales)
+
+    return tf.reduce_mean(tf.sqrt(EPS + tf.square(diff)))
+
+
+def pix2pix_logscale_charbonnier_loss_nchw(outputs, targets):
+
+    outputs_sc = tf.log(tf.add(tf.multiply(outputs, 3.0), 4.0))
+    targets_sc = tf.log(tf.add(tf.multiply(targets, 3.0), 4.0))
+
+    diff = tf.subtract(outputs_sc, targets_sc)
+    log_scales = tf.reduce_mean(diff, axis=[2, 3], keepdims=True)
     diff = tf.subtract(diff, log_scales)
 
     return tf.reduce_mean(tf.sqrt(EPS + tf.square(diff)))
@@ -1060,27 +1110,35 @@ def pix2pix_optimizer(imgs, targets_in, params):
     if params.doClassOut:
         targetsSamples = tf.multiply(
             tf.subtract(tf.to_float(targets)/params.nbOutputChannels, 0.5), 2.0)
+        argmax_axis = 3 if params.data_format == 'NHWC' else 1
         outputSamples = tf.multiply(
-            tf.subtract(tf.to_float(tf.argmax(outputs, axis=3))/params.nbOutputChannels, 0.5), 2.0)
+            tf.subtract(tf.to_float(tf.argmax(outputs, axis=argmax_axis))/params.nbOutputChannels, 0.5), 2.0)
     else:
         targetsSamples = targets
         outputSamples = outputs
 
     imgSamples = []
 
-    imgSz = imgs.get_shape()
+    imgs_disp = imgs if params.data_format == 'NHWC' else tf.transpose(imgs, [
+        0, 2, 3, 1])
+    imgSz = imgs_disp.get_shape()
     sliceSz = [imgSz[0], imgSz[1], imgSz[2], 1]
 
     for i in range(params.inDispRange.shape[0]):
         inSamples = tf.concat(
-            [tf.slice(imgs, [0, 0, 0, it], sliceSz) for it in params.inDispRange[i]], axis=3)
+            [tf.slice(imgs_disp, [0, 0, 0, it], sliceSz) for it in params.inDispRange[i]], axis=3)
         inSamples = tf.concat([[inSamples[it, :, :, 0:3]]
                                for it in range(16)], axis=2)
         imgSamples.append(tf.clip_by_value(inSamples, -1.0, 1.0))
 
+    outputs_disp = params.dispProcessOutputs(
+        outputSamples) if not params.dispProcessOutputs is None else outputSamples
+    outputs_disp = outputs_disp if params.data_format == 'NHWC' else tf.transpose(
+        outputs_disp, [0, 2, 3, 1])
+
     for i in range(params.outDispRange.shape[0]):
         outSamples = tf.concat(
-            [tf.slice(outputSamples, [0, 0, 0, it], sliceSz) for it in params.outDispRange[i]], axis=3)
+            [tf.slice(outputs_disp, [0, 0, 0, it], sliceSz) for it in params.outDispRange[i]], axis=3)
         outSamples = tf.concat([[outSamples[it, :, :, 0:3]]
                                 for it in range(16)], axis=2)
         imgSamples.append(tf.clip_by_value(outSamples, -1.0, 1.0))
@@ -1089,9 +1147,12 @@ def pix2pix_optimizer(imgs, targets_in, params):
 
     valSum.append(tf.summary.image("out_samples", ioSamples))
 
+    targets_disp = targetsSamples if params.data_format == 'NHWC' else tf.transpose(
+        targetsSamples, [0, 2, 3, 1])
+
     for i in range(params.outDispRange.shape[0]):
         outSamples = tf.concat(
-            [tf.slice(targetsSamples, [0, 0, 0, it], sliceSz) for it in params.outDispRange[i]], axis=3)
+            [tf.slice(targets_disp, [0, 0, 0, it], sliceSz) for it in params.outDispRange[i]], axis=3)
         outSamples = tf.concat([[outSamples[it, :, :, 0:3]]
                                 for it in range(16)], axis=2)
         imgSamples.append(tf.clip_by_value(outSamples, -1.0, 1.0))

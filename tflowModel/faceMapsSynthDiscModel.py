@@ -28,51 +28,37 @@ class DatasetTF(object):
     __lib = BufferDataSamplerLibrary(
         "/mnt/p4/avila/moennen_wkspce/sceneIllEst/sampleBuffDataset/libFaceAOVSampler/libFaceAOVSampler.so")
 
-    def __init__(self, dbPath, imgRootDir, batchSz, imgSz, seed):
-        params = np.array([batchSz, imgSz[0], imgSz[1]], dtype=np.float32)
-        self.__ds = BufferDataSampler(
-            DatasetTF.__lib, dbPath, imgRootDir, params, seed)
+    def __init__(self, dbPathPos, dbPathNeg, imgRootDir, batchSz, imgSz, seed):
+        self.batchSz = batchSz//2
+        self.imgSz = imgSz
+        params = np.array([self.batchSz, imgSz[0], imgSz[1]], dtype=np.float32)
+        self.__dsPos = BufferDataSampler(
+            DatasetTF.__lib, dbPathPos, imgRootDir, params, seed)
+        self.__dsNeg = BufferDataSampler(
+            DatasetTF.__lib, dbPathNeg, imgRootDir, params, seed)
         self.data = tf.data.Dataset.from_generator(
-            self.sample, (tf.float32, tf.float32, tf.float32, tf.float32))
+            self.sample, (tf.float32, tf.float32, tf.float32, tf.int32))
 
     def sample(self):
         for i in itertools.count(1):
-            currImg, currUVs, currDepth, currNormals = self.__ds.getDataBuffers()
-            yield (currImg, currUVs, currDepth, currNormals)
+            currImgPos, currUVsPos, currDepthPos, currNormalsPos = self.__dsPos.getDataBuffers()
+            currImgNeg, currUVsNeg, currDepthNeg, currNormalsNeg = self.__dsNeg.getDataBuffers()
 
+            currUVs = tf.concat([currUVsPos, currUVsNeg], axis=0)
+            currDepth = tf.concat([currDepthPos, currDepthNeg], axis=0)
+            currNormals = tf.concat([currNormalsPos, currNormalsNeg], axis=0)
 
-def loadValidationData(dataPath, dataRootDir, dataSz):
+            currLabels = tf.concat(tf.constant(1, dtype=tf.int32, shape=[self.batchSz, self.imgSz[0], self.imgSz[1], 1]),
+                                   tf.constant(0, dtype=tf.int32, shape=[self.batchSz, self.imgSz[0], self.imgSz[1], 1]), axis=0)
 
-    im = np.zeros((dataSz[0], dataSz[1], dataSz[2], 3))
-    uv = np.full((dataSz[0], dataSz[1], dataSz[2], 2), 0.5)
-    depth = np.full((dataSz[0], dataSz[1], dataSz[2], 1), 0.5)
-    # normals are in [-1.0,1.0]
-    normal = np.full((dataSz[0], dataSz[1], dataSz[2], 3), 0)
-
-    n = 0
-
-    # input
-    with open(dataPath, 'r') as img_names_file:
-
-        for data in img_names_file:
-
-            data = data.rstrip('\n').split()
-
-            if n >= dataSz[0]:
-                break
-
-            im[n, :, :, :] = loadResizeImgPIL(
-                dataRootDir + "/" + data[0], [dataSz[1], dataSz[2]], False)
-            n = n + 1
-
-    return im, uv, depth, normal
+            yield (currUVs, currDepth, currNormals, currLabels)
 
 #-----------------------------------------------------------------------------------------------------
 # UNIT TESTS
 #-----------------------------------------------------------------------------------------------------
 
 
-def testDataset(imgRootDir, trainPath):
+def testDataset(imgRootDir, posPath, negPath):
 
     rseed = int(time.time())
     imgSz = [256, 256]
@@ -82,7 +68,7 @@ def testDataset(imgRootDir, trainPath):
 
     batchSz = 16
 
-    trDs = DatasetTF(trainPath, imgRootDir, batchSz, imgSz, rseed)
+    trDs = DatasetTF(posPath, negPath, imgRootDir, batchSz, imgSz, rseed)
 
     dsIt = tf.data.Iterator.from_structure(
         trDs.data.output_types, trDs.data.output_shapes)
@@ -96,11 +82,10 @@ def testDataset(imgRootDir, trainPath):
 
         for step in range(100):
 
-            currImg, currUVs, currDepth, currNormals = sess.run(dsView)
+            currUVs, currDepth, currNormals, currLabels = sess.run(
+                dsView)
 
             idx = random.randint(0, batchSz-1)
-
-            cv.imshow('currImg', cv.cvtColor(currImg[idx], cv.COLOR_RGB2BGR))
 
             cv.imshow('currDepth', currDepth[idx])
 
@@ -111,6 +96,8 @@ def testDataset(imgRootDir, trainPath):
             cv.imshow('currNormals', cv.cvtColor(
                 currNormals[idx], cv.COLOR_RGB2BGR))
 
+            cv.imshow('currLabels', currLabels)
+
             cv.waitKey(10)
 
 #-----------------------------------------------------------------------------------------------------
@@ -118,14 +105,10 @@ def testDataset(imgRootDir, trainPath):
 #-----------------------------------------------------------------------------------------------------
 
 
-class FaceMapsModelParams(Pix2PixParams):
+class FaceMapsSynthDiscParams(Pix2PixParams):
 
     def __init__(self, modelPath, data_format, seed=int(time.time())):
 
-        #
-        # exp0000 : 256x256x32 / charbonnier / resize / pix2pix_gen_p / bn / d00
-        # exp0001 : 296x296x32 / charbonnier / resize / pix2pix_gen_p / bn / d01
-        # exp0002 : 256x256x32 / charbonnier / deconv / pix2pix_gen_p / bn / d01
         #
         #
 
@@ -144,9 +127,9 @@ class FaceMapsModelParams(Pix2PixParams):
 
         # bn vs no bn
         self.useBatchNorm = True
-        self.nbChannels = 32
-        self.nbInChannels = 3
-        self.nbOutputChannels = 6
+        self.nbChannels = 64
+        self.nbInChannels = 6
+        self.nbOutputChannels = 1
         self.kernelSz = 5
         self.stridedEncoder = True
         # strided vs resize
@@ -157,101 +140,14 @@ class FaceMapsModelParams(Pix2PixParams):
         self.alphaDisc = 0.0
         self.linearImg = False
 
+        self.doClassOut = True
+
         # model
         self.model = pix2pix_gen_p
         # loss
-        self.loss = pix2pix_charbonnier_loss
+        self.loss = pix2pix_classout_loss
 
         self.update()
-
-#-----------------------------------------------------------------------------------------------------
-# VALIDATION
-#-----------------------------------------------------------------------------------------------------
-
-
-def evalModel(modelPath, imgRootDir, imgLst, forceTrainingSize, maxSz, writeResults, data_format):
-
-    lp = FaceMapsModelParams(modelPath, data_format)
-    lp.isTraining = False
-
-    evalSz = [1, 256, 256, 3]
-
-    inputsi = tf.placeholder(tf.float32, name="input")
-    inputs = preprocess(inputsi, True, data_format)
-
-    with tf.variable_scope("generator"):
-        outputs = lp.model(inputs, lp)
-        outputs = postprocess(outputs, False, data_format)
-
-    # Persistency
-    persistency = tf.train.Saver(filename=lp.modelFilename)
-
-    # Params Initializer
-    varInit = tf.global_variables_initializer()
-
-    sess_config = tf.ConfigProto(device_count={'GPU': 1})
-    # sess_config.gpu_options.allow_growth = True
-
-    with tf.Session(config=sess_config) as sess:
-
-        # initialize params
-        sess.run(varInit)
-
-        # Restore model if needed
-        persistency.restore(sess, tf.train.latest_checkpoint(modelPath))
-
-        # input
-        with open(imgLst, 'r') as img_names_file:
-
-            videoId = 0
-            for data in img_names_file:
-
-                data = data.rstrip('\n').split()
-
-                imgName = imgRootDir + "/" + data[0]
-
-                if forceTrainingSize:
-                    img = [loadResizeImgPIL(
-                        imgName, [evalSz[1], evalSz[2]], lp.linearImg)]
-                else:
-                    img = [loadImgPIL(imgName, lp.linearImg)]
-
-                if maxSz > 0:
-                    ds = min(
-                        1.0, min(float(maxSz)/img[0].shape[0], float(maxSz)/img[0].shape[1]))
-                    img[0] = cv.resize(img[0], dsize=(
-                        0, 0), fx=ds, fy=ds, interpolation=cv.INTER_AREA)
-
-                uvdn = sess.run(outputs, feed_dict={inputsi: img})
-
-                inputImg = (cv.cvtColor(
-                    img[0], cv.COLOR_RGB2BGR)*255.0).astype(np.uint8)
-                uvd = cv.cvtColor(
-                    0.5*(uvdn[0, :, :, 0:3]+1.0), cv.COLOR_RGB2BGR)
-                n = cv.cvtColor(uvdn[0, :, :, 3:6], cv.COLOR_RGB2BGR)
-
-                # show the sample
-                cv.imshow('Input', inputImg)
-                cv.imshow('UVDepth', uvd)
-                cv.imshow('Normals', 0.5*(n+1.0))
-
-                if writeResults:
-
-                    outUVDName = imgRootDir + \
-                        '/evalOutput/uvd_{:06d}.exr'.format(videoId)
-                    cv.imwrite(outUVDName, uvd)
-
-                    outNormName = imgRootDir + \
-                        '/evalOutput/norm_{:06d}.exr'.format(videoId)
-                    cv.imwrite(outNormName, n)
-
-                    outRGBName = imgRootDir + \
-                        '/evalOutput/rgb_{:06d}.png'.format(videoId)
-                    cv.imwrite(outRGBName, inputImg)
-
-                cv.waitKey(10)
-
-                videoId += 1
 
 #-----------------------------------------------------------------------------------------------------
 # EXPORT
@@ -260,7 +156,7 @@ def evalModel(modelPath, imgRootDir, imgLst, forceTrainingSize, maxSz, writeResu
 
 def saveModel(modelPath, asText, data_format):
 
-    lp = FaceMapsModelParams(modelPath, data_format)
+    lp = FaceMapsSynthDiscParams(modelPath, data_format)
     lp.isTraining = False
 
     mdSuff = '-last.pb.txt' if asText else '-last.pb'
@@ -276,26 +172,11 @@ def saveModel(modelPath, asText, data_format):
 
     outputNames = "adsk_outNormals,adsk_outUVD"
     # outputNames = "adsk_outNormals"
-    # outputUVD, outputNormals = tf.split(
-    #    outputs, [3, 3], axis=3 if data_format == 'NHWC' else 1)
+    outputUVD, outputNormals = tf.split(
+        outputs, [3, 3], axis=3 if data_format == 'NHWC' else 1)
 
-    if data_format == 'NHWC':
-        uvd_size = tf.constant([-1, -1, -1, 3], dtype=tf.int32)
-        uvd_begin = tf.constant([0, 0, 0, 0], dtype=tf.int32)
-        norm_size = tf.constant([-1, -1, -1, 3], dtype=tf.int32)
-        norm_begin = tf.constant([0, 0, 0, 3], dtype=tf.int32)
-    else:
-        uvd_size = tf.constant([-1, 3, -1, -1], dtype=tf.int32)
-        uvd_begin = tf.constant([0, 0, 0, 0], dtype=tf.int32)
-        norm_size = tf.constant([-1, 3, -1, -1], dtype=tf.int32)
-        norm_begin = tf.constant([0, 3, 0, 0], dtype=tf.int32)
-
-    outputUVD = tf.slice(outputs, uvd_begin, uvd_size)
     outputUVD = tf.multiply(tf.add(outputUVD, 1.0), 0.5, name="adsk_outUVD")
-    # outputNormals = tf.identity(outputNormals, name="adsk_outNormals")
-
-    outputNormals = tf.slice(
-        outputs, norm_begin, norm_size, name="adsk_outNormals")
+    outputNormals = tf.identity(outputNormals, name="adsk_outNormals")
 
     # Persistency
     persistency = tf.train.Saver(filename=lp.modelFilename)
@@ -324,19 +205,20 @@ def saveModel(modelPath, asText, data_format):
             outputNames,
             '', '', lp.modelFilename + mdSuff, True, '')
 
-
 #-----------------------------------------------------------------------------------------------------
 # TRAINING
 #-----------------------------------------------------------------------------------------------------
 
 
-def trainModel(modelPath, imgRootDir, trainPath, testPath, valPath, data_format):
+def trainModel(modelPath, imgRootDir, trainPathPos, trainPathNeg, testPathPos, testPathNeg, data_format):
 
-    lp = FaceMapsModelParams(modelPath, data_format)
+    lp = FaceMapsSynthDiscParams(modelPath, data_format)
 
     # Datasets / Iterators
-    trDs = DatasetTF(trainPath, imgRootDir, lp.batchSz, lp.imgSzTr, lp.rseed)
-    tsDs = DatasetTF(testPath, imgRootDir, lp.batchSz, lp.imgSzTr, lp.rseed)
+    trDs = DatasetTF(trainPathPos, trainPathNeg, imgRootDir,
+                     lp.batchSz, lp.imgSzTr, lp.rseed)
+    tsDs = DatasetTF(testPathPos. testPathNeg, imgRootDir,
+                     lp.batchSz, lp.imgSzTr, lp.rseed)
 
     dsIt = tf.data.Iterator.from_structure(
         trDs.data.output_types, trDs.data.output_shapes)
@@ -346,9 +228,6 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath, valPath, data_format)
     tsInit = dsIt.make_initializer(tsDs.data)
 
     # Input placeholders
-    inImgi = tf.placeholder(tf.float32, shape=[
-        lp.batchSz, lp.imgSzTr[0], lp.imgSzTr[1], 3], name="input_img")
-    inImg = preprocess(inImgi, True, data_format)
     inUVi = tf.placeholder(tf.float32, shape=[
         lp.batchSz, lp.imgSzTr[0], lp.imgSzTr[1], 2], name="input_uvs")
     inUV = preprocess(inUVi, True, data_format)
@@ -359,15 +238,15 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath, valPath, data_format)
         lp.batchSz, lp.imgSzTr[0], lp.imgSzTr[1], 3], name="input_normals")
     inNormal = preprocess(inNormali, False, data_format)
 
+    inLabels = f.placeholder(
+        tf.int32, shape=[lp.batchSz, lp.imgSzTr[0], lp.imgSzTr[1], 1], name="labels")
+
     inMaps = tf.concat([inUV, inDepth, inNormal],
                        3 if data_format == 'NHWC' else 1)
 
     # Optimizers
-    [opts, loss, trSum, tsSum, valSum] = pix2pix_optimizer(inImg, inMaps, lp)
-
-    # Validation
-    valImg, valUVs, valDepth, valNormals = loadValidationData(
-        valPath, imgRootDir, [lp.batchSz, lp.imgSzTr[0], lp.imgSzTr[1]])
+    [opts, loss, trSum, tsSum, valSum] = pix2pix_optimizer(
+        inMaps, inLabels, lp)
 
     # Persistency
     persistency = tf.train.Saver(
@@ -411,13 +290,14 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath, valPath, data_format)
         while lp.globalStep.eval(sess) < lp.numSteps:
 
             # Get the next training batch
-            currImg, currUVs, currDepth, currNormals = sess.run(dsView)
+            currUVs, currDepth, currNormals, currLabels = sess.run(
+                dsView)
 
             trFeed = {lp.isTraining: True,
-                      inImgi: currImg,
                       inUVi: currUVs,
                       inDepthi: currDepth,
-                      inNormali: currNormals}
+                      inNormali: currNormals,
+                      inLabels: currLabels}
 
             step = lp.globalStep.eval(sess) + 1
 
@@ -440,21 +320,21 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath, valPath, data_format)
 
             if step % lp.trlogStep == 0:
                 summary = sess.run(tsSum, feed_dict={lp.isTraining: False,
-                                                     inImgi: currImg,
                                                      inUVi: currUVs,
                                                      inDepthi: currDepth,
-                                                     inNormali: currNormals})
+                                                     inNormali: currNormals,
+                                                     inLabels: currLabels})
                 train_summary_writer.add_summary(summary, step)
 
             if step % lp.tslogStep == 0:
 
                 sess.run(tsInit)
-                currImg, currUVs, currDepth, currNormals = sess.run(dsView)
+                currUVs, currDepth, currNormals, currLabels = sess.run(dsView)
                 tsLoss, summary = sess.run([loss, tsSum], feed_dict={lp.isTraining: False,
-                                                                     inImgi: currImg,
                                                                      inUVi: currUVs,
                                                                      inDepthi: currDepth,
-                                                                     inNormali: currNormals})
+                                                                     inNormali: currNormals,
+                                                                     inLabels: currLabels})
 
                 test_summary_writer.add_summary(summary, step)
 
@@ -464,17 +344,6 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath, valPath, data_format)
 
                 # reset the training iterator
                 sess.run(trInit)
-
-            # validation
-            if step % lp.vallogStep == 0:
-
-                summary = sess.run(valSum, feed_dict={lp.isTraining: False,
-                                                      inImgi: valImg,
-                                                      inUVi: valUVs,
-                                                      inDepthi: valDepth,
-                                                      inNormali: valNormals})
-
-                val_summary_writer.add_summary(summary, step)
 
             # PERSISTENCY
             if step % lp.backupStep == 0:
@@ -497,13 +366,15 @@ if __name__ == "__main__":
         "imgRootDir", help="root directory to the images in the datasets")
 
     parser.add_argument(
-        "trainLstPath", help="path to the training dataset (list of images path relative to root dir)")
+        "trainPosLstPath", help="path to the training dataset (list of images path relative to root dir)")
+    parser.add_argument(
+        "trainNegLstPath", help="path to the training dataset (list of images path relative to root dir)")
 
     parser.add_argument(
-        "testLstPath", help="path to the testing dataset (list of images path relative to root dir)")
+        "testPosLstPath", help="path to the testing dataset (list of images path relative to root dir)")
 
     parser.add_argument(
-        "valLstPath", help="path to the validation dataset (list of images path relative to root dir)")
+        "testNegLstPath", help="path to the testing dataset (list of images path relative to root dir)")
 
     parser.add_argument("--nhwc", dest='nhwc',
                         default=False, action='store_true')
@@ -514,22 +385,14 @@ if __name__ == "__main__":
 
     #------------------------------------------------------------------------------------------------
 
-    # testDataset(args.imgRootDir, args.trainLstPath)
+    # testDataset(args.imgRootDir, args.trainPosLstPath, args.trainNegLstPath)
 
     #------------------------------------------------------------------------------------------------
 
-    # trainModel(args.modelPath, args.imgRootDir,
-    #           args.trainLstPath, args.testLstPath, args.valLstPath, data_format)
+    trainModel(args.modelPath, args.imgRootDir,
+               args.trainPosLstPath, args.trainNegLstPath,
+               args.testPosLstPath, args.testNegLstPath, data_format)
 
     #------------------------------------------------------------------------------------------------
 
-    # testModel(args.modelPath, args.imgRootDir, args.testLstPath, 100, data_format)
-
-    #------------------------------------------------------------------------------------------------
-
-    # evalModel(args.modelPath, args.imgRootDir,
-    #          args.valLstPath, False, 640, True, data_format)
-
-    #------------------------------------------------------------------------------------------------
-
-    saveModel(args.modelPath, False, data_format)
+    # saveModel(args.modelPath, False, data_format)

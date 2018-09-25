@@ -82,6 +82,30 @@ inline void adjustContrastBrightness( cv::Mat& img, const float alpha, const flo
    }
 }
 
+inline void resizeTo( cv::Mat& img, const glm::uvec2 sampleSz )
+{
+   glm::uvec2 imgSz( img.cols, img.rows );
+   const float ds = std::max( (float)sampleSz.y / imgSz.y, (float)sampleSz.x / imgSz.x );
+   cv::resize( img, img, cv::Size(), ds, ds, ds < 1.0 ? CV_INTER_AREA : CV_INTER_LINEAR );
+   imgSz = glm::uvec2( img.cols, img.rows );
+   const glm::uvec2 off( ( imgSz.x - sampleSz.x ) / 2, ( imgSz.y - sampleSz.y ) / 2 );
+   img = img( cv::Rect( off.x, off.y, sampleSz.x, sampleSz.y ) ).clone();
+}
+
+inline void toCHW32F( cv::Mat& in )
+{
+   std::vector<cv::Mat> in_chns( in.channels() );
+   cv::split( in, &in_chns[0] );
+   float* inPtr = (float *)in.data;
+   size_t off = in.rows * in.cols;
+#pragma omp parallel for
+   for ( int c = 0; c < in.channels(); ++c ) 
+   {
+      std::memcpy( inPtr + c * off, in_chns[c].data, sizeof(float)*off );
+   }
+}
+
+
 inline cv::Mat imread32FC1( const std::string& imgPath, const float smax = 255.0 )
 {
    HOP_PROF_FUNC();

@@ -89,7 +89,9 @@ def testDataset(imgRootDir, trainPath):
 
     trInit = dsIt.make_initializer(trDs.data)
 
-    with tf.Session() as sess:
+    sess_config = tf.ConfigProto(device_count={'GPU': 0})
+
+    with tf.Session(config=sess_config) as sess:
 
         sess.run(trInit)
 
@@ -99,6 +101,13 @@ def testDataset(imgRootDir, trainPath):
 
             idx = random.randint(0, batchSz-1)
 
+            currTest = currImg
+            currTest = increaseSize2x(currTest, 3, 'NHWC').eval()
+            #currTest = tf.image.rgb_to_grayscale(currTest)
+            #currTest = tf.square(filterLoG_3x3(currTest, 3, 'NHWC'))
+            #currTest = currTest.eval()
+            #cv.imshow('currTest', currTest[idx])
+            cv.imshow('currTest', cv.cvtColor(currTest[idx], cv.COLOR_RGB2BGR))
             cv.imshow('currImg', cv.cvtColor(currImg[idx], cv.COLOR_RGB2BGR))
 
             currDepth = currDepth[idx]
@@ -112,7 +121,7 @@ def testDataset(imgRootDir, trainPath):
 
             cv.imshow('currMask', currMask[idx])
 
-            cv.waitKey(10)
+            cv.waitKey(0)
 
 #-----------------------------------------------------------------------------------------------------
 # PARAMETERS
@@ -121,7 +130,7 @@ def testDataset(imgRootDir, trainPath):
 
 class DepthPredictionModelParams(Pix2PixParams):
 
-    def __init__(self, modelPath, seed=int(time.time())):
+    def __init__(self, modelPath, data_format, seed=int(time.time())):
 
         #
         # model 0 : scale_l2 / resize / pix2pix_gen_p / bn
@@ -131,7 +140,7 @@ class DepthPredictionModelParams(Pix2PixParams):
 
         seed = 0
 
-        Pix2PixParams.__init__(self, modelPath, seed)
+        Pix2PixParams.__init__(self, modelPath, data_format, seed)
 
         self.numMaxSteps = 217500
         self.numSteps = 217500
@@ -151,9 +160,10 @@ class DepthPredictionModelParams(Pix2PixParams):
         self.kernelSz = 5
         self.stridedEncoder = True
         # strided vs resize
-        self.stridedDecoder = False
+        self.stridedDecoder = True
         self.inDispRange = np.array([[0, 1, 2]])
         self.outDispRange = np.array([[0, 0, 0]])
+        self.dispProcessOutputs = self.meanstd_norm
         self.alphaData = 1.0
         self.alphaDisc = 0.0
         self.linearImg = False
@@ -163,41 +173,55 @@ class DepthPredictionModelParams(Pix2PixParams):
         self.model = pix2pix_gen_p
 
         # loss function
-        self.inMask = tf.placeholder(tf.float32, shape=[
+        self.inMaski = tf.placeholder(tf.float32, shape=[
             self.batchSz, self.imgSzTr[0], self.imgSzTr[1], 1], name="input_mask")
-        self.varLossAlpha = 0.7
+        self.inMask = preprocess(self.inMaski, False, self.data_format)
+        self.varLossAlpha = 0.00001
+        self.regLoGLossAlpha = 0.1
         self.loss = self.loss_masked_meanstd_norm_charbonnier
 
         self.doProfile = False
 
+        self.wh_axis = [
+            1, 2] if self.data_format == 'NHWC' else [2, 3]
+
         self.update()
 
-    def loss_masked_meanstd_norm_charbonnier(self, outputs, targets):
-
+    def meanstd_norm(self, outputs):
         # output depth map mean / stdDev normalization
-        outputs_means = tf.reduce_mean(outputs, axis=[1, 2], keepdims=True)
+        outputs_means = tf.reduce_mean(
+            outputs, axis=self.wh_axis, keepdims=True)
         outputs_centered = tf.subtract(outputs, outputs_means)
         outputs_var = tf.reduce_mean(
-            tf.square(outputs_centered), axis=[1, 2], keepdims=True)
+            tf.square(outputs_centered), axis=self.wh_axis, keepdims=True)
         outputs_stdDev = tf.add(tf.sqrt(outputs_var), EPS)
         outputs_sc = tf.divide(outputs_centered, outputs_stdDev)
 
-        # targets should be already mean / stdDev normalized
+        return outputs_sc
+
+    def loss_LoG(self, outputs, n):
+        loss = 0
+        outs = outputs
+        for i in range(4):
+            loss += tf.reduce_mean(tf.square(filterLoG_3x3(outs,
+                                                           n, self.data_format)))
+            outs = reduceSize2x(outs, n, self.data_format)
+        return loss * 0.25
+
+    def loss_masked_meanstd_norm_charbonnier(self, outputs, targets):
+
+        outputs_sc = self.meanstd_norm(outputs)
         targets_sc = targets
 
-        # per image diff masking
+        nvalid_b = tf.add(tf.reduce_sum(self.inMask, axis=self.wh_axis), EPS)
         diff = tf.multiply(tf.subtract(outputs_sc, targets_sc), self.inMask)
-        nvalid_b = tf.reduce_sum(self.inMask, axis=[1, 2])
 
         data_loss = tf.reduce_mean(tf.divide(
-            tf.reduce_sum(tf.sqrt(EPS + tf.square(diff)), axis=[1, 2]), nvalid_b))
+            tf.reduce_sum(tf.sqrt(EPS + tf.square(diff)), axis=self.wh_axis), nvalid_b))
 
-        # variance loss : to bias the outputs toward high precision
-        outputs_var_masked = tf.divide(tf.reduce_sum(
-            tf.multiply(outputs_centered, self.inMask), axis=[1, 2]), nvalid_b)
-        var_loss = tf.reduce_mean(tf.subtract(1.0, outputs_var_masked))
+        reg_loss = self.loss_LoG(outputs_sc, self.nbOutputChannels)
 
-        return data_loss + self.varLossAlpha * var_loss
+        return data_loss + self.regLoGLossAlpha * reg_loss
 
     def loss_masked_logscale_charbonnier(self, outputs, targets):
 
@@ -206,39 +230,28 @@ class DepthPredictionModelParams(Pix2PixParams):
 
         diff = tf.multiply(tf.subtract(outputs_sc, targets_sc), self.inMask)
 
-        nvalid_b = tf.add(tf.reduce_sum(self.inMask, axis=[1, 2]), EPS)
+        nvalid_b = tf.add(tf.reduce_sum(self.inMask, axis=self.wh_axis), EPS)
 
         log_scales = tf.divide(tf.reduce_sum(
-            diff, axis=[1, 2], keepdims=True), nvalid_b)
+            diff, axis=self.wh_axis, keepdims=True), nvalid_b)
         diff = tf.subtract(diff, log_scales)
 
         return tf.divide(tf.reduce_sum(tf.sqrt(EPS + tf.square(diff))), tf.reduce_sum(nvalid_b))
-
-    def loss_masked_logscale_l2(self, outputs, targets):
-
-        outputs_sc = tf.log(tf.add(tf.multiply(outputs, 3.0), 4.0))
-        targets_sc = tf.log(tf.add(tf.multiply(targets, 3.0), 4.0))
-
-        nvalid = tf.add(tf.reduce_sum(self.inMask), EPS)
-
-        diff = tf.multiply(tf.subtract(outputs_sc, targets_sc), self.inMask)
-
-        return tf.divide(tf.reduce_sum(tf.square(diff)), nvalid) - tf.square(tf.divide(tf.reduce_sum(diff), nvalid))
 
 #-----------------------------------------------------------------------------------------------------
 # VALIDATION
 #-----------------------------------------------------------------------------------------------------
 
 
-def evalModel(modelPath, imgRootDir, imgLst, forceTrainingSize=True, maxSz=-1, writeResults=False):
+def evalModel(modelPath, imgRootDir, imgLst, forceTrainingSize, maxSz, writeResults, data_format):
 
-    lp = DepthPredictionModelParams(modelPath)
+    lp = DepthPredictionModelParams(modelPath, data_format)
     lp.isTraining = False
 
     evalSz = [1, lp.imgSzTr[0], lp.imgSzTr[1], 3]
 
     inputsi = tf.placeholder(tf.float32, name="input")
-    inputs = preprocess(inputsi)
+    inputs = preprocess(inputsi, True, data_format)
 
     with tf.variable_scope("generator"):
         outputs = lp.model(inputs, lp)
@@ -284,7 +297,7 @@ def evalModel(modelPath, imgRootDir, imgLst, forceTrainingSize=True, maxSz=-1, w
                         0, 0), fx=ds, fy=ds, interpolation=cv.INTER_AREA)
 
                 depth = sess.run(outputs, feed_dict={inputsi: img})
-                depth = (depth + 1.0)*0.5
+                depth = postprocess(depth, True, data_format)
                 # cv.normalize(depth[0], depth[0], 0, 1.0, cv.NORM_MINMAX)
 
                 inputImg = (cv.cvtColor(
@@ -319,15 +332,15 @@ def evalModel(modelPath, imgRootDir, imgLst, forceTrainingSize=True, maxSz=-1, w
 #-----------------------------------------------------------------------------------------------------
 
 
-def saveModel(modelPath, asText=False):
+def saveModel(modelPath, asText, data_format):
 
-    lp = DepthPredictionModelParams(modelPath)
+    lp = DepthPredictionModelParams(modelPath, data_format)
     lp.isTraining = False
 
     mdSuff = '-last.pb.txt' if asText else '-last.pb'
 
     inputsi = tf.placeholder(tf.float32, name="adsk_inFront")
-    inputs = preprocess(inputsi)
+    inputs = tf.multiply(tf.subtract(inputsi, 0.5), 2.0)
 
     with tf.variable_scope("generator"):
         outputs = lp.model(inputs, lp)
@@ -368,9 +381,9 @@ def saveModel(modelPath, asText=False):
 #-----------------------------------------------------------------------------------------------------
 
 
-def trainModel(modelPath, imgRootDir, trainPath, testPath, valPath):
+def trainModel(modelPath, imgRootDir, trainPath, testPath, valPath, data_format):
 
-    lp = DepthPredictionModelParams(modelPath)
+    lp = DepthPredictionModelParams(modelPath, data_format)
 
     # Datasets / Iterators
     trDs = DatasetTF(trainPath, imgRootDir, lp.batchSz,
@@ -388,11 +401,11 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath, valPath):
     # Input placeholders
     inImgi = tf.placeholder(tf.float32, shape=[
         lp.batchSz, lp.imgSzTr[0], lp.imgSzTr[1], 3], name="input_img")
-    inImg = preprocess(inImgi)
+    inImg = preprocess(inImgi, True, data_format)
     inDepthi = tf.placeholder(tf.float32, shape=[
         lp.batchSz, lp.imgSzTr[0], lp.imgSzTr[1], 1], name="input_depth")
     # inDepthi is meanStdDev normalized : no need to centered it
-    inDepth = inDepthi  # tf.multiply(tf.subtract(inDepthi, 0.5), 2.0)
+    inDepth = preprocess(inDepthi, False, data_format)
 
     # Optimizers
     [opts, loss, trSum, tsSum, valSum] = pix2pix_optimizer(inImg, inDepth, lp)
@@ -451,10 +464,10 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath, valPath):
 
             # Get the next training batch
             # print "dsView"
-            #start_ms = time.time()*1000.0
+            # start_ms = time.time()*1000.0
             currImg, currDepth, currMask = sess.run(
                 dsView, options=run_options, run_metadata=run_metadata)
-            #end_ms = time.time()*1000.0
+            # end_ms = time.time()*1000.0
             # print(end_ms-start_ms)
 
             if lp.doProfile:
@@ -464,12 +477,12 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath, valPath):
             trFeed = {lp.isTraining: True,
                       inImgi: currImg,
                       inDepthi: currDepth,
-                      lp.inMask: currMask}
+                      lp.inMaski: currMask}
 
             step = step + 1
 
             # print "opts"
-            #start_ms = time.time()*1000.0
+            # start_ms = time.time()*1000.0
             # Run optimization
             if step % lp.trlogStep == 0:
                 _, summary, step = sess.run(
@@ -483,7 +496,7 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath, valPath):
                     lp.profiler.update(timeline.Timeline(
                         run_metadata.step_stats).generate_chrome_trace_format(), "opts")
 
-            #end_ms = time.time()*1000.0
+            # end_ms = time.time()*1000.0
             # print(end_ms-start_ms)
 
             # SUMMARIES
@@ -492,7 +505,7 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath, valPath):
                 summary = sess.run(tsSum, feed_dict={lp.isTraining: False,
                                                      inImgi: currImg,
                                                      inDepthi: currDepth,
-                                                     lp.inMask: currMask})
+                                                     lp.inMaski: currMask})
                 train_summary_writer.add_summary(summary, step)
 
             if step % lp.tslogStep == 0:
@@ -502,7 +515,7 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath, valPath):
                 tsLoss, summary = sess.run([loss, tsSum], feed_dict={lp.isTraining: False,
                                                                      inImgi: currImg,
                                                                      inDepthi: currDepth,
-                                                                     lp.inMask: currMask})
+                                                                     lp.inMaski: currMask})
 
                 test_summary_writer.add_summary(summary, step)
 
@@ -554,7 +567,12 @@ if __name__ == "__main__":
     parser.add_argument(
         "valLstPath", help="path to the validation dataset (list of images path relative to root dir)")
 
+    parser.add_argument("--nhwc", dest='nhwc',
+                        default=False, action='store_true')
+
     args = parser.parse_args()
+
+    data_format = 'NHWC' if args.nhwc else 'NCHW'
 
     #------------------------------------------------------------------------------------------------
 
@@ -563,16 +581,16 @@ if __name__ == "__main__":
     #------------------------------------------------------------------------------------------------
 
     trainModel(args.modelPath, args.imgRootDir,
-               args.trainLstPath, args.testLstPath, args.valLstPath)
+               args.trainLstPath, args.testLstPath, args.valLstPath, data_format)
 
     #------------------------------------------------------------------------------------------------
 
-    # testModel(args.modelPath, args.imgRootDir, args.testLstPath, 100)
+    # testModel(args.modelPath, args.imgRootDir, args.testLstPath, 100, data_format)
 
     #------------------------------------------------------------------------------------------------
 
-    # evalModel(args.modelPath, args.imgRootDir, args.valLstPath, True, 512)
+    # evalModel(args.modelPath, args.imgRootDir, args.valLstPath, True, 512, False, data_format)
 
     #------------------------------------------------------------------------------------------------
 
-    # saveModel(args.modelPath, False)
+    # saveModel(args.modelPath, False, data_format)

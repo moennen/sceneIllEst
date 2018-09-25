@@ -39,7 +39,7 @@ class DatasetTF(object):
 
     def sample(self):
         for i in itertools.count(1):
-            currImg, currLabels = self.__ds.getDataBuffers()
+            currImg, currLabels, currMask = self.__ds.getDataBuffers()
             yield (currImg, currLabels)
 
 
@@ -91,7 +91,7 @@ def testDataset(imgRootDir, trainPath):
     batchSz = 16
 
     trDs = DatasetTF(trainPath, imgRootDir, batchSz,
-                     imgSz, False, True, 0, rseed)
+                     imgSz, False, True, -1, rseed)
 
     dsIt = tf.data.Iterator.from_structure(
         trDs.data.output_types, trDs.data.output_shapes)
@@ -122,34 +122,35 @@ def testDataset(imgRootDir, trainPath):
 
 class SemSegModelParams(Pix2PixParams):
 
-    def __init__(self, modelPath, seed=int(time.time())):
+    def __init__(self, modelPath, data_format, seed=int(time.time())):
 
         #
         # model 0 : resize / pix2pix_gen_p / bn / mapping#-1
         # model 1 : resize / pix2pix_gen_p / bn / mapping#0
+        # model 2 : stided / pix2pix_gen_p / bn / mapping#-1
         #
 
-        Pix2PixParams.__init__(self, modelPath, seed)
+        Pix2PixParams.__init__(self, modelPath, data_format, seed)
 
         self.numMaxSteps = 250000
-        self.numSteps = 200000
+        self.numSteps = 250000
         self.backupStep = 250
         self.trlogStep = 250
         self.tslogStep = 250
         self.vallogStep = 250
 
-        self.imgSzTr = [256, 256]
-        self.batchSz = 32
+        self.imgSzTr = [296, 296]
+        self.batchSz = 48
 
         # bn vs no bn
         self.useBatchNorm = True
         self.nbChannels = 32
         self.nbInChannels = 3
-        self.nbOutputChannels = 6  # 151
+        self.nbOutputChannels = 151
         self.kernelSz = 5
         self.stridedEncoder = True
         # strided vs resize
-        self.stridedDecoder = False
+        self.stridedDecoder = True
         self.inDispRange = np.array([[0, 1, 2]])
         self.outDispRange = np.array([[0, 0, 0]])
         self.alphaData = 1.0
@@ -174,16 +175,17 @@ class SemSegModelParams(Pix2PixParams):
 
 def evalModel(modelPath, imgRootDir, imgLst):
 
-    lp = SemSegModelParams(modelPath)
+    lp = SemSegModelParams(modelPath, data_format)
     lp.isTraining = False
 
     evalSz = [1, 620, 480, 3]
 
     inputsi = tf.placeholder(tf.float32, shape=evalSz, name="input")
-    inputs = preprocess(inputsi)
+    inputs = preprocess(inputsi, True, data_format)
 
     with tf.variable_scope("generator"):
         outputs = pix2pix_gen(inputs, lp)
+        outputs = postprocess(outputs, False, data_format)
 
     # Persistency
     persistency = tf.train.Saver(filename=lp.modelFilename)
@@ -191,7 +193,10 @@ def evalModel(modelPath, imgRootDir, imgLst):
     # Params Initializer
     varInit = tf.global_variables_initializer()
 
-    with tf.Session() as sess:
+    sess_config = tf.ConfigProto(device_count={'GPU': 0})
+    #sess_config.gpu_options.allow_growth = True
+
+    with tf.Session(config=sess_config) as sess:
 
         # initialize params
         sess.run(varInit)
@@ -220,9 +225,9 @@ def evalModel(modelPath, imgRootDir, imgLst):
 #-----------------------------------------------------------------------------------------------------
 
 
-def trainModel(modelPath, imgRootDir, trainPath, testPath, valPath):
+def trainModel(modelPath, imgRootDir, trainPath, testPath, valPath, data_format):
 
-    lp = SemSegModelParams(modelPath)
+    lp = SemSegModelParams(modelPath, data_format)
 
     # Datasets / Iterators
     trDs = DatasetTF(trainPath, imgRootDir, lp.batchSz,
@@ -240,10 +245,10 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath, valPath):
     # Input placeholders
     inImgi = tf.placeholder(tf.float32, shape=[
         lp.batchSz, lp.imgSzTr[0], lp.imgSzTr[1], 3], name="input_img")
-    inImg = preprocess(inImgi)
+    inImg = preprocess(inImgi, True, data_format)
     inLabelsi = tf.placeholder(tf.float32, shape=[
         lp.batchSz, lp.imgSzTr[0], lp.imgSzTr[1], 1], name="input_depth")
-    inLabels = tf.to_int32(inLabelsi)
+    inLabels = tf.to_int32(preprocess(inLabelsi, False, data_format))
 
     # Optimizers
     [opts, loss, trSum, tsSum, valSum] = pix2pix_optimizer(inImg, inLabels, lp)
@@ -381,7 +386,12 @@ if __name__ == "__main__":
     parser.add_argument(
         "valLstPath", help="path to the validation dataset (list of images path relative to root dir)")
 
+    parser.add_argument("--nhwc", dest='nhwc',
+                        default=False, action='store_true')
+
     args = parser.parse_args()
+
+    data_format = 'NHWC' if args.nhwc else 'NCHW'
 
     #------------------------------------------------------------------------------------------------
 
@@ -390,12 +400,8 @@ if __name__ == "__main__":
     #------------------------------------------------------------------------------------------------
 
     trainModel(args.modelPath, args.imgRootDir,
-               args.trainLstPath, args.testLstPath, args.valLstPath)
+               args.trainLstPath, args.testLstPath, args.valLstPath, data_format)
 
     #------------------------------------------------------------------------------------------------
 
-    # testModel(args.modelPath, args.imgRootDir, args.testLstPath, 100)
-
-    #------------------------------------------------------------------------------------------------
-
-    # evalModel(args.modelPath, args.imgRootDir, args.valLstPath)
+    # evalModel(args.modelPath, args.imgRootDir, args.valLstPath, False, 640, True, data_format)

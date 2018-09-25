@@ -162,6 +162,7 @@ void drawFaceModel(
    static GLint uniMVP = -1;
    static GLint uniMV = -1;
    static GLint uniMVN = -1;
+   static GLint uniPosFaceCenter = -1;
    static GLint uniLightPos = -1;
    static GLint uniLightCol = -1;
    static GLint uniAmbient = -1;
@@ -182,6 +183,7 @@ void drawFaceModel(
       uniMVP = faceShader.getUniform( "mvp" );
       uniMV = faceShader.getUniform( "mv" );
       uniMVN = faceShader.getUniform( "mvn" );
+      uniPosFaceCenter = faceShader.getUniform( "posFaceCenter" );
       uniLightPos = faceShader.getUniform( "lightPos" );
       uniLightCol = faceShader.getUniform( "lightColor" );
       uniAmbient = faceShader.getUniform( "ambient" );
@@ -199,6 +201,12 @@ void drawFaceModel(
    glUniformMatrix4fv( uniMVP, 1, 0, value_ptr( mvp ) );
    const mat4 mvt = transpose( inverse( mv ) );
    glUniformMatrix4fv( uniMVN, 1, 0, value_ptr( mvt ) );
+
+   const vec4 v4PosFaceCenter = mvp * vec4( 0.0, 0.0, 0.0, 1.0 );
+   const vec2 posFaceCenter(
+       v4PosFaceCenter.x / v4PosFaceCenter.w, v4PosFaceCenter.y / v4PosFaceCenter.w );
+   glUniform2fv( uniPosFaceCenter, 1, value_ptr( posFaceCenter ) );
+
    glUniform3fv( uniLightPos, 1, value_ptr( lightPos ) );
    glUniform3fv( uniLightCol, 1, value_ptr( lightCol ) );
 
@@ -344,7 +352,7 @@ int main( int argc, char* argv[] )
       }
    }
 
-   const uvec2 imgSz( 296, 296 );
+   const uvec2 imgSz( 320, 320 );
 
    // SDL init
    SDL_Init( SDL_INIT_EVERYTHING );
@@ -403,7 +411,8 @@ int main( int argc, char* argv[] )
    gl_utils::Texture<gl_utils::RGBA_32FP> faceColorTex( imgSz );
    gl_utils::Texture<gl_utils::RGBA_32FP> faceUVDepthTex( imgSz );
    gl_utils::Texture<gl_utils::RGBA_32FP> faceNormalsTex( imgSz );
-   GLuint rTex[3] = {faceColorTex.id, faceUVDepthTex.id, faceNormalsTex.id};
+   gl_utils::Texture<gl_utils::RGBA_32FP> faceIdMatteTex( imgSz );
+   GLuint rTex[4] = {faceColorTex.id, faceUVDepthTex.id, faceNormalsTex.id, faceIdMatteTex.id};
 
    for ( int s = 0; s < nRenders; ++s )
    {
@@ -436,7 +445,7 @@ int main( int argc, char* argv[] )
           rs_backImgResize( rs_gen ),
           rs_backImgResize( rs_gen ) );
 
-      renderTarget.bind( 3, &rTex[0] );
+      renderTarget.bind( 4, &rTex[0] );
       glClear( GL_COLOR_BUFFER_BIT );
       glClear( GL_DEPTH_BUFFER_BIT );
       renderTarget.unbind();
@@ -462,11 +471,10 @@ int main( int argc, char* argv[] )
       const vec3 lightCol = vec3( rs_lightCol( rs_gen ) ) * shade;
 
       // Sample a random number of faces
-      const size_t nfaces = 1u + std::max(-1, static_cast<int>( rs_nfaces( rs_gen ) ));
+      const size_t nfaces = 1u + std::max( -1, static_cast<int>( rs_nfaces( rs_gen ) ) );
 
       const float sf = std::min( 1.0 + abs( rs_scale_off( rs_gen ) ), 3.5 );
       const float gz = rs_pos_z( rs_gen );
-         
 
       for ( size_t f = 0; f < nfaces; ++f )
       {
@@ -511,7 +519,7 @@ int main( int argc, char* argv[] )
          // Sample the model view
          mat4 modelView;
 
-         const float z = gz + 200.0*f;
+         const float z = gz + 200.0 * f;
          const vec2 ss_pos = vec2( rs_pos_xy( rs_gen ) * imgSz.x, rs_pos_xy( rs_gen ) * imgSz.y );
          const vec3 cs_pos = vec3(
              ( ss_pos * vec2( camProjectionInfo.x, camProjectionInfo.y ) +
@@ -529,7 +537,7 @@ int main( int argc, char* argv[] )
          modelView = glm::scale( modelView, vec3( sf ) );
 
          // Draw the face
-         renderTarget.bind( 3, &rTex[0] );
+         renderTarget.bind( 4, &rTex[0] );
 
          glEnable( GL_DEPTH_TEST );
          glEnable( GL_CULL_FACE );
@@ -549,29 +557,34 @@ int main( int argc, char* argv[] )
       Mat faceColorImg( faceColorTex.sz.y, faceColorTex.sz.x, CV_32FC4 );
       Mat faceUVDepthImg( faceUVDepthTex.sz.y, faceUVDepthTex.sz.x, CV_32FC4 );
       Mat faceNormalsImg( faceNormalsTex.sz.y, faceNormalsTex.sz.x, CV_32FC4 );
+      Mat faceIdMatteImg( faceIdMatteTex.sz.y, faceIdMatteTex.sz.x, CV_32FC4 );
       if ( gl_utils::readbackTexture( faceColorTex, faceColorImg.data ) &&
            gl_utils::readbackTexture( faceUVDepthTex, faceUVDepthImg.data ) &&
-           gl_utils::readbackTexture( faceNormalsTex, faceNormalsImg.data ) )
+           gl_utils::readbackTexture( faceNormalsTex, faceNormalsImg.data ) &&
+           gl_utils::readbackTexture( faceIdMatteTex, faceIdMatteImg.data ) )
       {
          cvtColor( faceColorImg, faceColorImg, cv::COLOR_RGBA2BGR );
          cvtColor( faceUVDepthImg, faceUVDepthImg, cv::COLOR_RGBA2BGR );
          cvtColor( faceNormalsImg, faceNormalsImg, cv::COLOR_RGBA2BGR );
+         cvtColor( faceIdMatteImg, faceIdMatteImg, cv::COLOR_RGBA2BGR );
 
          if ( doWrite )
          {
             imwrite( outBasenameFull + "c.png", faceColorImg * 255.0 );
             imwrite( outBasenameFull + "uvd.exr", faceUVDepthImg );
             imwrite( outBasenameFull + "n.exr", faceNormalsImg );
+            imwrite( outBasenameFull + "idm.exr", faceIdMatteImg );
          }
 
-         std::cout << outBasename + "c.png " << outBasename + "uvd.exr " << outBasename + "n.exr"
-                   << std::endl;
+         std::cout << outBasename + "c.png " << outBasename + "uvd.exr " << outBasename + "n.exr "
+                   << outBasename + "idm.exr" << std::endl;
 
          if ( doShow )
          {
             imshow( "color", faceColorImg );
             imshow( "uvdepth", faceUVDepthImg );
             imshow( "normals", faceNormalsImg );
+            imshow( "idmatte", faceIdMatteImg );
             waitKey( 0 );
          }
       }
