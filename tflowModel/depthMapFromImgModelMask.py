@@ -136,6 +136,10 @@ class DepthPredictionModelParams(Pix2PixParams):
         # model 0 : scale_l2 / resize / pix2pix_gen_p / bn
         # model 1 : scale_charbonnier / resize / pix2pix_gen_p / bn
         # model 2 : 296x296x3 / MeanStdDev_charbonnier_0.7 / resize / pix2pix_gen_p / bn
+        # model 3 : 296x296x3 / loss_masked_meanstd_norm_charbonnier / stride / pix2pix_gen_p / bn
+        # model 4 : 296x296x3 / loss_masked_meanstd_norm_charbonnier + disc / stride / pix2pix_gen_p / bn
+        #
+        # exp0005 : 296x296x3 / loss_masked_meanstd_norm_charbonnier / stride / pix2pix_gen_p / bn / md only
         #
 
         seed = 0

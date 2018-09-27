@@ -32,8 +32,6 @@ struct Sampler final
    uniform_real_distribution<> _tsGen;
    normal_distribution<> _rnGen;
 
-   static constexpr float maxDsScaleFactor = 3.5;
-
    const ivec3 _sampleSz;
    const bool _toLinear;
    const bool _doRescale;
@@ -45,20 +43,12 @@ struct Sampler final
 
    enum
    {
-      nBuffers = 4,
-      nOutPlanes = 9  // RGB : 3 / UV : 2 / Depth : 1 / Normals : 3
+      nBuffers = 5,
+      nOutPlanes = 13  // RGB : 3 / UVD : 3 / Normals : 3 / ID : 2 / Pos : 2
    };
    ImgNFileLst _data;
 
-   inline static unsigned getBufferDepth( const unsigned buffId )
-   {
-      if ( buffId == 1 )
-         return 2;
-      else if ( buffId == 2 )
-         return 1;
-      else
-         return 3;
-   }
+   inline static unsigned getBufferDepth( const unsigned buffId ) { return buffId < 3 ? 3 : 2; }
 
    Sampler(
        const char* dataSetPath,
@@ -122,14 +112,13 @@ struct Sampler final
    {
       HOP_PROF_FUNC();
 
-      const unsigned depthBuffSz = _sampleSz.y * _sampleSz.z;
-      const unsigned uvBuffSz = depthBuffSz * 2;
-      const unsigned imgBuffSz = depthBuffSz * 3;
+      const size_t szBuffC3 = _sampleSz.y * _sampleSz.z * 3;
+      const size_t szBuffC2 = _sampleSz.y * _sampleSz.z * 2;
 
-      float* currBuffImg = buff;
-      float* currBuffUVs = buff + imgBuffSz * _sampleSz.x;
-      float* currBuffDepth = buff + ( imgBuffSz + uvBuffSz ) * _sampleSz.x;
-      float* currBuffNormals = buff + ( imgBuffSz + uvBuffSz + depthBuffSz ) * _sampleSz.x;
+      const size_t szBuffOffUVD = _sampleSz.x * szBuffC3;
+      const size_t szBuffOffNorm = szBuffOffUVD + _sampleSz.x * szBuffC3;
+      const size_t szBuffOffID = szBuffOffNorm + _sampleSz.x * szBuffC3;
+      const size_t szBuffOffPos = szBuffOffID + _sampleSz.x * szBuffC2;
 
       std::vector<char> sampled( _sampleSz.x, 0 );
       std::vector<size_t> v_si( _sampleSz.x );
@@ -148,9 +137,12 @@ struct Sampler final
                 cv_utils::imread32FC3( _data.filePath( si, 0 ), _toLinear, true /*toRGB*/ );
             Mat currUVDepth = cv_utils::imread32FC3( _data.filePath( si, 1 ), false, true );
             Mat currNormals = cv_utils::imread32FC3( _data.filePath( si, 2 ), false, true );
+            Mat currIDMatte = cv_utils::imread32FC3( _data.filePath( si, 3 ), false, true );
 
             // ignore failed samples
-            if ( currImg.empty() || currUVDepth.empty() || currNormals.empty() ) continue;
+            if ( currImg.empty() || currUVDepth.empty() || currNormals.empty() ||
+                 currIDMatte.empty() )
+               continue;
 
             ivec2 imgSz( currImg.cols, currImg.rows );
 
@@ -164,19 +156,40 @@ struct Sampler final
                    currUVDepth, currUVDepth, topright.y, 0, 0, topright.x, BORDER_CONSTANT );
                copyMakeBorder(
                    currNormals, currNormals, topright.y, 0, 0, topright.x, BORDER_CONSTANT );
+               copyMakeBorder(
+                   currIDMatte, currIDMatte, topright.y, 0, 0, topright.x, BORDER_CONSTANT );
                imgSz = ivec2( currImg.cols, currImg.rows );
             }
 
             // random rescale
+            float fRescaleFactor = 1.0f;
             if ( _doRescale )
             {
                const float minDs =
                    std::max( (float)_sampleSz.z / imgSz.y, (float)_sampleSz.y / imgSz.x );
-               const float ds =
-                   mix( std::min( 1.0f, maxDsScaleFactor * minDs ), minDs, _tsGen( _rng ) );
-               resize( currImg, currImg, Size(), ds, ds, CV_INTER_AREA );
-               resize( currUVDepth, currUVDepth, Size(), ds, ds, CV_INTER_AREA );
-               resize( currNormals, currNormals, Size(), ds, ds, CV_INTER_AREA );
+               fRescaleFactor = mix( std::min( 1.0f, minDs ), minDs, _tsGen( _rng ) );
+               resize( currImg, currImg, Size(), fRescaleFactor, fRescaleFactor, CV_INTER_AREA );
+               resize(
+                   currUVDepth,
+                   currUVDepth,
+                   Size(),
+                   fRescaleFactor,
+                   fRescaleFactor,
+                   CV_INTER_AREA );
+               resize(
+                   currNormals,
+                   currNormals,
+                   Size(),
+                   fRescaleFactor,
+                   fRescaleFactor,
+                   CV_INTER_AREA );
+               resize(
+                   currIDMatte,
+                   currIDMatte,
+                   Size(),
+                   fRescaleFactor,
+                   fRescaleFactor,
+                   CV_INTER_AREA );
                imgSz = ivec2( currImg.cols, currImg.rows );
             }
 
@@ -189,34 +202,69 @@ struct Sampler final
             currImg = currImg( Rect( trans.x, trans.y, _sampleSz.y, _sampleSz.z ) );
             currUVDepth = currUVDepth( Rect( trans.x, trans.y, _sampleSz.y, _sampleSz.z ) );
             currNormals = currNormals( Rect( trans.x, trans.y, _sampleSz.y, _sampleSz.z ) );
+            currIDMatte = currIDMatte( Rect( trans.x, trans.y, _sampleSz.y, _sampleSz.z ) );
 
             // random small blur to remove artifacts + copy to destination
-            Mat imgSple( _sampleSz.z, _sampleSz.y, CV_32FC3, currBuffImg + s * imgBuffSz );
+            Mat imgSple( _sampleSz.z, _sampleSz.y, CV_32FC3, buff + s * szBuffC3 );
             cv_utils::adjustContrastBrightness<vec3>(
                 currImg, ( 1.0f + 0.11f * _rnGen( _rng ) ), 0.11f * _rnGen( _rng ) );
             GaussianBlur( currImg, imgSple, Size( 5, 5 ), 0.31 * abs( _rnGen( _rng ) ) );
 
-            // split uvdepth and
-            Mat uvd[3];
-            split( currUVDepth, uvd );
-
-            Mat uvsSple( _sampleSz.z, _sampleSz.y, CV_32FC2, currBuffUVs + s * uvBuffSz );
-            Mat uvl;
-            merge( &uvd[0], 2, uvl );
-            uvl.copyTo( uvsSple );
-
-            Mat depthSple( _sampleSz.z, _sampleSz.y, CV_32FC1, currBuffDepth + s * depthBuffSz );
-            uvd[2].copyTo( depthSple );
+            // uvdepth
+            Mat uvdSple( _sampleSz.z, _sampleSz.y, CV_32FC3, buff + szBuffOffUVD + s * szBuffC3 );
+            currUVDepth.copyTo( uvdSple );
 
             // normalize the normals
-            Mat normalsSple( _sampleSz.z, _sampleSz.y, CV_32FC3, currBuffNormals + s * imgBuffSz );
-            currNormals.copyTo( normalsSple );
+            Mat normalSple(
+                _sampleSz.z, _sampleSz.y, CV_32FC3, buff + szBuffOffNorm + s * szBuffC3 );
+            currNormals.copyTo( normalSple );
+
+            // idmatte :
+            Mat idSple( _sampleSz.z, _sampleSz.y, CV_32FC2, buff + szBuffOffID + s * szBuffC2 );
+            Mat posSple( _sampleSz.z, _sampleSz.y, CV_32FC2, buff + szBuffOffPos + s * szBuffC2 );
+            const vec2 v2PosScale = 
+                max( vec2( 0.001f, 0.001f ), vec2( _tsGen( _rng ), _tsGen( _rng ) ) );
+            const vec2 v2PosOff = 
+                ( vec2( _tsGen( _rng ), _tsGen( _rng ) ) * 2.0f - 1.0f ) * v2PosScale;
+            const vec2 v2IdScale = vec2( fRescaleFactor ) * v2PosScale;
+            const vec2 v2IdOff =
+                vec2( -2.0f * trans.x / imgSz.x + 1.0f, -2.0f * trans.y / imgSz.y + 1.0f ) *
+                    v2PosScale +
+                v2PosOff;
+
+            processIdPos( currIDMatte, idSple, posSple, v2IdScale, v2IdOff, v2PosScale, v2PosOff );
 
             sampled[s] = 1;
          }
       } while ( accumulate( sampled.begin(), sampled.end(), 0 ) != _sampleSz.x );
 
       return true;
+   }
+
+   // set the id map
+   void processIdPos(
+       const Mat& matIdMatteIn,
+       Mat& matIdOut,
+       Mat& matPosOut,
+       const vec2& v2IdScale,
+       const vec2& v2IdOff,
+       const vec2& v2PosScale,
+       const vec2& v2PosOff )
+   {
+      const vec2 v2ScalePos = vec2( 2.0f / matIdMatteIn.cols, 2.0f / matIdMatteIn.rows );
+#pragma omp parallel for
+      for ( size_t y = 0; y < matIdMatteIn.rows; y++ )
+      {
+         const vec3* v3pIdMatteIn = matIdMatteIn.ptr<vec3>( y );
+         vec2* v2pIdOut = matIdOut.ptr<vec2>( y );
+         vec2* v2pPosOut = matPosOut.ptr<vec2>( y );
+         for ( size_t x = 0; x < matIdMatteIn.cols; x++ )
+         {
+            const vec3& v3IdMatteIn = v3pIdMatteIn[x];
+            v2pIdOut[x] = v3IdMatteIn.z > 0.5 ? vec2( v3IdMatteIn.x, v3IdMatteIn.y ) * v2IdScale + v2IdOff : vec2(-1.0);
+            v2pPosOut[x] = ( vec2( x, y ) * v2ScalePos - 1.0f ) * v2PosScale + v2PosOff;
+         }
+      }
    }
 
    // normalize normal by z to reduce the dimension from 3 to 2
@@ -277,6 +325,7 @@ extern "C" int initBuffersDataSampler(
    // parse params
    const ivec3 sz( params[0], params[1], params[2] );
    const bool toLinear( nParams > 3 ? params[3] > 0.0 : false );
+   // WARNING : rescaling may cause unwanted artifact in normal  uvd maps
    const bool doRescale( nParams > 4 ? params[4] > 0.0 : false );
    const bool doAsync( nParams > 5 ? params[5] > 0.0 : true );
    g_samplers[sidx].reset(

@@ -270,7 +270,21 @@ class Pix2PixParams(LearningParams):
         self.alphaData = 1.0
         self.alphaDisc = 0.0
 
+        self.prepare_disc = prepareDisc
+
+        self.disc_model_targets = pix2pix_disc
+        self.disc_model_outputs = self.disc_model_targets
+        self.disc_loss_targets = pix2pix_disc_loss_targets
+        self.disc_loss_outputs = pix2pix_disc_loss_outputs
+
         self.doClassOut = False
+
+    def getModelName(self):
+        return "generator"
+
+    def doDisc(self):
+        return self.alphaDisc > 0.0
+
 
 #
 # n = number of output channels
@@ -406,7 +420,8 @@ def pix2pix_conv(inputs, i_n, o_n, ks, ss, bias, data_format):
     initializer = tf.contrib.layers.xavier_initializer()
 
     shape = [ks, ks, i_n, o_n]
-    w = tf.Variable(initializer(shape))
+    w = tf.get_variable(
+        "w", shape, initializer=initializer, trainable=True)
     pad_size = ks//2
     if data_format == 'NHWC':
         pad_mat = np.array([[0, 0], [pad_size, pad_size],
@@ -420,7 +435,8 @@ def pix2pix_conv(inputs, i_n, o_n, ks, ss, bias, data_format):
     x = tf.nn.conv2d(x, w, strides=strides,
                      data_format=data_format, padding='VALID')
     if bias:
-        x = tf.nn.bias_add(x, tf.Variable(initializer([o_n])), data_format)
+        x = tf.nn.bias_add(x, tf.get_variable(
+            "b", [o_n], initializer=initializer, trainable=True), data_format)
 
     return x
 
@@ -428,9 +444,11 @@ def pix2pix_conv(inputs, i_n, o_n, ks, ss, bias, data_format):
 def pix2pix_deconv(inputs, ref, i_n, o_n, ks, ss, bias, data_format):
 
     initializer = tf.contrib.layers.xavier_initializer()
+
     shape = [ks, ks, o_n, i_n]
     strides = [1, ss, ss, 1] if data_format == 'NHWC' else [1, 1, ss, ss]
-    w = tf.Variable(initializer(shape))
+    w = tf.get_variable(
+        "w", shape, initializer=initializer, trainable=True)
     ref_shape = tf.shape(ref)
     if data_format == 'NHWC':
         ref_shape = [ref_shape[0], ref_shape[1], ref_shape[2], o_n]
@@ -440,7 +458,8 @@ def pix2pix_deconv(inputs, ref, i_n, o_n, ks, ss, bias, data_format):
         inputs, w, ref_shape, strides=strides, padding='SAME', data_format=data_format)
 
     if bias:
-        x = tf.nn.bias_add(x, tf.Variable(initializer([o_n])), data_format)
+        x = tf.nn.bias_add(x, tf.get_variable(
+            "b", [o_n], initializer=initializer, trainable=True), data_format)
 
     return x
 
@@ -905,39 +924,36 @@ def pix2pix_disc(gen_inputs, gen_outputs, params):
     train = params.isTraining
 
     n = params.nbChannels
-    nIn = params.nbInChannels
-    nOut = params.nbOutputChannels
+    nIn = params.nbInChannels + params.nbOutputChannels
     data_format = params.data_format
 
     ks = params.kernelSz
     ess = params.stridedEncoder
-    bn = params.useBatchNorm
+    bn = False  # params.useBatchNorm
 
-    with tf.variable_scope("discriminator", reuse=tf.AUTO_REUSE):
+    inputs = tf.concat([gen_inputs, gen_outputs],
+                       axis=3 if data_format == 'NHWC' else 1)
 
-        inputs = tf.concat([gen_inputs, gen_outputs],
-                           axis=3 if data_format == 'NHWC' else 1)
+    # layer_1: [batch, 256, 256, in_channels] => [batch, 128, 128, ndf]
+    layer_1 = pix2pix_encoder_bn(
+        inputs, nIn, n, ks, 1, True, False, "layer_1", train, data_format)
+    # layer_2: [batch, 128, 128, ndf] => [batch, 64, 64, ndf * 2]
+    layer_2 = pix2pix_encoder_bn(
+        layer_1, n, n*2, ks, 2, ess, bn, "layer_2", train, data_format)
+    # layer_3: [batch, 64, 64, ndf * 2] => [batch, 32, 32, ndf * 4]
+    layer_3 = pix2pix_encoder_bn(
+        layer_2, n*2, n*4, ks, 1, True, bn, "layer_3", train, data_format)
+    # layer_4: [batch, 32, 32, ndf * 4] => [batch, 31, 31, ndf * 8]
+    layer_4 = pix2pix_encoder_bn(
+        layer_3, n*4, n*8, ks, 2, ess, bn, "layer_4", train, data_format)
+    # layer_5: [batch, 32, 32, ndf * 4] => [batch, 31, 31, ndf * 8]
+    layer_5 = pix2pix_encoder_bn(
+        layer_4, n*8, n*8, ks, 1, True, bn, "layer_5", train, data_format)
 
-        # layer_1: [batch, 256, 256, in_channels] => [batch, 128, 128, ndf]
-        layer_1 = pix2pix_encoder_bn(
-            inputs, nIn, n, ks, ess, False, "layer_1", train, data_format)
-        # layer_2: [batch, 128, 128, ndf] => [batch, 64, 64, ndf * 2]
-        layer_2 = pix2pix_encoder_bn(
-            layer_1, n, n*2, ks, 2, ess, bn, "layer_2", train, data_format)
-        # layer_3: [batch, 64, 64, ndf * 2] => [batch, 32, 32, ndf * 4]
-        layer_3 = pix2pix_encoder_bn(
-            layer_2, n*2, n*4, ks, 1, True, bn, "layer_3", train, data_format)
-        # layer_4: [batch, 32, 32, ndf * 4] => [batch, 31, 31, ndf * 8]
-        layer_4 = pix2pix_encoder_bn(
-            layer_3, n*4, n*8, ks, 2, ess, bn, "layer_4", train, data_format)
-        # layer_5: [batch, 32, 32, ndf * 4] => [batch, 31, 31, ndf * 8]
-        layer_5 = pix2pix_encoder_bn(
-            layer_4, n*8, n*8, ks, 1, True, bn, "layer_5", train, data_format)
-
-        # layer_6
-        with tf.variable_scope("layer_6"):
-            layer_6 = pix2pix_conv(layer_5, n*8, 1, ks, ess, True, data_format)
-            # layer_6 = tf.nn.sigmoid(layer_6)
+    # layer_6
+    with tf.variable_scope("layer_6"):
+        layer_6 = pix2pix_conv(layer_5, n*8, 1, ks, ess, True, data_format)
+        # layer_6 = tf.nn.sigmoid(layer_6)
 
     return layer_6
 
@@ -997,16 +1013,47 @@ def pix2pix_classout_loss(outputs, targets):
         labels=tf.squeeze(targets), logits=outputs))
 
 
-def pix2pix_optimizer(imgs, targets_in, params):
+def pix2pix_disc_loss_outputs(outputs):
+    return tf.reduce_mean(
+        tf.nn.sigmoid_cross_entropy_with_logits(labels=tf.constant(0., shape=outputs.shape), logits=outputs))
 
-    targets = targets_in
+
+def pix2pix_disc_loss_targets(targets):
+    return tf.reduce_mean(
+        tf.nn.sigmoid_cross_entropy_with_logits(labels=tf.constant(1., shape=targets.shape), logits=targets))
+
+
+def prepareDisc(imgs, targets, outputs):
+    return imgs, targets, imgs, outputs
+
+
+def getOptimizerData(loss, depends, params):
+
+    with tf.variable_scope(params.getModelName() + "_opt"):
+        with tf.control_dependencies(depends):
+            gen_tvars = [var for var in tf.trainable_variables(
+            ) if var.name.startswith(params.getModelName())]
+
+            gen_optim = tf.train.AdamOptimizer(params.learningRate)
+
+            gen_grads_and_vars = gen_optim.compute_gradients(
+                loss, var_list=gen_tvars)
+
+            gen_train = gen_optim.apply_gradients(gen_grads_and_vars)
+
+    return gen_train, gen_tvars, gen_grads_and_vars
+
+
+def pix2pix_optimizer(imgs, targets_in, params):
 
     optimizers = []
     depends = []
 
     gen_loss_data = 0
 
-    with tf.variable_scope("generator"):
+    targets = targets_in
+
+    with tf.variable_scope(params.getModelName()):
         outputs = params.model(imgs, params)
 
     with tf.variable_scope("generator_loss"):
@@ -1018,27 +1065,23 @@ def pix2pix_optimizer(imgs, targets_in, params):
 
     if disc:
 
-        with tf.name_scope("discriminator_gt"):
-            disc_targets = pix2pix_disc(imgs, targets, params)
+        disc_targets_img, disc_targets_pred, disc_outputs_img, disc_outputs_pred = params.prepare_disc(
+            imgs, targets, outputs)
 
-        with tf.name_scope("discriminator_gen"):
-            disc_outputs = pix2pix_disc(imgs, outputs, params)
+        with tf.variable_scope("discriminator"):
+            disc_targets = params.disc_model_targets(
+                disc_targets_img, disc_targets_pred, params)
+            disc_outputs = params.disc_model_outputs(
+                disc_outputs_img, disc_outputs_pred, params)
 
-        # disc_loss_targets = tf.reduce_mean(-tf.log(disc_targets + EPS))
-        disc_loss_targets = tf.reduce_mean(
-            tf.nn.sigmoid_cross_entropy_with_logits(labels=tf.constant(1., shape=disc_targets.shape), logits=disc_targets))
-        # disc_loss_outputs = tf.reduce_mean(-tf.log(1 - disc_outputs + EPS))
-        disc_loss_outputs = tf.reduce_mean(
-            tf.nn.sigmoid_cross_entropy_with_logits(labels=tf.constant(0., shape=disc_outputs.shape), logits=disc_outputs))
-        disc_loss = 2.0 * disc_loss_targets + disc_loss_outputs
+        disc_loss_targets = params.disc_loss_targets(disc_targets)
+        disc_loss_outputs = params.disc_loss_outputs(disc_outputs)
 
-        # gen_loss_disc = tf.reduce_mean(-tf.log(disc_outputs + EPS))
-        gen_loss_disc = tf.reduce_mean(
-            tf.nn.sigmoid_cross_entropy_with_logits(labels=tf.constant(1., shape=disc_outputs.shape), logits=disc_outputs))
+        disc_loss = disc_loss_targets + disc_loss_outputs
 
-        gen_loss = gen_loss + gen_loss_disc * params.alphaDisc
+        gen_loss = gen_loss + disc_loss * params.alphaDisc
 
-        with tf.name_scope("discriminator_train"):
+        with tf.variable_scope("discriminator_train"):
             with tf.control_dependencies(tf.get_collection(tf.GraphKeys.UPDATE_OPS)):
                 disc_tvars = [var for var in tf.trainable_variables(
                 ) if var.name.startswith("discriminator")]
@@ -1049,7 +1092,7 @@ def pix2pix_optimizer(imgs, targets_in, params):
 
         depends.append(disc_train)
 
-    with tf.name_scope("generator_train"):
+    with tf.variable_scope("generator_train"):
         depends = depends if len(depends) > 0 else tf.get_collection(
             tf.GraphKeys.UPDATE_OPS)
         with tf.control_dependencies(depends):
@@ -1086,8 +1129,7 @@ def pix2pix_optimizer(imgs, targets_in, params):
             "discriminator_loss_gt", disc_loss_targets, family="lossDisc"))
         tsSum.append(tf.summary.scalar(
             "discriminator_loss_gen", disc_loss_outputs, family="lossDisc"))
-        tsSum.append(tf.summary.scalar("generator_loss_dis",
-                                       gen_loss_disc, family="lossGen"))
+
         if (params.doExtSummary):
             for var in disc_tvars:
                 trSum.append(tf.summary.histogram(
@@ -1096,12 +1138,17 @@ def pix2pix_optimizer(imgs, targets_in, params):
                 trSum.append(tf.summary.histogram(
                     var.name + '_gradient', grad, family="gradDisc"))
 
+        disc_targets_disp = disc_targets if params.data_format == 'NHWC' else tf.transpose(
+            disc_targets, [0, 2, 3, 1])
+        disc_outputs_disp = disc_outputs if params.data_format == 'NHWC' else tf.transpose(
+            disc_outputs, [0, 2, 3, 1])
+
         disc_targets_out = tf.constant(
-            1., shape=disc_targets.shape) - tf.nn.sigmoid(disc_targets)
+            1., shape=disc_targets_disp.shape) - tf.nn.sigmoid(disc_targets_disp)
         targetsSamplesDisc = tf.concat([[disc_targets_out[it, :, :, :]]
                                         for it in range(16)], axis=2)
         disc_outputs_out = tf.constant(
-            1., shape=disc_outputs.shape) - tf.nn.sigmoid(disc_outputs)
+            1., shape=disc_outputs_disp.shape) - tf.nn.sigmoid(disc_outputs_disp)
         outputSamplesDisc = tf.concat([[disc_outputs_out[it, :, :, :]]
                                        for it in range(16)], axis=2)
         imgSamples = tf.concat([targetsSamplesDisc, outputSamplesDisc], axis=1)
@@ -1166,6 +1213,51 @@ def pix2pix_optimizer(imgs, targets_in, params):
     valSum = tf.summary.merge(valSum, "Val")
 
     return [optimizers, gen_loss, trSum, tsSum, valSum]
+
+
+def addSummaryParams(summary, params, gen_tvars, gen_grads_and_vars):
+
+    summary.append(tf.summary.scalar(
+        "learningRate", params.learningRate, family="Params"))
+
+    if (params.doExtSummary):
+
+        for var in gen_tvars:
+            summary.append(tf.summary.histogram(
+                var.name, var, family="varGen"))
+
+        for grad, var in gen_grads_and_vars:
+            summary.append(tf.summary.histogram(
+                var.name + '_gradient', grad, family="gradGen"))
+
+
+def addSummaryScalar(summary, var, groupname, varname):
+
+    summary.append(tf.summary.scalar(varname, var, family=groupname))
+
+
+def addSummaryImages(summary, name, params, imBatchLst, chnLst):
+
+    imSummary = []
+
+    nbIm = params.batchSz
+
+    for l in range(len(imBatchLst)):
+
+        im = postprocess(imBatchLst[l], False, params.data_format)
+        chn = chnLst[l]
+
+        szIm = im.get_shape()
+        szSlice = [szIm[0], szIm[1], szIm[2], 1]
+
+        imCat = tf.concat(
+            [tf.slice(im, [0, 0, 0, it], szSlice) for it in chn], axis=3)
+        imCat = tf.concat([[imCat[it, :, :, 0:3]]
+                           for it in range(nbIm)], axis=2)
+
+        imSummary.append(tf.clip_by_value(imCat, -1.0, 1.0))
+
+    summary.append(tf.summary.image(name, tf.concat(imSummary, axis=1)))
 
 #-----------------------------------------------------------------------------------------------------
 # IMG2VECTOR MODELS
