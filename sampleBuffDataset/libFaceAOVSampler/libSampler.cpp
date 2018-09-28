@@ -125,7 +125,6 @@ struct Sampler final
       do
       {
          for ( auto& si : v_si ) si = _dataGen( _rng );
-
 #pragma omp parallel for
          for ( size_t s = 0; s < _sampleSz.x; ++s )
          {

@@ -31,14 +31,18 @@ class DatasetTF(object):
     def __init__(self, dbPath, imgRootDir, batchSz, imgSz, linearCS, rescale, seed):
         params = np.array([batchSz, imgSz[0], imgSz[1],
                            1.0 if linearCS else 0.0, 1.0 if rescale else 0.0], dtype=np.float32)
-        self.__ds = BufferDataSampler(
-            DatasetTF.__lib, dbPath, imgRootDir, params, seed)
+        self.__nds = 3
+        self.__currds = 0
+        self.__ds = [BufferDataSampler(
+            DatasetTF.__lib, dbPath, imgRootDir, params, seed+1) for i in range(self.__nds)]
         self.data = tf.data.Dataset.from_generator(
             self.sample, (tf.float32, tf.float32, tf.float32))
 
     def sample(self):
         for i in itertools.count(1):
-            currImg, currDepth, currMask = self.__ds.getDataBuffers()
+            currImg, currDepth, currMask = self.__ds[self.__currds].getDataBuffers(
+            )
+            self.__currds = (self.__currds+1) % self.__nds
             yield (currImg, currDepth, currMask)
 
 
@@ -139,7 +143,8 @@ class DepthPredictionModelParams(Pix2PixParams):
         # model 3 : 296x296x3 / loss_masked_meanstd_norm_charbonnier / stride / pix2pix_gen_p / bn
         # model 4 : 296x296x3 / loss_masked_meanstd_norm_charbonnier + disc / stride / pix2pix_gen_p / bn
         #
-        # exp0005 : 296x296x3 / loss_masked_meanstd_norm_charbonnier / stride / pix2pix_gen_p / bn / md only
+        # exp0005 : 296x296x48x32 / loss_masked_meanstd_norm_charbonnier / stride / pix2pix_gen_p / bn / md only
+        # exp0006 : 256x256x48x32 / loss_masked_meanstd_norm_charbonnier / stride / pix2pix_gen_p / bn / md only
         #
 
         seed = 0

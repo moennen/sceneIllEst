@@ -28,17 +28,33 @@ class DatasetTF(object):
     __lib = BufferDataSamplerLibrary(
         "/mnt/p4/avila/moennen_wkspce/sceneIllEst/sampleBuffDataset/libFaceAOVSampler/libFaceAOVSampler.so")
 
-    def __init__(self, dbPath, imgRootDir, batchSz, imgSz, seed):
+    __libgan = BufferDataSamplerLibrary(
+        "/mnt/p4/avila/moennen_wkspce/sceneIllEst/sampleBuffDataset/libImageLstSampler/libImageLstSampler.so")
+
+    def __init__(self, dbPath, dbGanPath, imgRootDir, batchSz, imgSz, seed):
         params = np.array([batchSz, imgSz[0], imgSz[1]], dtype=np.float32)
-        self.__ds = BufferDataSampler(
-            DatasetTF.__lib, dbPath, imgRootDir, params, seed)
+        paramsgan = np.array(
+            [batchSz, imgSz[0], imgSz[1], 1], dtype=np.float32)
+
+        self.__nds = 2
+        self.__currds = 0
+
+        self.__ds = [BufferDataSampler(
+            DatasetTF.__lib, dbPath, imgRootDir, params, seed+i) for i in range(self.__nds)]
+
+        self.__dsgan = [BufferDataSampler(
+            DatasetTF.__libgan, dbGanPath, imgRootDir, paramsgan, seed+i) for i in range(self.__nds)]
+
         self.data = tf.data.Dataset.from_generator(
-            self.sample, (tf.float32, tf.float32, tf.float32, tf.float32, tf.float32))
+            self.sample, (tf.float32, tf.float32, tf.float32, tf.float32, tf.float32, tf.float32))
 
     def sample(self):
         for i in itertools.count(1):
-            currImg, currUVD, currNorm, currId, currPos = self.__ds.getDataBuffers()
-            yield (currImg, currUVD, currNorm, currId, currPos)
+            currImg, currUVD, currNorm, currId, currPos = self.__ds[self.__currds].getDataBuffers(
+            )
+            ganImg = self.__dsgan[self.__currds].getDataBuffers()
+            self.__currds = (self.__currds+1) % self.__nds
+            yield (currImg, currUVD, currNorm, currId, currPos, ganImg)
 
 
 def loadValidationData(dataPath, dataRootDir, dataSz):
@@ -77,7 +93,7 @@ def loadValidationData(dataPath, dataRootDir, dataSz):
 #-----------------------------------------------------------------------------------------------------
 
 
-def testDataset(imgRootDir, trainPath):
+def testDataset(imgRootDir, trainPath, trainGanPath):
 
     rseed = int(time.time())
     imgSz = [256, 256]
@@ -87,7 +103,8 @@ def testDataset(imgRootDir, trainPath):
 
     batchSz = 16
 
-    trDs = DatasetTF(trainPath, imgRootDir, batchSz, imgSz, rseed)
+    trDs = DatasetTF(trainPath, trainGanPath,
+                     imgRootDir, batchSz, imgSz, rseed)
 
     dsIt = tf.data.Iterator.from_structure(
         trDs.data.output_types, trDs.data.output_shapes)
@@ -104,11 +121,20 @@ def testDataset(imgRootDir, trainPath):
 
         for step in range(100):
 
-            currImg, currUVD, currNorm, currId, currPos = sess.run(dsView)
+            currImg, currUVD, currNorm, currId, currPos, ganImg = sess.run(
+                dsView)
 
             idx = random.randint(0, batchSz-1)
 
+            currTest = currImg
+            currTest = tf.abs(filterGradX_3x3(currTest, 3, 'NHWC')).eval()
+            # currTest = tf.image.rgb_to_grayscale(currTest)
+            # currTest = tf.square(filterLoG_3x3(currTest, 3, 'NHWC'))
+            # currTest = currTest.eval()
+            cv.imshow('currTest', currTest[idx])
+
             cv.imshow('currImg', cv.cvtColor(currImg[idx], cv.COLOR_RGB2BGR))
+            cv.imshow('ganImg', cv.cvtColor(ganImg[idx], cv.COLOR_RGB2BGR))
             cv.imshow('currUVD', cv.cvtColor(currUVD[idx], cv.COLOR_RGB2BGR))
             cv.imshow('currNormals', cv.cvtColor(
                 currNorm[idx], cv.COLOR_RGB2BGR))
@@ -119,7 +145,7 @@ def testDataset(imgRootDir, trainPath):
             arrPos[:, :, 0:2] = (currPos[idx] + 1.0) * 0.5
             cv.imshow('currPos', cv.cvtColor(arrPos, cv.COLOR_RGB2BGR))
 
-            cv.waitKey(50)
+            cv.waitKey(0)
 
 #-----------------------------------------------------------------------------------------------------
 # PARAMETERS
@@ -140,25 +166,30 @@ class FaceMapsModelParams(Pix2PixParams):
         #
         # exp0005 : 256x256x32x36 / charbonnier / deconv / pix2pix_gen_p / bn / d02
         # - transition to new pix2pix framework
-        # exp0006 : 256x256x32x36 / charbonnier / deconv / pix2pix_gen_p / bn / d02
+        # exp0006 : 320x320x32x36 / charbonnier / deconv / pix2pix_gen_p / bn / d02
         #
+        # -- this are dbg experiments
+        # expDbg000_000 :
+        # 128x128x16x16 / 1.0*charbonnier + 1.0*charbonnier_gradxy / deconv / pix2pix_gen_p / bn / d02 / 15000
+
+        seed = 0
 
         Pix2PixParams.__init__(self, modelPath, data_format, seed)
 
         self.numMaxSteps = 217500
-        self.numSteps = 2175000
+        self.numSteps = 217500
         self.backupStep = 250
         self.trlogStep = 250
         self.tslogStep = 250
         self.vallogStep = 250
 
         # dimensions
-        self.imgSzTr = [320, 320]
+        self.imgSzTr = [256, 256]
         self.batchSz = 32
 
         # bn vs no bn
         self.useBatchNorm = True
-        self.nbChannels = 36
+        self.nbChannels = 32
         self.nbInChannels = 5
         self.nbOutputChannels = 8
         self.kernelSz = 5
@@ -168,6 +199,7 @@ class FaceMapsModelParams(Pix2PixParams):
         self.inDispRange = np.array([[0, 1, 2], [3, 4, 4]])
         self.outDispRange = np.array([[0, 1, 2], [3, 4, 5], [6, 7, 7]])
         self.alphaData = 1.0
+        self.alphaReg = 0.5
         self.alphaDisc = 0.0
         self.linearImg = False
 
@@ -180,26 +212,66 @@ class FaceMapsModelParams(Pix2PixParams):
 
     def loss_maps(self, batchOutput, batchTargets):
 
-        batchTargetsUV, batchTargetsD, batchTargetsNorm, batchTargetsID = tf.split(
-            batchTargets, [2, 1, 3, 2], axis=3 if self.data_format == 'NHWC' else 1)
-        batchOutputUV, batchOutputD, batchOutputNorm, batchOutputID = tf.split(
-            batchOutput, [2, 1, 3, 2], axis=3 if self.data_format == 'NHWC' else 1)
+        batchErr = charbonnier(batchOutput, batchTargets)
 
-        return [pix2pix_charbonnier_loss(batchTargetsUV, batchOutputUV),
-                pix2pix_charbonnier_loss(batchTargetsD, batchOutputD),
-                pix2pix_charbonnier_loss(batchTargetsNorm, batchOutputNorm),
-                pix2pix_charbonnier_loss(batchTargetsID, batchOutputID)]
+        batchErrUV, batchErrD, batchErrNorm, batchErrId = tf.split(
+            batchErr, [2, 1, 3, 2], axis=3 if self.data_format == 'NHWC' else 1)
 
-    def optimizer(self, batchInput, batchTargets):
+        return [tf.reduce_mean(batchErrUV),
+                tf.reduce_mean(batchErrD),
+                tf.reduce_mean(batchErrNorm),
+                tf.reduce_mean(batchErrId)]
+
+    def loss_reg(self, batchOutput, batchTargets):
+
+        lossGrad = [tf.constant(0.0) for i in range(4)]
+
+        axisH = 1 if self.data_format == 'NHWC' else 2
+
+        batchOutputResized = batchOutput
+        batchTargetResized = batchTargets
+
+        for i in range(4):
+
+            batchErrGradX = charbonnier(filterGradX_3x3(batchOutputResized, self.nbOutputChannels, self.data_format),
+                                        filterGradX_3x3(batchTargetResized, self.nbOutputChannels, self.data_format))
+            batchErrGradY = charbonnier(filterGradY_3x3(batchOutputResized, self.nbOutputChannels, self.data_format),
+                                        filterGradY_3x3(batchTargetResized,  self.nbOutputChannels, self.data_format))
+
+            lossGradX = tf.reduce_mean(tf.reduce_mean(
+                tf.reduce_mean(batchErrGradX, axis=axisH), axis=axisH), axis=0)
+            lossGradX = tf.split(lossGradX, [2, 1, 3, 2], axis=0)
+
+            lossGradY = tf.reduce_mean(tf.reduce_mean(
+                tf.reduce_mean(batchErrGradY, axis=axisH), axis=axisH), axis=0)
+            lossGradY = tf.split(lossGradY, [2, 1, 3, 2], axis=0)
+
+            for c in range(4):
+                lossGrad[c] = tf.add(lossGrad[c], tf.add(
+                    tf.reduce_mean(lossGradX[c]), tf.reduce_mean(lossGradY[c])))
+
+            batchOutputResized = reduceSize2x(
+                batchOutputResized, self.nbOutputChannels, self.data_format)
+            batchTargetResized = reduceSize2x(
+                batchTargetResized, self.nbOutputChannels, self.data_format)
+
+        return lossGrad
+
+    def optimizer(self, batchInput, batchTargets, batchGan):
 
         with tf.variable_scope(self.getModelName()) as modelVs:
             batchOutput = self.model(batchInput, self)
 
         with tf.variable_scope(self.getModelName() + "_loss"):
-            loss_uv, loss_d, loss_norm, loss_id = self.loss(
-                batchTargets, batchOutput)
+            loss_uv, loss_d, loss_norm, loss_id, = self.loss(
+                batchOutput, batchTargets)
+            loss_reg_uv, loss_reg_d, loss_reg_norm, loss_reg_id = self.loss_reg(
+                batchOutput, batchTargets)
 
-        loss = self.alphaData * 0.25 * (loss_uv + loss_d + loss_norm + loss_id)
+        loss_data = 0.25 * (loss_uv + loss_d + loss_norm + loss_id)
+        loss_reg = 0.25 * (loss_reg_uv + loss_reg_d +
+                           loss_reg_norm + loss_reg_id)
+        loss = self.alphaData * loss_data + self.alphaReg * loss_reg
 
         depends = tf.get_collection(
             tf.GraphKeys.UPDATE_OPS) if self.useBatchNorm else []
@@ -211,10 +283,17 @@ class FaceMapsModelParams(Pix2PixParams):
 
         tsSum = []
         addSummaryScalar(tsSum, loss, "data", "loss")
-        addSummaryScalar(tsSum, loss_uv, "data", "loss_uv")
-        addSummaryScalar(tsSum, loss_d, "data", "loss_d")
-        addSummaryScalar(tsSum, loss_norm, "data", "loss_norm")
-        addSummaryScalar(tsSum, loss_id, "data", "loss_id")
+        addSummaryScalar(tsSum, loss_data, "data", "loss_data")
+        addSummaryScalar(tsSum, loss_reg, "data", "loss_reg")
+        addSummaryScalar(tsSum, loss_uv, "data_loss", "loss_uv")
+        addSummaryScalar(tsSum, loss_d, "data_loss", "loss_d")
+        addSummaryScalar(tsSum, loss_norm, "data_loss", "loss_norm")
+        addSummaryScalar(tsSum, loss_id, "data_loss", "loss_id")
+        addSummaryScalar(tsSum, loss_reg_uv, "data_loss_reg", "loss_uv_reg")
+        addSummaryScalar(tsSum, loss_reg_d, "data_loss_reg", "loss_d_reg")
+        addSummaryScalar(tsSum, loss_reg_norm,
+                         "data_loss_reg", "loss_norm_reg")
+        addSummaryScalar(tsSum, loss_reg_id, "data_loss_reg", "loss_id_reg")
 
         addSummaryImages(tsSum, "Images", self,
                          [batchInput, batchInput, batchTargets, batchTargets,
@@ -397,13 +476,15 @@ def saveModel(modelPath, asText, data_format):
 #-----------------------------------------------------------------------------------------------------
 
 
-def trainModel(modelPath, imgRootDir, trainPath, testPath, valPath, data_format):
+def trainModel(modelPath, imgRootDir, trainPath, trainGanPath, testPath, testGanPath, valPath, data_format):
 
     lp = FaceMapsModelParams(modelPath, data_format)
 
     # Datasets / Iterators
-    trDs = DatasetTF(trainPath, imgRootDir, lp.batchSz, lp.imgSzTr, lp.rseed)
-    tsDs = DatasetTF(testPath, imgRootDir, lp.batchSz, lp.imgSzTr, lp.rseed)
+    trDs = DatasetTF(trainPath, trainGanPath, imgRootDir,
+                     lp.batchSz, lp.imgSzTr, lp.rseed)
+    tsDs = DatasetTF(testPath, testGanPath, imgRootDir,
+                     lp.batchSz, lp.imgSzTr, lp.rseed)
 
     dsIt = tf.data.Iterator.from_structure(
         trDs.data.output_types, trDs.data.output_shapes)
@@ -437,8 +518,13 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath, valPath, data_format)
     batchTargets = tf.concat([batchUVD, batchNorm, batchId],
                              axis=3 if data_format == 'NHWC' else 1)
 
+    batchImGanRaw = tf.placeholder(tf.float32, shape=[
+        lp.batchSz, lp.imgSzTr[0], lp.imgSzTr[1], 3], name="gan_img")
+    batchImGan = preprocess(batchImGanRaw, True, data_format)
+
     # Optimizers
-    [opts, loss, trSum, tsSum, valSum] = lp.optimizer(batchInput, batchTargets)
+    [opts, loss, trSum, tsSum, valSum] = lp.optimizer(
+        batchInput, batchTargets, batchImGan)
 
     # Validation
     batchImVal, batchPosVal = loadValidationData(
@@ -486,7 +572,7 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath, valPath, data_format)
         while lp.globalStep.eval(sess) < lp.numSteps:
 
             # Get the next training batch
-            batchImSple, batchUVDSple, batchNormSple, batchIdSple, batchPosSple = sess.run(
+            batchImSple, batchUVDSple, batchNormSple, batchIdSple, batchPosSple, _ = sess.run(
                 dsView)
 
             trFeed = {lp.isTraining: True,
@@ -527,7 +613,7 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath, valPath, data_format)
             if step % lp.tslogStep == 0:
 
                 sess.run(tsInit)
-                batchImSple, batchUVDSple, batchNormSple, batchIdSple, batchPosSple = sess.run(
+                batchImSple, batchUVDSple, batchNormSple, batchIdSple, batchPosSple, _ = sess.run(
                     dsView)
                 tsLoss, summary = sess.run([loss, tsSum], feed_dict={lp.isTraining: False,
                                                                      batchImRaw: batchImSple,
@@ -592,16 +678,15 @@ if __name__ == "__main__":
 
     #------------------------------------------------------------------------------------------------
 
-    # testDataset(args.imgRootDir, args.trainLstPath)
+    trainGanLstPath = args.trainLstPath + ".gan"
+    testGanLstPath = args.testLstPath + ".gan"
+
+    # testDataset(args.imgRootDir, args.trainLstPath, trainGanLstPath)
 
     #------------------------------------------------------------------------------------------------
 
     trainModel(args.modelPath, args.imgRootDir,
-               args.trainLstPath, args.testLstPath, args.valLstPath, data_format)
-
-    #------------------------------------------------------------------------------------------------
-
-    # testModel(args.modelPath, args.imgRootDir, args.testLstPath, 100, data_format)
+               args.trainLstPath, trainGanLstPath, args.testLstPath, testGanLstPath, args.valLstPath, data_format)
 
     #------------------------------------------------------------------------------------------------
 

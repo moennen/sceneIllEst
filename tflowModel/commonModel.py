@@ -342,68 +342,62 @@ def increaseSize2xWithRef(inputs, ref, i_n, data_format):
     return x
 
 
+def filter_kernel(inputs, i_n, data_format, kernel, ks):
+
+    w = tf.expand_dims(tf.concat([kernel for i in range(i_n)], axis=2), axis=3)
+    pad_size = ks//2
+    if data_format == 'NHWC':
+        pad_mat = np.array([[0, 0], [pad_size, pad_size],
+                            [pad_size, pad_size], [0, 0]])
+    else:
+        pad_mat = np.array(
+            [[0, 0], [0, 0], [pad_size, pad_size], [pad_size, pad_size]])
+    x = tf.pad(inputs, pad_mat)
+    x = tf.nn.depthwise_conv2d(
+        x, w, strides=[1, 1, 1, 1], padding='VALID', data_format=data_format)
+
+    return x
+
+
 def reduceSize2x(inputs, i_n, data_format):
 
     kernel = [[[0.125], [0.25], [0.125]], [
         [0.25], [0.5], [0.25]], [[0.125], [0.25], [0.125]]]
-    w = tf.divide(tf.constant(kernel), 2.0)
-    w = tf.expand_dims(tf.concat([w for i in range(i_n)], axis=2), axis=3)
-    pad_size = 3//2
-    if data_format == 'NHWC':
-        pad_mat = np.array([[0, 0], [pad_size, pad_size],
-                            [pad_size, pad_size], [0, 0]])
-        strides = [1, 2, 2, 1]
-    else:
-        pad_mat = np.array(
-            [[0, 0], [0, 0], [pad_size, pad_size], [pad_size, pad_size]])
-        strides = [1, 1, 2, 2]
-
-    x = tf.pad(inputs, pad_mat)
-    x = tf.nn.depthwise_conv2d(
-        x, w, strides=strides, padding='VALID', data_format=data_format)
-
-    return x
+    kernel = tf.divide(tf.constant(kernel), 2.0)
+    return filter_kernel(inputs, i_n, data_format, kernel, 3)
 
 
 def filterLoG_5x5(inputs, i_n, data_format):
 
     kernel = [[[0.0], [0.0], [0.3125], [0.0], [0.0]], [[0.0], [0.03125], [0.0625], [0.03125], [0.0]], [[0.03125], [0.0625], [-0.5], [0.0625], [0.03125]],
               [[0.0], [0.03125], [0.0625], [0.03125], [0.0]], [[0.0], [0.0], [0.3125], [0.0], [0.0]]]
-    w = tf.constant(kernel)
-    w = tf.expand_dims(tf.concat([w for i in range(i_n)], axis=2), axis=3)
-    pad_size = 5//2
-    if data_format == 'NHWC':
-        pad_mat = np.array([[0, 0], [pad_size, pad_size],
-                            [pad_size, pad_size], [0, 0]])
-    else:
-        pad_mat = np.array(
-            [[0, 0], [0, 0], [pad_size, pad_size], [pad_size, pad_size]])
-    x = tf.pad(inputs, pad_mat)
-    x = tf.nn.depthwise_conv2d(
-        x, w, strides=[1, 1, 1, 1], padding='VALID', data_format=data_format)
-
-    return x
+    kernel = tf.constant(kernel)
+    return filter_kernel(inputs, i_n, data_format, kernel, 5)
 
 
 def filterLoG_3x3(inputs, i_n, data_format):
 
     kernel = [[[0.125], [0.125], [0.125]], [
         [0.125], [-1.0], [0.125]], [[0.125], [0.125], [0.125]]]
-    w = tf.divide(tf.constant(kernel), 2.0)
-    w = tf.constant(kernel)
-    w = tf.expand_dims(tf.concat([w for i in range(i_n)], axis=2), axis=3)
-    pad_size = 3//2
-    if data_format == 'NHWC':
-        pad_mat = np.array([[0, 0], [pad_size, pad_size],
-                            [pad_size, pad_size], [0, 0]])
-    else:
-        pad_mat = np.array(
-            [[0, 0], [0, 0], [pad_size, pad_size], [pad_size, pad_size]])
-    x = tf.pad(inputs, pad_mat)
-    x = tf.nn.depthwise_conv2d(
-        x, w, strides=[1, 1, 1, 1], padding='VALID', data_format=data_format)
+    kernel = tf.divide(tf.constant(kernel), 2.0)
 
-    return x
+    return filter_kernel(inputs, i_n, data_format, kernel, 3)
+
+
+def filterGradX_3x3(inputs, i_n, data_format):
+
+    kernel = [[[0.125], [0.0], [-0.125]], [
+        [0.25], [0.0], [-0.25]], [[0.125], [0.0], [-0.125]]]
+
+    return filter_kernel(inputs, i_n, data_format, tf.constant(kernel), 3)
+
+
+def filterGradY_3x3(inputs, i_n, data_format):
+
+    kernel = [[[0.125], [0.25], [0.125]], [
+        [0.0], [0.0], [0.0]], [[-0.125], [-0.25], [-0.125]]]
+
+    return filter_kernel(inputs, i_n, data_format, tf.constant(kernel), 3)
 
 
 def pix2pix_convo(inputs, i_n, o_n, ks, ss, bias, data_format):
@@ -958,19 +952,28 @@ def pix2pix_disc(gen_inputs, gen_outputs, params):
     return layer_6
 
 
-def pix2pix_l2_loss(outputs, targets):
-
-    return tf.reduce_mean(tf.square(tf.subtract(outputs, targets)))
-
-
-def pix2pix_l1_loss(outputs, targets):
-
-    return tf.reduce_mean(tf.abs(tf.subtract(outputs, targets)))
+def l2(outputs, targets):
+    return tf.square(tf.subtract(outputs, targets))
 
 
-def pix2pix_charbonnier_loss(outputs, targets):
+def l1(outputs, targets):
+    return tf.abs(tf.subtract(outputs, targets))
 
-    return tf.reduce_mean(tf.sqrt(EPS + tf.square(tf.subtract(outputs, targets))))
+
+def charbonnier(outputs, targets):
+    return tf.sqrt(EPS + tf.square(tf.subtract(outputs, targets)))
+
+
+def l2_loss(outputs, targets):
+    return tf.reduce_mean(l2(outputs, targets))
+
+
+def l1_loss(outputs, targets):
+    return tf.reduce_mean(l1(outputs, targets))
+
+
+def charbonnier_loss(outputs, targets):
+    return tf.reduce_mean(charbonnier(outputs, targets))
 
 
 def pix2pix_logscale_l2_loss(outputs, targets):
