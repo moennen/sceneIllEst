@@ -285,6 +285,9 @@ class Pix2PixParams(LearningParams):
     def doDisc(self):
         return self.alphaDisc > 0.0
 
+    def getDiscModelName(self):
+        return "discriminator"
+
 
 #
 # n = number of output channels
@@ -1044,10 +1047,10 @@ def prepareDisc(imgs, targets, outputs):
 
 def getOptimizerData(loss, depends, params, name):
 
-    with tf.variable_scope(params.getModelName() + name):
-        with tf.control_dependencies(depends):
+    with tf.control_dependencies(depends):
+       with tf.variable_scope(name + "_opt"): 
             gen_tvars = [var for var in tf.trainable_variables(
-            ) if var.name.startswith(params.getModelName())]
+            ) if var.name.startswith(name)]
 
             gen_optim = tf.train.AdamOptimizer(params.learningRate)
 
