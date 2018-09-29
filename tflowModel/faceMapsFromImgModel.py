@@ -184,7 +184,7 @@ class FaceMapsModelParams(Pix2PixParams):
         self.vallogStep = 250
 
         # dimensions
-        self.imgSzTr = [256, 256]
+        self.imgSzTr = [320, 320]
         self.batchSz = 32
 
         # bn vs no bn
@@ -199,7 +199,7 @@ class FaceMapsModelParams(Pix2PixParams):
         self.inDispRange = np.array([[0, 1, 2], [3, 4, 4]])
         self.outDispRange = np.array([[0, 1, 2], [3, 4, 5], [6, 7, 7]])
         self.alphaData = 1.0
-        self.alphaReg = 0.5
+        self.alphaReg = 0.375
         self.alphaDisc = 0.0
         self.linearImg = False
 
