@@ -342,8 +342,10 @@ class FaceMapsModelParams(Pix2PixParams):
 
         addSummaryImages(tsSum, "Images", self,
                          [batchInput, batchInput, batchTargets, batchTargets,
-                             batchTargets, batchOutput, batchOutput, batchOutput],
-                         [[0, 1, 2], [3, 4, 4], [0, 1, 2], [3, 4, 5], [6, 7, 7], [0, 1, 2], [3, 4, 5], [6, 7, 7]])
+                             batchTargets, batchOutput, batchOutput, batchOutput, batchRealImg, 
+                             batchRealOutput, batchRealOutput, batchRealOutput ],
+                         [[0, 1, 2], [3, 4, 4], [0, 1, 2], [3, 4, 5], [6, 7, 7], [0, 1, 2], [3, 4, 5], [6, 7, 7],
+                          [0, 1, 2], [0, 1, 2], [3, 4, 5], [6, 7, 7]])
         tsSum = tf.summary.merge(tsSum, "Test")
 
         valSum = []
