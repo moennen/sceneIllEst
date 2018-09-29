@@ -170,7 +170,11 @@ class FaceMapsModelParams(Pix2PixParams):
         #
         # -- this are dbg experiments
         # expDbg000_000 :
-        # 128x128x16x16 / 1.0*charbonnier + 1.0*charbonnier_gradxy / deconv / pix2pix_gen_p / bn / d02 / 15000
+        # 128x128x16x16 / 1.0*charbonnier + 1.0*charbonnier_gradxy / deconv / gen_p / bn / d02 / 15000
+        #
+        #
+        # exp0007 : 320x320x32X32 / data_charb + 0.375*reg_gradxy_charb 
+        #
 
         seed = 0
 
@@ -257,7 +261,7 @@ class FaceMapsModelParams(Pix2PixParams):
 
         return lossGrad
 
-    def optimizer(self, batchInput, batchTargets, batchGan):
+    def optimizer(self, batchInput, batchTargets, batchRealImg):
 
         with tf.variable_scope(self.getModelName()) as modelVs:
             batchOutput = self.model(batchInput, self)
@@ -271,29 +275,63 @@ class FaceMapsModelParams(Pix2PixParams):
         loss_data = 0.25 * (loss_uv + loss_d + loss_norm + loss_id)
         loss_reg = 0.25 * (loss_reg_uv + loss_reg_d +
                            loss_reg_norm + loss_reg_id)
-        loss = self.alphaData * loss_data + self.alphaReg * loss_reg
 
+        with tf.variable_scope(modelVs, reuse=True):
+            batchRealOutput = self.model(batchRealImg, self)
+
+        with tf.variable_scope(self.getModelName() + "_disc") as modelDiscVs:
+            batchOutputDisc = self.modelDisc(batchOutput, self)
+
+        with tf.variable_scope(modelDiscVs, reuse=True) :
+            batchRealOutputDisc = self.modelGan(batchRealOutput, self)
+
+        # Synthetic image disc loss
+        loss_disc_output = disc_loss(batchOutputDisc, 0.0)
+        # Real image disc loss 
+        loss_disc_real = disc_loss(batchRealOutputDisc, 1.0)
+        # total disc loss
+        loss_disc = loss_disc_output + loss_disc_real 
+
+        # generator loss : inverse of the real image discriminator loss
+        loss_gen = disc_loss(batchRealOutputDisc, 0.0) 
+
+        # total loss : data / regularizer / generator
+        loss = self.alphaData * loss_data + self.alphaReg * loss_reg + self.alphaDisc * loss_gen
+
+        # dependencies for the batch normalization
         depends = tf.get_collection(
             tf.GraphKeys.UPDATE_OPS) if self.useBatchNorm else []
-        opt, tvars, grads_and_vars = getOptimizerData(loss, depends, self)
+
+        # discriminator optimizer
+        opt_disc, _, _ = getOptimizerData(loss_disc, depends, self, "_opt_disc" )
+
+        # generator dependencies
+        depends = [opt_disc]
+
+        # optimizer
+        opt, tvars, grads_and_vars = getOptimizerData(loss, depends, self, "_opt")
 
         trSum = []
         addSummaryParams(trSum, self, tvars, grads_and_vars)
         trSum = tf.summary.merge(trSum, "Train")
 
         tsSum = []
-        addSummaryScalar(tsSum, loss, "data", "loss")
-        addSummaryScalar(tsSum, loss_data, "data", "loss_data")
-        addSummaryScalar(tsSum, loss_reg, "data", "loss_reg")
-        addSummaryScalar(tsSum, loss_uv, "data_loss", "loss_uv")
-        addSummaryScalar(tsSum, loss_d, "data_loss", "loss_d")
-        addSummaryScalar(tsSum, loss_norm, "data_loss", "loss_norm")
-        addSummaryScalar(tsSum, loss_id, "data_loss", "loss_id")
-        addSummaryScalar(tsSum, loss_reg_uv, "data_loss_reg", "loss_uv_reg")
-        addSummaryScalar(tsSum, loss_reg_d, "data_loss_reg", "loss_d_reg")
+        addSummaryScalar(tsSum, loss, "loss", "loss")
+        addSummaryScalar(tsSum, loss_data, "loss", "data")
+        addSummaryScalar(tsSum, loss_reg, "loss", "reg")
+        addSummaryScalar(tsSum, loss_gen, "loss", "gen")
+        addSummaryScalar(tsSum, loss_uv, "data_loss", "uv")
+        addSummaryScalar(tsSum, loss_d, "data_loss", "d")
+        addSummaryScalar(tsSum, loss_norm, "data_loss", "norm")
+        addSummaryScalar(tsSum, loss_id, "data_loss", "id")
+        addSummaryScalar(tsSum, loss_reg_uv, "reg_loss", "uv")
+        addSummaryScalar(tsSum, loss_reg_d, "reg_loss", "d")
         addSummaryScalar(tsSum, loss_reg_norm,
-                         "data_loss_reg", "loss_norm_reg")
-        addSummaryScalar(tsSum, loss_reg_id, "data_loss_reg", "loss_id_reg")
+                         "reg_loss", "norm")
+        addSummaryScalar(tsSum, loss_reg_id, "reg_loss", "id")
+        addSummaryScalar(tsSum, loss_disc, "disc_loss", "disc")
+        addSummaryScalar(tsSum, loss_disc_output, "disc_loss", "output") 
+        addSummaryScalar(tsSum, loss_disc_real, "disc_loss", "real")
 
         addSummaryImages(tsSum, "Images", self,
                          [batchInput, batchInput, batchTargets, batchTargets,

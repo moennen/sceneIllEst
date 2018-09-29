@@ -975,6 +975,10 @@ def l1_loss(outputs, targets):
 def charbonnier_loss(outputs, targets):
     return tf.reduce_mean(charbonnier(outputs, targets))
 
+def disc_loss(outputs, label):
+    return tf.reduce_mean(
+        tf.nn.sigmoid_cross_entropy_with_logits(labels=tf.constant(label, 
+            shape=outputs.shape), logits=outputs))
 
 def pix2pix_logscale_l2_loss(outputs, targets):
 
@@ -1030,9 +1034,9 @@ def prepareDisc(imgs, targets, outputs):
     return imgs, targets, imgs, outputs
 
 
-def getOptimizerData(loss, depends, params):
+def getOptimizerData(loss, depends, params, name):
 
-    with tf.variable_scope(params.getModelName() + "_opt"):
+    with tf.variable_scope(params.getModelName() + name):
         with tf.control_dependencies(depends):
             gen_tvars = [var for var in tf.trainable_variables(
             ) if var.name.startswith(params.getModelName())]
