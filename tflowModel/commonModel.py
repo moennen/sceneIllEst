@@ -915,18 +915,24 @@ def pix2pix_ires(imgs, params):
 
 def pix2pix_disc(gen_inputs, gen_outputs, params):
 
+    inputs = tf.concat([gen_inputs, gen_outputs],
+                       axis=3 if data_format == 'NHWC' else 1)
+
+    nIn = params.nbInChannels + params.nbOutputChannels
+
+    return pix2pix_disc_s(inputs, nIn, params)
+
+
+def pix2pix_disc_s(inputs, nIn, params):
+
     train = params.isTraining
 
     n = params.nbChannels
-    nIn = params.nbInChannels + params.nbOutputChannels
     data_format = params.data_format
 
     ks = params.kernelSz
     ess = params.stridedEncoder
-    bn = False  # params.useBatchNorm
-
-    inputs = tf.concat([gen_inputs, gen_outputs],
-                       axis=3 if data_format == 'NHWC' else 1)
+    bn = params.useBatchNorm
 
     # layer_1: [batch, 256, 256, in_channels] => [batch, 128, 128, ndf]
     layer_1 = pix2pix_encoder_bn(
@@ -975,10 +981,12 @@ def l1_loss(outputs, targets):
 def charbonnier_loss(outputs, targets):
     return tf.reduce_mean(charbonnier(outputs, targets))
 
+
 def disc_loss(outputs, label):
     return tf.reduce_mean(
-        tf.nn.sigmoid_cross_entropy_with_logits(labels=tf.constant(label, 
-            shape=outputs.shape), logits=outputs))
+        tf.nn.sigmoid_cross_entropy_with_logits(labels=tf.constant(label,
+                                                                   shape=outputs.shape), logits=outputs))
+
 
 def pix2pix_logscale_l2_loss(outputs, targets):
 

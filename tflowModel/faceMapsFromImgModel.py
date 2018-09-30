@@ -54,7 +54,7 @@ class DatasetTF(object):
             )
             ganImg = self.__dsgan[self.__currds].getDataBuffers()
             self.__currds = (self.__currds+1) % self.__nds
-            yield (currImg, currUVD, currNorm, currId, currPos, ganImg)
+            yield (currImg, currUVD, currNorm, currId, currPos, ganImg[0])
 
 
 def loadValidationData(dataPath, dataRootDir, dataSz):
@@ -173,7 +173,8 @@ class FaceMapsModelParams(Pix2PixParams):
         # 128x128x16x16 / 1.0*charbonnier + 1.0*charbonnier_gradxy / deconv / gen_p / bn / d02 / 15000
         #
         #
-        # exp0007 : 320x320x32X32 / data_charb + 0.375*reg_gradxy_charb 
+        # exp0007 : 320x320x32X32 / data_charb + 0.375*reg_gradxy_charb
+        # exp0008 : 320x320x32x32 / data_charb + 0.7*
         #
 
         seed = 0
@@ -188,8 +189,8 @@ class FaceMapsModelParams(Pix2PixParams):
         self.vallogStep = 250
 
         # dimensions
-        self.imgSzTr = [320, 320]
-        self.batchSz = 32
+        self.imgSzTr = [256, 256]
+        self.batchSz = 16
 
         # bn vs no bn
         self.useBatchNorm = True
@@ -209,6 +210,7 @@ class FaceMapsModelParams(Pix2PixParams):
 
         # model
         self.model = pix2pix_gen_p
+        self.modelDisc = pix2pix_disc_s
         # loss
         self.loss = self.loss_maps
 
@@ -280,36 +282,41 @@ class FaceMapsModelParams(Pix2PixParams):
             batchRealOutput = self.model(batchRealImg, self)
 
         with tf.variable_scope(self.getModelName() + "_disc") as modelDiscVs:
-            batchOutputDisc = self.modelDisc(batchOutput, self)
+            batchOutputDisc = self.modelDisc(
+                batchOutput, self.nbOutputChannels, self)
 
-        with tf.variable_scope(modelDiscVs, reuse=True) :
-            batchRealOutputDisc = self.modelGan(batchRealOutput, self)
+        with tf.variable_scope(modelDiscVs, reuse=True):
+            batchRealOutputDisc = self.modelDisc(
+                batchRealOutput, self.nbOutputChannels,  self)
 
         # Synthetic image disc loss
         loss_disc_output = disc_loss(batchOutputDisc, 0.0)
-        # Real image disc loss 
+        # Real image disc loss
         loss_disc_real = disc_loss(batchRealOutputDisc, 1.0)
         # total disc loss
-        loss_disc = loss_disc_output + loss_disc_real 
+        loss_disc = loss_disc_output + loss_disc_real
 
         # generator loss : inverse of the real image discriminator loss
-        loss_gen = disc_loss(batchRealOutputDisc, 0.0) 
+        loss_gen = disc_loss(batchRealOutputDisc, 0.0)
 
         # total loss : data / regularizer / generator
-        loss = self.alphaData * loss_data + self.alphaReg * loss_reg + self.alphaDisc * loss_gen
+        loss = self.alphaData * loss_data + self.alphaReg * \
+            loss_reg + self.alphaDisc * loss_gen
 
         # dependencies for the batch normalization
         depends = tf.get_collection(
             tf.GraphKeys.UPDATE_OPS) if self.useBatchNorm else []
 
         # discriminator optimizer
-        opt_disc, _, _ = getOptimizerData(loss_disc, depends, self, "_opt_disc" )
+        opt_disc, _, _ = getOptimizerData(
+            loss_disc, depends, self, "_opt_disc")
 
         # generator dependencies
         depends = [opt_disc]
 
         # optimizer
-        opt, tvars, grads_and_vars = getOptimizerData(loss, depends, self, "_opt")
+        opt, tvars, grads_and_vars = getOptimizerData(
+            loss, depends, self, "_opt")
 
         trSum = []
         addSummaryParams(trSum, self, tvars, grads_and_vars)
@@ -330,7 +337,7 @@ class FaceMapsModelParams(Pix2PixParams):
                          "reg_loss", "norm")
         addSummaryScalar(tsSum, loss_reg_id, "reg_loss", "id")
         addSummaryScalar(tsSum, loss_disc, "disc_loss", "disc")
-        addSummaryScalar(tsSum, loss_disc_output, "disc_loss", "output") 
+        addSummaryScalar(tsSum, loss_disc_output, "disc_loss", "output")
         addSummaryScalar(tsSum, loss_disc_real, "disc_loss", "real")
 
         addSummaryImages(tsSum, "Images", self,
@@ -556,13 +563,15 @@ def trainModel(modelPath, imgRootDir, trainPath, trainGanPath, testPath, testGan
     batchTargets = tf.concat([batchUVD, batchNorm, batchId],
                              axis=3 if data_format == 'NHWC' else 1)
 
-    batchImGanRaw = tf.placeholder(tf.float32, shape=[
+    batchImRealRaw = tf.placeholder(tf.float32, shape=[
         lp.batchSz, lp.imgSzTr[0], lp.imgSzTr[1], 3], name="gan_img")
-    batchImGan = preprocess(batchImGanRaw, True, data_format)
+    batchImReal = preprocess(batchImRealRaw, True, data_format)
+    batchImReal = tf.concat([batchImReal, batchPos],
+                            axis=3 if data_format == 'NHWC' else 1)
 
     # Optimizers
     [opts, loss, trSum, tsSum, valSum] = lp.optimizer(
-        batchInput, batchTargets, batchImGan)
+        batchInput, batchTargets, batchImReal)
 
     # Validation
     batchImVal, batchPosVal = loadValidationData(
@@ -610,7 +619,7 @@ def trainModel(modelPath, imgRootDir, trainPath, trainGanPath, testPath, testGan
         while lp.globalStep.eval(sess) < lp.numSteps:
 
             # Get the next training batch
-            batchImSple, batchUVDSple, batchNormSple, batchIdSple, batchPosSple, _ = sess.run(
+            batchImSple, batchUVDSple, batchNormSple, batchIdSple, batchPosSple, batchImRealSple = sess.run(
                 dsView)
 
             trFeed = {lp.isTraining: True,
@@ -618,7 +627,8 @@ def trainModel(modelPath, imgRootDir, trainPath, trainGanPath, testPath, testGan
                       batchUVDRaw: batchUVDSple,
                       batchNormRaw: batchNormSple,
                       batchIdRaw: batchIdSple,
-                      batchPosRaw: batchPosSple}
+                      batchPosRaw: batchPosSple,
+                      batchImRealRaw: batchImRealSple}
 
             step = lp.globalStep.eval(sess) + 1
 
@@ -645,20 +655,22 @@ def trainModel(modelPath, imgRootDir, trainPath, trainGanPath, testPath, testGan
                                                      batchUVDRaw: batchUVDSple,
                                                      batchNormRaw: batchNormSple,
                                                      batchIdRaw: batchIdSple,
-                                                     batchPosRaw: batchPosSple})
+                                                     batchPosRaw: batchPosSple,
+                                                     batchImRealRaw: batchImRealSple})
                 train_summary_writer.add_summary(summary, step)
 
             if step % lp.tslogStep == 0:
 
                 sess.run(tsInit)
-                batchImSple, batchUVDSple, batchNormSple, batchIdSple, batchPosSple, _ = sess.run(
+                batchImSple, batchUVDSple, batchNormSple, batchIdSple, batchPosSple, batchImRealSple = sess.run(
                     dsView)
                 tsLoss, summary = sess.run([loss, tsSum], feed_dict={lp.isTraining: False,
                                                                      batchImRaw: batchImSple,
                                                                      batchUVDRaw: batchUVDSple,
                                                                      batchNormRaw: batchNormSple,
                                                                      batchIdRaw: batchIdSple,
-                                                                     batchPosRaw: batchPosSple})
+                                                                     batchPosRaw: batchPosSple,
+                                                                     batchImRealRaw: batchImRealSple})
 
                 test_summary_writer.add_summary(summary, step)
 
