@@ -205,7 +205,7 @@ class FaceMapsModelParams(Pix2PixParams):
         self.outDispRange = np.array([[0, 1, 2], [3, 4, 5], [6, 7, 7]])
         self.alphaData = 1.0
         self.alphaReg = 0.375
-        self.alphaDisc = 0.0
+        self.alphaDisc = 0.103
         self.linearImg = False
 
         # model
@@ -294,7 +294,7 @@ class FaceMapsModelParams(Pix2PixParams):
         # Real image disc loss
         loss_disc_real = disc_loss(batchRealOutputDisc, 1.0)
         # total disc loss
-        loss_disc = loss_disc_output + loss_disc_real
+        loss_disc = 0.5 * (loss_disc_output + loss_disc_real)
 
         # generator loss : inverse of the real image discriminator loss
         loss_gen = disc_loss(batchRealOutputDisc, 0.0)
