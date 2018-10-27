@@ -204,13 +204,13 @@ class FaceMapsModelParams(Pix2PixParams):
       self.outDispRange = np.array([[0, 1, 2], [3, 4, 5], [6, 7, 7]])
       self.alphaData = 1.0
       self.alphaReg = 0.125
-      self.alphaDisc = 0.00
+      self.alphaDisc = 0.5
       self.linearImg = False
 
       # model
       self.minimizeMemory = True
       self.model = pix2pix_gen_p
-      self.modelDisc = pix2pix_disc_s
+      self.modelDisc = pix2pix_disc_f
       # loss
       self.loss = self.loss_maps
 
@@ -222,7 +222,7 @@ class FaceMapsModelParams(Pix2PixParams):
 
    def loss_maps(self, batchOutput, batchTargets):
 
-      batchErr = l2(batchOutput, batchTargets)
+      batchErr = charbonnier(batchOutput, batchTargets)
 
       batchErrUV, batchErrD, batchErrNorm, batchErrId = tf.split(
           batchErr, [2, 1, 3, 2], axis=3 if self.data_format == 'NHWC' else 1)
@@ -285,27 +285,23 @@ class FaceMapsModelParams(Pix2PixParams):
       with tf.variable_scope(modelVs, reuse=True):
          batchRealOutput = self.model(batchRealImg, self)
 
-      # with tf.variable_scope(self.getDiscModelName()) as modelDiscVs:
-      #     batchOutputDisc = self.modelDisc(
-      #         batchOutput, self.nbOutputChannels, self)
+      with tf.variable_scope(self.getDiscModelName()) as modelDiscVs:
+         batchOutputDisc = self.modelDisc(
+             batchOutput, self.nbOutputChannels, self, False)
 
-      # with tf.variable_scope(modelDiscVs, reuse=True):
-      #     batchRealOutputDisc = self.modelDisc(
-      #         batchRealOutput, self.nbOutputChannels,  self)
+      with tf.variable_scope(modelDiscVs, reuse=True):
+         batchRealOutputDisc = self.modelDisc(
+             batchRealOutput, self.nbOutputChannels,  self, True)
 
       # Synthetic image disc loss
-      #loss_disc_output = disc_loss(batchOutputDisc, 0.0)
+      loss_disc_output = l2_loss(batchOutputDisc, 0.0)
       # Real image disc loss
-      #loss_disc_real = disc_loss(batchRealOutputDisc, 1.0)
+      loss_disc_real = l2_loss(batchRealOutputDisc, 1.0)
       # total disc loss
-      #loss_disc = 0.5 * (loss_disc_output + loss_disc_real)
-      loss_disc_output = 0
-      loss_disc_real = 0
-      loss_disc = 0
+      loss_disc = 0.5 * (loss_disc_output + loss_disc_real)
 
       # generator loss : inverse of the real image discriminator loss
-      #loss_gen = disc_loss(batchRealOutputDisc, 0.0)
-      loss_gen = 0
+      loss_gen = l2_loss(batchRealOutputDisc, 0.0)
 
       # total loss : data / regularizer / generator
       loss = self.alphaData * loss_data + self.alphaReg * \
@@ -316,11 +312,11 @@ class FaceMapsModelParams(Pix2PixParams):
           tf.GraphKeys.UPDATE_OPS) if self.useBatchNorm else []
 
       # discriminator optimizer
-      # opt_disc, _, _ = getOptimizerData(
-      #    loss_disc, depends, self, self.getDiscModelName())
+      opt_disc, _, _ = getOptimizerData(
+          loss_disc, depends, self, self.getDiscModelName())
 
       # generator dependencies
-      #depends = [opt_disc]
+      depends = [opt_disc]
 
       # optimizer
       opt, tvars, grads_and_vars = getOptimizerData(

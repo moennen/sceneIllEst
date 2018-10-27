@@ -863,6 +863,52 @@ def pix2pix_disc_s(inputs, nIn, params):
    return layer_6
 
 
+def pix2pix_disc_f(inputs, nIn, params, reuse):
+
+   train = params.isTraining
+
+   n = params.nbChannels
+   data_format = params.data_format
+
+   ks = params.kernelSz
+   ess = params.stridedEncoder
+   bn = params.useBatchNorm
+
+   # S x I --> S x N
+   encoder_0 = pix2pix_encoder_bn(
+       imgs, nIn, n, ks, 1, True, False, "encoder_0", train, data_format)
+   # S x N --> S/2 x 2*N
+   encoder_1 = pix2pix_encoder_bn(
+       encoder_0, n, n*2, ks, 2, ess, bn, "encoder_1", train, data_format)
+   # S/2 x 2*N --> S/4 x 4*N
+   encoder_2 = pix2pix_encoder_bn(
+       encoder_1, n*2, n*4, ks, 2, ess, bn, "encoder_2", train, data_format)
+   # S/4 x 4*N --> S/8 x 4*N
+   encoder_3 = pix2pix_encoder_bn(
+       encoder_2, n*4, n*4, ks, 2, ess, bn, "encoder_3", train, data_format)
+   # S/8 x 8*N --> S/16 x 8*N
+   encoder_4 = pix2pix_encoder_bn(
+       encoder_3, n*4, n*8, ks, 2, ess, bn, "encoder_4", train, data_format)
+   # S/16 x 8*N --> S/32 x 8*N
+   encoder_5 = pix2pix_encoder_bn(
+       encoder_4, n*8, n*8, ks, 2, ess, bn, "encoder_5", train, data_format)
+   # S/32 x 8*N --> S/64 x 4*N
+   encoder_6 = pix2pix_encoder_bn(
+       encoder_5, n*8, n*4, ks, 2, ess, bn, "encoder_6", train, data_format)
+   # S/64 x 4*N --> S/64 x 4*N
+   encoder_7 = pix2pix_encoder_bn(
+       encoder_6, n*4, n*4, ks, 1, ess, bn, "encoder_7", train, data_format)
+
+   # last layer : dense with sigmoid
+   layer = tf.layers.dense(tf.layers.flatten(encoder_7), 1,
+                           kernel_initializer=tf.contrib.layers.xavier_initializer(),
+                           bias_initializer=tf.contrib.layers.xavier_initializer(),
+                           activation=reuse)
+   layer = tf.sigmoid(layer)
+
+   return layer
+
+
 def l2(outputs, targets):
    return tf.square(tf.subtract(outputs, targets))
 
@@ -955,7 +1001,7 @@ def getOptimizerData(loss, depends, params, name):
          ) if var.name.startswith(name)]
 
          gen_optim = tf.contrib.opt.AdamWOptimizer(params.learningRate)
-         #gen_optim = tf.train.AdamOptimizer(params.learningRate, 0.5, 0.999)
+         # gen_optim = tf.train.AdamOptimizer(params.learningRate, 0.5, 0.999)
 
          if params.minimizeMemory:
             gen_grads = memory_saving_gradients.gradients(
