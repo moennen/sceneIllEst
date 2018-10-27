@@ -459,7 +459,7 @@ def pix2pix_deconv(inputs, ref, i_n, o_n, ks, ss, bias, data_format):
 def pix2pix_cdeconv(inputs, ref, i_n, o_n, ks, ss, bias, data_format):
 
    if ss == 2:
-      x = pix2pix_deconv(inputs, ref, i_n, o_n, 2, ss, False, data_format)
+      x = tf.nn.relu(pix2pix_deconv(inputs, ref, i_n, o_n, 2, ss, True, data_format))
       return pix2pix_conv(x, o_n, o_n, ks, 1, bias, data_format)
       #    x = increaseSize2xWithRef(inputs, ref, i_n, data_format)
       #    return pix2pix_conv(x, i_n, o_n, ks, 1, bias, data_format)

@@ -176,6 +176,7 @@ class FaceMapsModelParams(Pix2PixParams):
       # exp0007 : 320x320x32X32 / data_charb + 0.375*reg_gradxy_charb
       # exp0008 : 320x320x32x32 / data_charb + 0.7*
       #
+      # exp0014 : 320x320x32x32 / data_l2c + 0.125*reg_l2 / pix2pixgen_p bn deconv+
 
       Pix2PixParams.__init__(self, modelPath, data_format, seed)
 
@@ -221,7 +222,7 @@ class FaceMapsModelParams(Pix2PixParams):
 
    def loss_maps(self, batchOutput, batchTargets):
 
-      batchErr = charbonnier(batchOutput, batchTargets)
+      batchErr = l2(batchOutput, batchTargets)
 
       batchErrUV, batchErrD, batchErrNorm, batchErrId = tf.split(
           batchErr, [2, 1, 3, 2], axis=3 if self.data_format == 'NHWC' else 1)
@@ -242,10 +243,10 @@ class FaceMapsModelParams(Pix2PixParams):
 
       for i in range(4):
 
-         batchErrGradX = charbonnier(filterGradX_3x3(batchOutputResized, self.nbOutputChannels, self.data_format),
-                                     filterGradX_3x3(batchTargetResized, self.nbOutputChannels, self.data_format))
-         batchErrGradY = charbonnier(filterGradY_3x3(batchOutputResized, self.nbOutputChannels, self.data_format),
-                                     filterGradY_3x3(batchTargetResized,  self.nbOutputChannels, self.data_format))
+         batchErrGradX = l2(filterGradX_3x3(batchOutputResized, self.nbOutputChannels, self.data_format),
+                            filterGradX_3x3(batchTargetResized, self.nbOutputChannels, self.data_format))
+         batchErrGradY = l2(filterGradY_3x3(batchOutputResized, self.nbOutputChannels, self.data_format),
+                            filterGradY_3x3(batchTargetResized,  self.nbOutputChannels, self.data_format))
 
          lossGradX = tf.reduce_mean(tf.reduce_mean(
              tf.reduce_mean(batchErrGradX, axis=axisH), axis=axisH), axis=0)
@@ -591,7 +592,7 @@ def trainModel(modelPath, imgRootDir, trainPath, trainGanPath, testPath, testGan
 
    # Persistency
    persistency = tf.train.Saver(
-       pad_step_number=True, max_to_keep=1, filename=lp.modelFilename)
+       pad_step_number=True, max_to_keep=lp.modelNbToKeep, filename=lp.modelFilename)
 
    # Logger
    merged_summary_op = tf.summary.merge_all()
