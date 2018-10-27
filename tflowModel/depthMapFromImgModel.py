@@ -167,7 +167,7 @@ class DepthPredictionModelParams(Pix2PixParams):
 
    def loss(self, batchOutput, batchTargets):
 
-      return l2_loss(batchOutput, batchTargets), self.loss_reg(batchOutput, batchTargets)
+      return charbonnier_loss(batchOutput, batchTargets), self.loss_reg(batchOutput, batchTargets)
 
    def loss_reg(self, batchOutput, batchTargets):
 
