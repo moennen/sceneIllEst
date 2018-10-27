@@ -155,75 +155,74 @@ struct Sampler final
    {
       HOP_PROF_FUNC();
 
-      const unsigned labelsBuffSz = _sampleSz.y * _sampleSz.z;
-      const unsigned imgBuffSz = labelsBuffSz * 3;
+      const size_t szBuffC3 = _sampleSz.y * _sampleSz.z * 3;
+      const size_t szBuffC1 = _sampleSz.y * _sampleSz.z ;
 
-      float* currBuffImg = buff;
-      float* currBuffLabels = buff + imgBuffSz * _sampleSz.x;
-      float* currBuffMask = buff + ( imgBuffSz + labelsBuffSz ) * _sampleSz.x;
-
-      for ( size_t s = 0; s < _sampleSz.x; ++s )
+      const size_t szBuffOffLabels = _sampleSz.x * szBuffC3;
+      const size_t szBuffOffMask = szBuffOffLabels + _sampleSz.x * szBuffC1;
+      
+      std::vector<char> sampled( _sampleSz.x, 0 );
+      std::vector<size_t> v_si( _sampleSz.x );
+      do
       {
-         const size_t si = _dataGen( _rng );
-
-         Mat currImg = cv_utils::imread32FC3( _data.filePath( si, 0 ), _toLinear, true /*toRGB*/ );
-         Mat currLabels =
-             cv_utils::imread32FC1( _data.filePath( si, 1 ), 1.0 /*Keep the labels as is*/ );
-
-         ivec2 imgSz( currImg.cols, currImg.rows );
-
-         // ignore too small samples
-         if ( ( imgSz.x < _sampleSz.y ) || ( imgSz.y < _sampleSz.z ) )
+         for ( auto& si : v_si ) si = _dataGen( _rng );
+#pragma omp parallel for
+         for ( size_t s = 0; s < _sampleSz.x; ++s )
          {
-            --s;
-            continue;
-         }
+            if ( sampled[s] ) continue;
 
-         // bad dataset : the samples have to be of the same size
-         if ( ( currLabels.cols != imgSz.x ) || ( currLabels.rows != imgSz.y ) ) return false;
+            const size_t si = v_si[s];
 
-         // random rescale
-         bool rescaled = false;
-         if ( _doRescale )
-         {
-            const float minDs =
-                std::max( (float)_sampleSz.z / imgSz.y, (float)_sampleSz.y / imgSz.x );
-            const float ds = mix( 1.0f, minDs, _tsGen( _rng ) );
-            if ( ds < 1.0 )
+            Mat currImg = cv_utils::imread32FC3( _data.filePath( si, 0 ), _toLinear, true /*toRGB*/ );
+            Mat currLabels =
+               cv_utils::imread32FC1( _data.filePath( si, 1 ), 1.0 /*Keep the labels as is*/ );
+
+            ivec2 imgSz( currImg.cols, currImg.rows );
+
+            // ignore too small samples
+            if ( ( imgSz.x < _sampleSz.y ) || ( imgSz.y < _sampleSz.z ) ) continue;
+
+            // random rescale
+            bool rescaled = false;
+            if ( _doRescale )
             {
-               rescaled = true;
-               resize( currImg, currImg, Size(), ds, ds, INTER_AREA );
-               // labels are resized in nearest because linear interpolation has no sense in a
-               // discreete scape
-               resize( currLabels, currLabels, Size(), ds, ds, INTER_NEAREST );
-               imgSz = ivec2( currImg.cols, currImg.rows );
+               const float minDs =
+                  std::max( (float)_sampleSz.z / imgSz.y, (float)_sampleSz.y / imgSz.x );
+               const float ds = mix( 1.0f, minDs, _tsGen( _rng ) );
+               if ( ds < 1.0 )
+               {
+                  rescaled = true;
+                  resize( currImg, currImg, Size(), ds, ds, INTER_AREA );
+                  // labels are resized in nearest because linear interpolation has no sense in a
+                  // discreete scape
+                  resize( currLabels, currLabels, Size(), ds, ds, INTER_NEAREST );
+                  imgSz = ivec2( currImg.cols, currImg.rows );
+               }
             }
+
+            // random translate
+            const ivec2 trans(
+               std::floor( _tsGen( _rng ) * ( imgSz.x - _sampleSz.y ) ),
+               std::floor( _tsGen( _rng ) * ( imgSz.y - _sampleSz.z ) ) );
+
+            // crop
+            currImg = currImg( Rect( trans.x, trans.y, _sampleSz.y, _sampleSz.z ) );
+            currLabels = currLabels( Rect( trans.x, trans.y, _sampleSz.y, _sampleSz.z ) );
+
+            // random small blur to remove artifacts + copy to destination
+            Mat imgSple( _sampleSz.z, _sampleSz.y, CV_32FC3, buff + s * szBuffC3);
+            cv_utils::adjustContrastBrightness<vec3>(
+               currImg, ( 1.0f + 0.11f * _rnGen( _rng ) ), 0.11f * _rnGen( _rng ) );
+            GaussianBlur( currImg, imgSple, Size( 5, 5 ), 0.31f * abs( _rnGen( _rng ) ) );
+            Mat labelsSple( _sampleSz.z, _sampleSz.y, CV_32FC1, buff + szBuffOffLabels + s * szBuffC1 );
+            Mat maskSple( _sampleSz.z, _sampleSz.y, CV_32FC1, buff + szBuffOffMask + s * szBuffC1 );
+            // copy labels and apply a mapping if needed
+            applyObjectMapping( currLabels, labelsSple, maskSple, _objectMapping );
+
+            sampled[s] = 1;
          }
-
-         // random translate
-         const ivec2 trans(
-             std::floor( _tsGen( _rng ) * ( imgSz.x - _sampleSz.y ) ),
-             std::floor( _tsGen( _rng ) * ( imgSz.y - _sampleSz.z ) ) );
-
-         // crop
-         currImg = currImg( Rect( trans.x, trans.y, _sampleSz.y, _sampleSz.z ) );
-         currLabels = currLabels( Rect( trans.x, trans.y, _sampleSz.y, _sampleSz.z ) );
-
-         // random small blur to remove artifacts + copy to destination
-         Mat imgSple( _sampleSz.z, _sampleSz.y, CV_32FC3, currBuffImg );
-         cv_utils::adjustContrastBrightness<vec3>(
-             currImg, ( 1.0f + 0.11f * _rnGen( _rng ) ), 0.11f * _rnGen( _rng ) );
-         GaussianBlur( currImg, imgSple, Size( 5, 5 ), 0.31f * abs( _rnGen( _rng ) ) );
-         Mat labelsSple( _sampleSz.z, _sampleSz.y, CV_32FC1, currBuffLabels );
-         Mat maskSple( _sampleSz.z, _sampleSz.y, CV_32FC1, currBuffMask );
-         // copy labels and apply a mapping if needed
-         applyObjectMapping( currLabels, labelsSple, maskSple, _objectMapping );
-
-         currBuffImg += imgBuffSz;
-         currBuffLabels += labelsBuffSz;
-         currBuffMask += labelsBuffSz;
-      }
-
+      } while ( accumulate( sampled.begin(), sampled.end(), 0 ) != _sampleSz.x );
+      
       return true;
    }
 };
@@ -243,8 +242,8 @@ extern "C" int getBuffersDim( const int sidx, float* dims )
    float* d = dims;
    for ( size_t i = 0; i < Sampler::nOutBuffers; ++i )
    {
-      d[0] = sz.y;
-      d[1] = sz.z;
+      d[0] = sz.z;
+      d[1] = sz.y;
       d[2] = Sampler::getBufferDepth( i );
       d += 3;
    }
@@ -266,7 +265,7 @@ extern "C" int initBuffersDataSampler(
    if ( ( nParams < 3 ) || ( sidx > g_samplers.size() ) ) return ERROR_BAD_ARGS;
 
    // parse params
-   const ivec3 sz( params[0], params[1], params[2] );
+   const ivec3 sz( params[0], params[2], params[1] );
    const bool toLinear( nParams > 3 ? params[3] > 0.0 : false );
    const bool doRescale( nParams > 4 ? params[4] > 0.0 : true );
    const int objectMapping( nParams > 5 ? static_cast<int>( params[5] ) : -1 );

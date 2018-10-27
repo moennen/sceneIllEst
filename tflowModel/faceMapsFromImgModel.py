@@ -177,8 +177,6 @@ class FaceMapsModelParams(Pix2PixParams):
         # exp0008 : 320x320x32x32 / data_charb + 0.7*
         #
 
-        seed = 0
-
         Pix2PixParams.__init__(self, modelPath, data_format, seed)
 
         self.numMaxSteps = 217500
@@ -189,32 +187,37 @@ class FaceMapsModelParams(Pix2PixParams):
         self.vallogStep = 250
 
         # dimensions
-        self.imgSzTr = [256, 256]
-        self.batchSz = 16
+        self.imgSzTr = [320, 320]
+        self.batchSz = 32
 
         # bn vs no bn
-        self.useBatchNorm = False
+        self.useBatchNorm = True
         self.nbChannels = 32
         self.nbInChannels = 5
         self.nbOutputChannels = 8
         self.kernelSz = 5
         self.stridedEncoder = True
         # strided vs resize
-        self.stridedDecoder = False
+        self.stridedDecoder = True
         self.inDispRange = np.array([[0, 1, 2], [3, 4, 4]])
         self.outDispRange = np.array([[0, 1, 2], [3, 4, 5], [6, 7, 7]])
         self.alphaData = 1.0
-        self.alphaReg = 0.375
-        self.alphaDisc = 0.103
+        self.alphaReg = 0.125
+        self.alphaDisc = 0.00
         self.linearImg = False
 
         # model
+        self.minimizeMemory = True
         self.model = pix2pix_gen_p
         self.modelDisc = pix2pix_disc_s
         # loss
         self.loss = self.loss_maps
 
         self.update()
+
+    def pix2pix_hglass(self, imgs, params):
+
+        return tf.nn.tanh(pix2pix_hglass(imgs, params))
 
     def loss_maps(self, batchOutput, batchTargets):
 
@@ -281,23 +284,27 @@ class FaceMapsModelParams(Pix2PixParams):
         with tf.variable_scope(modelVs, reuse=True):
             batchRealOutput = self.model(batchRealImg, self)
 
-        with tf.variable_scope(self.getDiscModelName()) as modelDiscVs:
-            batchOutputDisc = self.modelDisc(
-                batchOutput, self.nbOutputChannels, self)
+        # with tf.variable_scope(self.getDiscModelName()) as modelDiscVs:
+        #     batchOutputDisc = self.modelDisc(
+        #         batchOutput, self.nbOutputChannels, self)
 
-        with tf.variable_scope(modelDiscVs, reuse=True):
-            batchRealOutputDisc = self.modelDisc(
-                batchRealOutput, self.nbOutputChannels,  self)
+        # with tf.variable_scope(modelDiscVs, reuse=True):
+        #     batchRealOutputDisc = self.modelDisc(
+        #         batchRealOutput, self.nbOutputChannels,  self)
 
         # Synthetic image disc loss
-        loss_disc_output = disc_loss(batchOutputDisc, 0.0)
+        #loss_disc_output = disc_loss(batchOutputDisc, 0.0)
         # Real image disc loss
-        loss_disc_real = disc_loss(batchRealOutputDisc, 1.0)
+        #loss_disc_real = disc_loss(batchRealOutputDisc, 1.0)
         # total disc loss
-        loss_disc = 0.5 * (loss_disc_output + loss_disc_real)
+        #loss_disc = 0.5 * (loss_disc_output + loss_disc_real)
+        loss_disc_output = 0
+        loss_disc_real = 0
+        loss_disc = 0
 
         # generator loss : inverse of the real image discriminator loss
-        loss_gen = disc_loss(batchRealOutputDisc, 0.0)
+        #loss_gen = disc_loss(batchRealOutputDisc, 0.0)
+        loss_gen = 0
 
         # total loss : data / regularizer / generator
         loss = self.alphaData * loss_data + self.alphaReg * \
@@ -308,52 +315,55 @@ class FaceMapsModelParams(Pix2PixParams):
             tf.GraphKeys.UPDATE_OPS) if self.useBatchNorm else []
 
         # discriminator optimizer
-        opt_disc, _, _ = getOptimizerData(
-            loss_disc, depends, self, self.getDiscModelName())
+        # opt_disc, _, _ = getOptimizerData(
+        #    loss_disc, depends, self, self.getDiscModelName())
 
         # generator dependencies
-        depends = [opt_disc]
+        #depends = [opt_disc]
 
         # optimizer
         opt, tvars, grads_and_vars = getOptimizerData(
             loss, depends, self, self.getModelName())
 
-        trSum = []
-        addSummaryParams(trSum, self, tvars, grads_and_vars)
-        trSum = tf.summary.merge(trSum, "Train")
+        # put summary on CPU to free some VRAM
+        with tf.device('/cpu:*'):
 
-        tsSum = []
-        addSummaryScalar(tsSum, loss, "loss", "loss")
-        addSummaryScalar(tsSum, loss_data, "loss", "data")
-        addSummaryScalar(tsSum, loss_reg, "loss", "reg")
-        addSummaryScalar(tsSum, loss_gen, "loss", "gen")
-        addSummaryScalar(tsSum, loss_uv, "loss_data", "uv")
-        addSummaryScalar(tsSum, loss_d, "loss_data", "d")
-        addSummaryScalar(tsSum, loss_norm, "loss_data", "norm")
-        addSummaryScalar(tsSum, loss_id, "loss_data", "id")
-        addSummaryScalar(tsSum, loss_reg_uv, "loss_reg", "uv")
-        addSummaryScalar(tsSum, loss_reg_d, "loss_reg", "d")
-        addSummaryScalar(tsSum, loss_reg_norm,
-                         "loss_reg", "norm")
-        addSummaryScalar(tsSum, loss_reg_id, "loss_reg", "id")
-        addSummaryScalar(tsSum, loss_disc, "loss_disc", "disc")
-        addSummaryScalar(tsSum, loss_disc_output, "loss_disc", "output")
-        addSummaryScalar(tsSum, loss_disc_real, "loss_disc", "real")
+            trSum = []
+            addSummaryParams(trSum, self, tvars, grads_and_vars)
+            trSum = tf.summary.merge(trSum, "Train")
 
-        addSummaryImages(tsSum, "Images", self,
-                         [batchInput, batchInput, batchTargets, batchTargets,
-                             batchTargets, batchOutput, batchOutput, batchOutput, batchRealImg, 
-                             batchRealOutput, batchRealOutput, batchRealOutput ],
-                         [[0, 1, 2], [3, 4, 4], [0, 1, 2], [3, 4, 5], [6, 7, 7], [0, 1, 2], [3, 4, 5], [6, 7, 7],
-                          [0, 1, 2], [0, 1, 2], [3, 4, 5], [6, 7, 7]])
-        tsSum = tf.summary.merge(tsSum, "Test")
+            tsSum = []
+            addSummaryScalar(tsSum, loss, "loss", "loss")
+            addSummaryScalar(tsSum, loss_data, "loss", "data")
+            addSummaryScalar(tsSum, loss_reg, "loss", "reg")
+            addSummaryScalar(tsSum, loss_gen, "loss", "gen")
+            addSummaryScalar(tsSum, loss_uv, "loss_data", "uv")
+            addSummaryScalar(tsSum, loss_d, "loss_data", "d")
+            addSummaryScalar(tsSum, loss_norm, "loss_data", "norm")
+            addSummaryScalar(tsSum, loss_id, "loss_data", "id")
+            addSummaryScalar(tsSum, loss_reg_uv, "loss_reg", "uv")
+            addSummaryScalar(tsSum, loss_reg_d, "loss_reg", "d")
+            addSummaryScalar(tsSum, loss_reg_norm,
+                             "loss_reg", "norm")
+            addSummaryScalar(tsSum, loss_reg_id, "loss_reg", "id")
+            addSummaryScalar(tsSum, loss_disc, "loss_disc", "disc")
+            addSummaryScalar(tsSum, loss_disc_output, "loss_disc", "output")
+            addSummaryScalar(tsSum, loss_disc_real, "loss_disc", "real")
 
-        valSum = []
-        addSummaryImages(valSum, "Images", self,
-                         [batchInput, batchInput, batchOutput,
-                             batchOutput, batchOutput],
-                         [[0, 1, 2], [3, 4, 4], [0, 1, 2], [3, 4, 5], [6, 7, 7]])
-        valSum = tf.summary.merge(valSum, "Val")
+            addSummaryImages(tsSum, "Images", self,
+                             [batchInput, batchInput, batchTargets, batchTargets,
+                                 batchTargets, batchOutput, batchOutput, batchOutput, batchRealImg,
+                                 batchRealOutput, batchRealOutput, batchRealOutput],
+                             [[0, 1, 2], [3, 4, 4], [0, 1, 2], [3, 4, 5], [6, 7, 7], [0, 1, 2], [3, 4, 5], [6, 7, 7],
+                              [0, 1, 2], [0, 1, 2], [3, 4, 5], [6, 7, 7]])
+            tsSum = tf.summary.merge(tsSum, "Test")
+
+            valSum = []
+            addSummaryImages(valSum, "Images", self,
+                             [batchInput, batchInput, batchOutput,
+                                 batchOutput, batchOutput],
+                             [[0, 1, 2], [3, 4, 4], [0, 1, 2], [3, 4, 5], [6, 7, 7]])
+            valSum = tf.summary.merge(valSum, "Val")
 
         return [opt, loss, trSum, tsSum, valSum]
 
@@ -451,7 +461,7 @@ def evalModel(modelPath, imgRootDir, imgLst, forceTrainingSize, maxSz, writeResu
 #-----------------------------------------------------------------------------------------------------
 
 
-def saveModel(modelPath, asText, data_format):
+def saveModel(modelPath, asText, data_format, convert_df):
 
     lp = FaceMapsModelParams(modelPath, data_format)
     lp.isTraining = False
@@ -459,29 +469,27 @@ def saveModel(modelPath, asText, data_format):
     mdSuff = '-last.pb.txt' if asText else '-last.pb'
 
     inputsi = tf.placeholder(tf.float32, name="adsk_inFront")
-    inputs = tf.multiply(tf.subtract(inputsi, 0.5), 2.0)
+    if convert_df:
+        inputs = preprocess(inputsi, True, data_format)
+    else:
+        inputs = tf.multiply(tf.subtract(inputsi, 0.5), 2.0)
 
     with tf.variable_scope("generator"):
         outputs = lp.model(inputs, lp)
+        if convert_df:
+            outputs = postprocess(outputs, False, data_format)
 
     outputsSz = outputs.get_shape()
     sliceSz = [outputsSz[0], outputsSz[1], outputsSz[2], 1]
 
-    outputNames = "adsk_outNormals,adsk_outUVD"
-    # outputNames = "adsk_outNormals"
-    # outputUVD, outputNormals = tf.split(
-    #    outputs, [3, 3], axis=3 if data_format == 'NHWC' else 1)
+    outputNames = "adsk_outNormals,adsk_outUVD,adsk_outObjId"
 
-    if data_format == 'NHWC':
-        uvd_size = tf.constant([-1, -1, -1, 3], dtype=tf.int32)
-        uvd_begin = tf.constant([0, 0, 0, 0], dtype=tf.int32)
-        norm_size = tf.constant([-1, -1, -1, 3], dtype=tf.int32)
-        norm_begin = tf.constant([0, 0, 0, 3], dtype=tf.int32)
-    else:
-        uvd_size = tf.constant([-1, 3, -1, -1], dtype=tf.int32)
-        uvd_begin = tf.constant([0, 0, 0, 0], dtype=tf.int32)
-        norm_size = tf.constant([-1, 3, -1, -1], dtype=tf.int32)
-        norm_begin = tf.constant([0, 3, 0, 0], dtype=tf.int32)
+    uvd_size = tf.constant([-1, -1, -1, 3], dtype=tf.int32)
+    uvd_begin = tf.constant([0, 0, 0, 0], dtype=tf.int32)
+    norm_size = tf.constant([-1, -1, -1, 3], dtype=tf.int32)
+    norm_begin = tf.constant([0, 0, 0, 3], dtype=tf.int32)
+    id_size = tf.constant([-1, -1, -1, 1], dtype=tf.int32)
+    id_begin = tf.constant([0, 0, 0, 6], dtype=tf.int32)
 
     outputUVD = tf.slice(outputs, uvd_begin, uvd_size)
     outputUVD = tf.multiply(tf.add(outputUVD, 1.0), 0.5, name="adsk_outUVD")
@@ -489,6 +497,8 @@ def saveModel(modelPath, asText, data_format):
 
     outputNormals = tf.slice(
         outputs, norm_begin, norm_size, name="adsk_outNormals")
+
+    outputObjId = tf.slice(outputs, id_begin, id_size, name="adsk_outObjId")
 
     # Persistency
     persistency = tf.train.Saver(filename=lp.modelFilename)
@@ -592,6 +602,7 @@ def trainModel(modelPath, imgRootDir, trainPath, trainGanPath, testPath, testGan
     # Sessions options
     sess_config = tf.ConfigProto(device_count={'GPU': 1})
     sess_config.gpu_options.allow_growth = True
+    run_options = tf.RunOptions(report_tensor_allocations_upon_oom=True)
 
     with tf.Session(config=sess_config) as sess:
         # with tf.Session() as sess:
@@ -637,10 +648,11 @@ def trainModel(modelPath, imgRootDir, trainPath, trainGanPath, testPath, testGan
             # Run optimization
             if step % lp.trlogStep == 0:
                 _, summary, _ = sess.run(
-                    [opts, trSum, lp.globalStepInc], feed_dict=trFeed)
+                    [opts, trSum, lp.globalStepInc], feed_dict=trFeed, options=run_options)
                 train_summary_writer.add_summary(summary, step)
             else:
-                sess.run([opts, lp.globalStepInc], feed_dict=trFeed)
+                sess.run([opts, lp.globalStepInc],
+                         feed_dict=trFeed, options=run_options)
 
             # if profile:
             #     # Create the Timeline object, and write it to a json
@@ -747,4 +759,4 @@ if __name__ == "__main__":
 
     #------------------------------------------------------------------------------------------------
 
-    # saveModel(args.modelPath, False, data_format)
+    saveModel(args.modelPath, False, data_format, True)

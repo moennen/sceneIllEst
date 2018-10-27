@@ -891,7 +891,7 @@ SharedMemory::ConnectionState SharedMemory::create( const HOP_CHAR* exeName, siz
       }
       else // Check if client has compatible version
       {
-         if ( std::abs( metaInfo->clientVersion - HOP_VERSION ) > 0.001f )
+         if ( abs( metaInfo->clientVersion - HOP_VERSION ) > 0.001f )
          {
             printf(
                 "HOP - Client's version (%f) does not match HOP viewer version (%f)\n",

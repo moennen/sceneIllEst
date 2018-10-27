@@ -4,43 +4,34 @@ layout (local_size_x = 16, local_size_y = 16) in;
 
 layout(binding = 0) uniform UniformBufferObject 
 {
-    uvec3 inBufferSize;
-    uvec3 outBufferSize;
+    uvec4 inBufferSize;
+    uvec4 outBufferSize;
 };
 
-// diffuse buffer to be splatted
-layout (binding = 1, std430) readonly buffer rgbBuffer
-{
-   float rgbBuff[];
-};
+// diffuse texture to be splatted
+layout (binding = 1, rgba32f) uniform readonly image2D imRender;
 
-// uv+depth buffer : uv are texture coordinate to the destination texture
-layout (binding = 2, std430) readonly buffer uvdBuffer
-{
-   float uvdBuff[];
-};
+// uv+depth texture : uv are texture coordinate to the destination texture
+layout (binding = 2, rgba32f) uniform readonly image2D imProjUVD0;
 
 // splatted diffuse buffer
-layout (binding = 3, std430) writeonly buffer rgbSplatBuffer
+layout (binding = 3, std430) writeonly buffer buffDiffuse
 {
    float rgbSplatBuff[];
 };
 
 void main()
 {
-   const uvec2 pos = uvec2( gl_GlobalInvocationID.x, gl_GlobalInvocationID.y);
-   if (any(greaterThanEqual(pos,inBufferSize.xy))) return;
-   const uint id = (pos.y*inBufferSize.x + pos.x)* inBufferSize.z;
+   const ivec2 pos2In = ivec2( gl_GlobalInvocationID.x, gl_GlobalInvocationID.y);
+   if (any(greaterThanEqual(pos2In,inBufferSize.xy))) return;
    
-   const vec4 rgb = vec4(rgbBuff[id],rgbBuff[id+1],rgbBuff[id+2],0.0);
-   const vec2 uv = vec2(uvdBuff[id],uvdBuff[id+1]);
+   // NB : should use Texture   
+   const vec4 rgbRender = imageLoad(imRender,pos2In);
+   const vec2 uvRender = imageLoad(imProjUVD0,pos2In).rg;
 
-   const vec2 posOut = (((vec2(pos)/vec2(inBufferSize.xy))*vec2(outBufferSize)));
-   //const uint idOut = (posOut.y*outBufferSize.x + posOut.x) * outBufferSize.z;
-   /*rgbSplatBuff[idOut] = rgb.r;
-   rgbSplatBuff[idOut+1] = rgb.g;
-   rgbSplatBuff[idOut+2] = rgb.b;*/
-   rgbSplatBuff[id] = float(posOut.x) / outBufferSize.x;
-   rgbSplatBuff[id+1] = float(posOut.y) / outBufferSize.y;
-   rgbSplatBuff[id+2] = 0.0;
+   const uvec2 pos2Out = uvec2(((vec2(pos2In)/vec2(outBufferSize.xy))*vec2(outBufferSize.xy)));
+   const uint idOut = uint( (pos2Out.y*outBufferSize.x + pos2Out.x) * outBufferSize.z);
+   rgbSplatBuff[idOut] = 1.0;
+   rgbSplatBuff[idOut+1] = 1.0;
+   rgbSplatBuff[idOut+2] = 0.0;
 }

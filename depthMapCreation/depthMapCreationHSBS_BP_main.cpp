@@ -350,7 +350,7 @@ int main( int argc, char* argv[] )
              ignoreVideoIdName.end();
          if ( ignore ) continue;
 
-         Mat img = cv_utils::imread32FC3( data[j] );
+         Mat img = cv_utils::imread32FC3( data[j], toLinear, true );
 
          const bool isStriped =
              find( stripedVideoIdName.begin(), stripedVideoIdName.end(), videoIdname ) !=
@@ -410,6 +410,8 @@ int main( int argc, char* argv[] )
          if ( !flowToDisp( ofRight, ofLeft, right, left, depth, mask, isInverted ^ doLeft ) )
             continue;
 
+         cvtColor( oright, oright, COLOR_BGR2RGB );
+
          const filesystem::path fRight(
              videoIdname + "/" + outBasename + string( "_rgb" ) + ".png" );
          const filesystem::path fDepth( videoIdname + "/" + outBasename + string( "_d" ) + ".exr" );
@@ -432,8 +434,10 @@ int main( int argc, char* argv[] )
          // display
          if ( doShow )
          {
+            // cvtColor( img, img, COLOR_BGR2RGB );
             // imshow( "Full", img );
             imshow( "Right", oright );
+            cvtColor( left, left, COLOR_BGR2RGB );
             imshow( "Left", left );
             imshow( "Disp", depth );
             imshow( "Mask", mask );

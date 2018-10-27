@@ -23,9 +23,9 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument("inModelPath")
+    parser.add_argument("outModelPath")
     parser.add_argument("inputNodes")
     parser.add_argument("outputNodes")
-    parser.add_argument("outModelPath")
 
     args = parser.parse_args()
 

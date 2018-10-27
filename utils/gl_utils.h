@@ -8,6 +8,7 @@
 #define _UTILS_GL_UTILS_H
 
 #ifdef __APPLE__
+#include <GL/glew.h>
 #include <OpenGL/OpenGL.h>
 #include <OpenGL/gl.h>
 #else

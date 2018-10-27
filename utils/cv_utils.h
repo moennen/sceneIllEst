@@ -13,9 +13,6 @@
 #include <opencv2/highgui.hpp>
 #include <opencv2/imgproc.hpp>
 
-#include <Eigen/Dense>
-#include <opencv2/core/eigen.hpp>
-
 #include <glm/glm.hpp>
 
 #include <iostream>
@@ -96,15 +93,14 @@ inline void toCHW32F( cv::Mat& in )
 {
    std::vector<cv::Mat> in_chns( in.channels() );
    cv::split( in, &in_chns[0] );
-   float* inPtr = (float *)in.data;
+   float* inPtr = (float*)in.data;
    size_t off = in.rows * in.cols;
 #pragma omp parallel for
-   for ( int c = 0; c < in.channels(); ++c ) 
+   for ( int c = 0; c < in.channels(); ++c )
    {
-      std::memcpy( inPtr + c * off, in_chns[c].data, sizeof(float)*off );
+      std::memcpy( inPtr + c * off, in_chns[c].data, sizeof( float ) * off );
    }
 }
-
 
 inline cv::Mat imread32FC1( const std::string& imgPath, const float smax = 255.0 )
 {
@@ -172,10 +168,38 @@ inline cv::Mat imread32FC3(
    return img;
 }
 
-inline cv::Mat imread32FC4( const std::string& imgPath, bool toLinear = false, bool toRGB = true )
+inline cv::Mat imread32FC4(
+    const std::string& imgPath,
+    bool toLinear = false,
+    bool toRGB = true,
+    const float smax = 255.0 )
 {
-   cv::Mat img = imread32FC3( imgPath, toLinear );
-   if ( !img.empty() ) cv::cvtColor( img, img, toRGB ? cv::COLOR_BGR2RGBA : cv::COLOR_RGB2RGBA );
+   HOP_PROF_FUNC();
+
+   cv::Mat img;
+   {
+      HOP_PROF( "cv_imread" );
+      img = cv::imread( imgPath, cv::IMREAD_UNCHANGED );
+   }
+   if ( !img.data || ( img.channels() == 2 ) || ( img.channels() > 4 ) )
+   {
+      std::cerr << "ERROR loading image : " << imgPath << std::endl;
+      return cv::Mat();
+   }
+   if ( img.channels() == 1 )
+      cv::cvtColor( img, img, toRGB ? cv::COLOR_GRAY2BGRA : cv::COLOR_GRAY2RGBA );
+   else if ( img.channels() == 3 )
+      cv::cvtColor( img, img, toRGB ? cv::COLOR_RGB2BGRA : cv::COLOR_RGB2RGBA );
+   else if ( toRGB )
+      cv::cvtColor( img, img, cv::COLOR_BGRA2RGBA );
+   if ( img.depth() != CV_32F )
+   {
+      HOP_PROF( "cv_convert" );
+      img.convertTo( img, CV_32F );
+      img /= smax;
+   }
+   if ( toLinear ) imToLinear( img );
+
    return img;
 }
 

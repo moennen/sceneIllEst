@@ -8,6 +8,7 @@ import sys
 import time
 import tensorflow as tf
 from tensorflow.python.client import timeline
+from tensorflow.python.tools import freeze_graph
 import itertools
 import numpy as np
 import random
@@ -84,14 +85,14 @@ def model(imgs):
 def testDataset(imgRootDir, trainPath):
 
     rseed = int(time.time())
-    imgSz = [256, 256]
+    imgSz = [240, 320]
 
     tf.set_random_seed(rseed)
 
     batchSz = 16
 
     trDs = DatasetTF(trainPath, imgRootDir, batchSz,
-                     imgSz, False, True, -1, rseed)
+                     imgSz, False, False, 2, rseed)
 
     dsIt = tf.data.Iterator.from_structure(
         trDs.data.output_types, trDs.data.output_shapes)
@@ -111,7 +112,7 @@ def testDataset(imgRootDir, trainPath):
 
             cv.imshow('currImg', cv.cvtColor(currImg[idx], cv.COLOR_RGB2BGR))
             cv.imshow('currLabels', cv.applyColorMap(
-                currLabels[idx].astype(np.uint8), cv.COLORMAP_JET))
+                33*currLabels[idx].astype(np.uint8), cv.COLORMAP_JET))
 
             cv.waitKey(700)
 
@@ -129,24 +130,31 @@ class SemSegModelParams(Pix2PixParams):
         # model 1 : resize / pix2pix_gen_p / bn / mapping#0
         # model 2 : stided / pix2pix_gen_p / bn / mapping#-1
         #
+        # exp0003 : 296x296x24x32 / resize / pix2pix_gen_p / bn / mapping#1
+        #
+        # exp0005 : 320x240x16x32 / pix2pix_hglass, bn / mapping#0
+        #
+        # exp0006 : 320x240x32x32 / pix2pix_gen_p, bn / mapping#0
+        #
+        # exp0007 : 32x240x320x32 / pix2pix_gen_p, bn / mapping#2 / classout_loss_with_unlabeled
 
         Pix2PixParams.__init__(self, modelPath, data_format, seed)
 
-        self.numMaxSteps = 250000
-        self.numSteps = 250000
+        self.numMaxSteps = 350000
+        self.numSteps = 350000
         self.backupStep = 250
         self.trlogStep = 250
         self.tslogStep = 250
         self.vallogStep = 250
 
-        self.imgSzTr = [296, 296]
-        self.batchSz = 48
+        self.imgSzTr = [240, 320]
+        self.batchSz = 32
 
         # bn vs no bn
         self.useBatchNorm = True
         self.nbChannels = 32
         self.nbInChannels = 3
-        self.nbOutputChannels = 151
+        self.nbOutputChannels = 6
         self.kernelSz = 5
         self.stridedEncoder = True
         # strided vs resize
@@ -158,15 +166,92 @@ class SemSegModelParams(Pix2PixParams):
         self.linearImg = False
         self.dsRescale = False
         # Mapping
-        self.dsMapping = 0
+        self.dsMapping = 2
 
+        self.minimizeMemory = False
         self.model = pix2pix_gen_p
 
         # loss
         self.doClassOut = True
-        self.loss = pix2pix_classout_loss
+        self.loss = self.classout_loss_with_unlabeled
 
         self.update()
+
+    def classout_loss_with_unlabeled(self, outputs, targets):
+
+        cel = tf.nn.sparse_softmax_cross_entropy_with_logits(
+            labels=tf.squeeze(targets), logits=outputs)
+        cel = tf.divide(tf.reduce_sum(tf.multiply(cel, targets)),
+                        tf.reduce_sum(tf.maximum(targets, 1)))
+
+        return cel
+
+    def classout_loss(self, outputs, targets):
+
+        return tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(
+            labels=tf.squeeze(targets), logits=outputs))
+
+    def classout_loss_binary(self, outputs, targets):
+
+        outputs_pos = tf.sigmoid(outputs)
+        targets_f = tf.to_float(targets)
+
+        return tf.reduce_mean(-1.0*targets_f*tf.log(outputs_pos) + (targets_f-1.0)*tf.log(1.0-outputs_pos))
+
+    def optimizer(self, batchInput, batchTargets):
+
+        with tf.device('/gpu:*'):
+            with tf.variable_scope(self.getModelName()) as modelVs:
+                batchOutput = self.model(batchInput, self)
+
+            with tf.variable_scope(self.getModelName() + "_loss"):
+                loss = self.loss(batchOutput, batchTargets)
+
+        with tf.device('/gpu:*'):
+
+            # dependencies for the batch normalization
+            depends = tf.get_collection(
+                tf.GraphKeys.UPDATE_OPS) if self.useBatchNorm else []
+
+            # optimizer
+            opt, tvars, grads_and_vars = getOptimizerData(
+                loss, depends, self, self.getModelName())
+
+        # put summary on CPU to free some VRAM
+        with tf.device('/cpu:*'):
+
+            batchTargetSple = tf.multiply(
+                tf.subtract(tf.to_float(batchTargets)/self.nbOutputChannels, 0.5), 2.0)
+            if self.nbOutputChannels > 1:
+                argmax_axis = 3 if self.data_format == 'NHWC' else 1
+                batchOutputSple = tf.multiply(
+                    tf.subtract(tf.to_float(tf.argmax(batchOutput,
+                                                      axis=argmax_axis))/self.nbOutputChannels, 0.5), 2.0)
+                batchOutputSple = tf.expand_dims(
+                    batchOutputSple, axis=argmax_axis)
+            else:
+                batchOutputSple = batchOutput
+
+            trSum = []
+            addSummaryParams(trSum, self, tvars, grads_and_vars)
+            trSum = tf.summary.merge(trSum, "Train")
+
+            tsSum = []
+            addSummaryScalar(tsSum, loss, "loss", "loss")
+
+            addSummaryImages(tsSum, "Images", self,
+                             [batchInput, batchTargetSple, batchOutputSple],
+                             [[0, 1, 2], [0, 0, 0], [0, 0, 0]])
+            tsSum = tf.summary.merge(tsSum, "Test")
+
+            valSum = []
+            addSummaryImages(valSum, "Images", self,
+                             [batchInput, batchOutputSple],
+                             [[0, 1, 2], [0, 0, 0]])
+            valSum = tf.summary.merge(valSum, "Val")
+
+        return [opt, loss, trSum, tsSum, valSum]
+
 
 #-----------------------------------------------------------------------------------------------------
 # VALIDATION
@@ -194,7 +279,7 @@ def evalModel(modelPath, imgRootDir, imgLst):
     varInit = tf.global_variables_initializer()
 
     sess_config = tf.ConfigProto(device_count={'GPU': 0})
-    #sess_config.gpu_options.allow_growth = True
+    # sess_config.gpu_options.allow_growth = True
 
     with tf.Session(config=sess_config) as sess:
 
@@ -219,6 +304,69 @@ def evalModel(modelPath, imgRootDir, imgLst):
                 cv.imshow('Output', cv.applyColorMap(
                     labels.astype(np.uint8), cv.COLORMAP_JETdepth[0]))
                 cv.waitKey(0)
+
+#-----------------------------------------------------------------------------------------------------
+# EXPORT
+#-----------------------------------------------------------------------------------------------------
+
+
+def saveModel(modelPath, asText, data_format, convert_df):
+
+    lp = SemSegModelParams(modelPath, data_format)
+    lp.isTraining = False
+
+    mdSuff = '-last.pb.txt' if asText else '-last.pb'
+
+    inputsi = tf.placeholder(tf.float32, name="adsk_inFront")
+    if convert_df:
+        inputs = preprocess(inputsi, True, data_format)
+    else:
+        inputs = tf.multiply(tf.subtract(inputsi, 0.5), 2.0)
+
+    with tf.variable_scope("generator"):
+        outputs = lp.model(inputs, lp)
+        if lp.doClassOut:
+            outputs = tf.nn.tanh(outputs)
+        if convert_df:
+            outputs = postprocess(outputs, False, data_format)
+
+    outputNames = outputs.name
+    outputNames = outputNames[:outputNames.find(":")]
+
+    inputNames = inputsi.name
+    inputNames = inputNames[:inputNames.find(":")]
+
+    print "-------------------------<<<<<<<<<<<<<<<<<<<<<<<<<<<<<"
+    print "Exporting graph : " + inputNames + " -> " + outputNames + "  ( " + outputs.name + " )"
+    print "------------------------->>>>>>>>>>>>>>>>>>>>>>>>>>>>>>"
+
+    # Persistency
+    persistency = tf.train.Saver(filename=lp.modelFilename)
+
+    # Params Initializer
+    varInit = tf.global_variables_initializer()
+
+    sess_config = tf.ConfigProto(device_count={'GPU': 0})
+
+    with tf.Session(config=sess_config) as sess:
+
+        # initialize params
+        sess.run(varInit)
+
+        # Restore model if needed
+        persistency.restore(sess, tf.train.latest_checkpoint(modelPath))
+
+        tf.train.write_graph(
+            sess.graph, '', lp.modelFilename + mdSuff, as_text=asText)
+
+        freeze_graph.freeze_graph(
+            lp.modelFilename + mdSuff,
+            '',
+            not asText,
+            tf.train.latest_checkpoint(modelPath),
+            outputNames,
+            '', '', lp.modelFilename + mdSuff, True, '')
+
 
 #-----------------------------------------------------------------------------------------------------
 # TRAINING
@@ -251,7 +399,7 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath, valPath, data_format)
     inLabels = tf.to_int32(preprocess(inLabelsi, False, data_format))
 
     # Optimizers
-    [opts, loss, trSum, tsSum, valSum] = pix2pix_optimizer(inImg, inLabels, lp)
+    [opts, loss, trSum, tsSum, valSum] = lp.optimizer(inImg, inLabels)
 
     # Validation
     valImg, valLabels = loadValidationData(
@@ -269,8 +417,8 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath, valPath, data_format)
 
     # Session configuration
     sess_config = tf.ConfigProto()
-    #sess_config = tf.ConfigProto(device_count={'GPU': 1})
-    #sess_config.gpu_options.allow_growth = True
+    # sess_config = tf.ConfigProto(device_count={'GPU': 1})
+    sess_config.gpu_options.allow_growth = True
 
     with tf.Session(config=sess_config) as sess:
         # with tf.Session() as sess:
@@ -372,6 +520,9 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
 
+    parser.add_argument(
+        "mode", help="mode : test_ds / train / eval /save")
+
     parser.add_argument("modelPath", help="path to the trainedModel")
 
     parser.add_argument(
@@ -389,19 +540,27 @@ if __name__ == "__main__":
     parser.add_argument("--nhwc", dest='nhwc',
                         default=False, action='store_true')
 
+    parser.add_argument("--uff", dest='uff',
+                        default=False, action='store_true')
+
     args = parser.parse_args()
 
     data_format = 'NHWC' if args.nhwc else 'NCHW'
 
     #------------------------------------------------------------------------------------------------
-
-    #testDataset(args.imgRootDir, args.trainLstPath)
-
-    #------------------------------------------------------------------------------------------------
-
-    trainModel(args.modelPath, args.imgRootDir,
-               args.trainLstPath, args.testLstPath, args.valLstPath, data_format)
+    if args.mode == 'test_ds':
+        testDataset(args.imgRootDir, args.trainLstPath)
 
     #------------------------------------------------------------------------------------------------
+    if args.mode == 'train':
+        trainModel(args.modelPath, args.imgRootDir,
+                   args.trainLstPath, args.testLstPath, args.valLstPath, data_format)
 
-    # evalModel(args.modelPath, args.imgRootDir, args.valLstPath, False, 640, True, data_format)
+    #------------------------------------------------------------------------------------------------
+    if args.mode == 'eval':
+        evalModel(args.modelPath, args.imgRootDir,
+                  args.valLstPath, False, 640, True, data_format)
+
+    #------------------------------------------------------------------------------------------------
+    if args.mode == 'save':
+        saveModel(args.modelPath, False, data_format, not args.uff)

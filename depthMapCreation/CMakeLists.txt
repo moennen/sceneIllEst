@@ -33,7 +33,7 @@ SET(EXTERNALS ${PROJROOT}/externals)
 INCLUDE_DIRECTORIES(
 	${PROJROOT}
    ${EXTERNALS}
-	${M_INC}
+	${M_INC} 
 	${M_INC}/GL
 	${M_INC}/eigen3
    ${M_INC}/varOpticalFlowCL
@@ -56,3 +56,9 @@ TARGET_LINK_LIBRARIES( createDepthMapHSBS cudart cublas boost_system boost_files
 
 ADD_EXECUTABLE(createDepthMapKitti depthMapCreationKitti_main.cpp ${UTILS}/cv_utils.C )
 TARGET_LINK_LIBRARIES( createDepthMapKitti boost_system boost_filesystem opencv_world assimp )
+
+ADD_EXECUTABLE(genDepthFromSBS  genDepthFromSBS.cpp ${UTILS}/cv_utils.C )
+TARGET_LINK_LIBRARIES( genDepthFromSBS boost_system boost_filesystem VarOpticalFlowCL opencv_world )
+
+ADD_EXECUTABLE(genDepthFromStereo  genDepthFromStereo.cpp ${UTILS}/cv_utils.C )
+TARGET_LINK_LIBRARIES( genDepthFromStereo boost_system boost_filesystem VarOpticalFlowCL opencv_world )

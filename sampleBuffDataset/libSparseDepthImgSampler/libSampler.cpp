@@ -51,6 +51,21 @@ void correctMask( const Mat& imask, Mat& omask )
    }
 }
 
+// set to null masked depth entries
+void maskDepth( const Mat& matMask, Mat& matDepth )
+{
+#pragma omp parallel for
+   for ( unsigned y = 0; y < matDepth.rows; y++ )
+   {
+      const float* fPtrMask = matMask.ptr<float>( y );
+      float* fPtrDepth = matDepth.ptr<float>( y );
+      for ( unsigned x = 0; x < matDepth.cols; x++ )
+      {
+         if (fPtrMask[x] < 0.999) fPtrDepth[x] = 0.0;
+      }
+   }
+}
+
 struct Sampler final
 {
    mt19937 _rng;
@@ -194,7 +209,7 @@ struct Sampler final
             {
                const float minDs =
                    std::max( (float)_sampleSz.z / imgSz.y, (float)_sampleSz.y / imgSz.x );
-               const float ds = mix( 1.0f, minDs, _tsGen( _rng ) );
+               const float ds = minDs; //mix( 1.0f, minDs, _tsGen( _rng ) );
                if ( ds < 1.0 )
                {
                   rescaled = true;
@@ -225,20 +240,30 @@ struct Sampler final
 
             // random small blur to remove artifacts + copy to destination
             Mat imgSple( _sampleSz.z, _sampleSz.y, CV_32FC3, currBuffImg + s * _imgBuffSz );
-            cv_utils::adjustContrastBrightness<vec3>(
+            currImg.copyTo(imgSple);
+            /*cv_utils::adjustContrastBrightness<vec3>(
                 currImg, ( 1.0f + 0.11f * _rnGen( _rng ) ), 0.11f * _rnGen( _rng ) );
-            GaussianBlur( currImg, imgSple, Size( 5, 5 ), 0.31 * abs( _rnGen( _rng ) ) );
+            GaussianBlur( currImg, imgSple, Size( 3, 3 ), 0.31 * abs( _rnGen( _rng ) ) );*/
 
             // copy and process depth
             Mat depthSple( _sampleSz.z, _sampleSz.y, CV_32FC1, currBuffDepth + s * _depthBuffSz );
             maskSple.convertTo( currMask, CV_8UC1, 255.0, 0.0 );
-            cv::Mat mean, std;
+            currDepth.copyTo(depthSple);
+            /*cv::Mat mean, std;
             cv::meanStdDev( currDepth, mean, std, currMask );
             depthSple = ( ( currDepth - mean ) / std );
             // normalize( currDepth, depthSple, 0.0, 1.0, NORM_MINMAX, -1, currMask );
             // this is for debugging !!!
-            depthSple = depthSple.mul( maskSple );
-
+            depthSple = depthSple.mul( maskSple );*/
+            // apply log 
+            cv::log(currDepth, depthSple);
+            maskDepth(maskSple,depthSple);
+            
+            
+            //transpose(imgSple,imgSple);
+            //transpose(depthSple,depthSple);
+            //transpose(maskSple,maskSple);
+            
             // copy and process eroded mask
             // Mat erodedMaskSple( _sampleSz.z, _sampleSz.y, CV_32FC1, currBuffErodedMask );
             // erode(maskSple, erodedMaskSple, Mat());
@@ -266,8 +291,8 @@ extern "C" int getBuffersDim( const int sidx, float* dims )
    float* d = dims;
    for ( size_t i = 0; i < Sampler::nOutBuffers; ++i )
    {
-      d[0] = sz.y;
-      d[1] = sz.z;
+      d[0] = sz.z;
+      d[1] = sz.y;
       d[2] = Sampler::getBufferDepth( i );
       d += 3;
    }
@@ -289,7 +314,7 @@ extern "C" int initBuffersDataSampler(
    if ( ( nParams < 3 ) || ( sidx > g_samplers.size() ) ) return ERROR_BAD_ARGS;
 
    // parse params
-   const ivec3 sz( params[0], params[1], params[2] );
+   const ivec3 sz( params[0], params[2], params[1] );
    const bool toLinear( nParams > 3 ? params[3] > 0.0 : false );
    const bool doRescale( nParams > 4 ? params[4] > 0.0 : false );
    const bool doAsync( nParams > 5 ? params[5] > 0.0 : true );

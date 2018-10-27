@@ -145,7 +145,6 @@ class DepthPredictionModelParams(Pix2PixParams):
         #
         # exp0005 : 296x296x48x32 / loss_masked_meanstd_norm_charbonnier / stride / pix2pix_gen_p / bn / md only
         # exp0006 : 256x256x48x32 / loss_masked_meanstd_norm_charbonnier / stride / pix2pix_gen_p / bn / md only
-        #
 
         seed = 0
 

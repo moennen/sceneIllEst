@@ -299,8 +299,8 @@ extern "C" int getBuffersDim( const int sidx, float* dims )
    float* d = dims;
    for ( size_t i = 0; i < Sampler::nBuffers; ++i )
    {
-      d[0] = sz.y;
-      d[1] = sz.z;
+      d[0] = sz.z;
+      d[1] = sz.y;
       d[2] = Sampler::getBufferDepth( i );
       d += 3;
    }
@@ -322,7 +322,7 @@ extern "C" int initBuffersDataSampler(
    if ( ( nParams < 3 ) || ( sidx > g_samplers.size() ) ) return ERROR_BAD_ARGS;
 
    // parse params
-   const ivec3 sz( params[0], params[1], params[2] );
+   const ivec3 sz( params[0], params[2], params[1] );
    const bool toLinear( nParams > 3 ? params[3] > 0.0 : false );
    // WARNING : rescaling may cause unwanted artifact in normal  uvd maps
    const bool doRescale( nParams > 4 ? params[4] > 0.0 : false );
