@@ -954,8 +954,8 @@ def getOptimizerData(loss, depends, params, name):
          gen_tvars = [var for var in tf.trainable_variables(
          ) if var.name.startswith(name)]
 
-         # gen_optim = tf.contrib.opt.AdamWOptimizer(params.learningRate)
-         gen_optim = tf.train.AdamOptimizer(params.learningRate, 0.5, 0.999)
+         gen_optim = tf.contrib.opt.AdamWOptimizer(params.learningRate)
+         #gen_optim = tf.train.AdamOptimizer(params.learningRate, 0.5, 0.999)
 
          if params.minimizeMemory:
             gen_grads = memory_saving_gradients.gradients(
