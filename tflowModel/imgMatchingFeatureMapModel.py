@@ -1,5 +1,5 @@
 #!/usr/bin/python
-""" Depth Map From Image Model
+""" Matching Feature Map From Image Model
 
 """
 import argparse
@@ -10,6 +10,7 @@ import tensorflow as tf
 from tensorflow.python.client import timeline
 from tensorflow.python.tools import freeze_graph
 import itertools
+import math
 import numpy as np
 import random
 
@@ -26,31 +27,28 @@ import cv2 as cv
 class DatasetTF(object):
 
    __lib = BufferDataSamplerLibrary(
-       "/mnt/p4/avila/moennen_wkspce/sceneIllEst/sampleBuffDataset/libDepthImgSampler/libDepthImgSampler.so")
+       "/mnt/p4/avila/moennen_wkspce/sceneIllEst/sampleBuffDataset/libMatchingFeatureSampler/libSemSegSampler.so")
 
-   def __init__(self, dbPath, imgRootDir, batchSz, imgSz, linearCS, seed):
+   def __init__(self, dbPath, imgRootDir, batchSz, imgSz, linearCS, rescale, mapping, seed):
       params = np.array([batchSz, imgSz[0], imgSz[1],
-                         1.0 if linearCS else 0.0], dtype=np.float32)
-
-      self.__nds = 2
-      self.__currds = 0
-
-      self.__ds = [BufferDataSampler(
-          DatasetTF.__lib, dbPath, imgRootDir, params, seed+i) for i in range(self.__nds)]
+                         1.0 if linearCS else 0.0,
+                         1.0 if rescale else 0.0, mapping],
+                        dtype=np.float32)
+      self.__ds = BufferDataSampler(
+          DatasetTF.__lib, dbPath, imgRootDir, params, seed)
       self.data = tf.data.Dataset.from_generator(
           self.sample, (tf.float32, tf.float32))
 
    def sample(self):
       for i in itertools.count(1):
-         currImg, currDepth = self.__ds[self.__currds].getDataBuffers()
-         self.__currds = (self.__currds+1) % self.__nds
-         yield (currImg, currDepth)
+         currImg, currLabels, currMask = self.__ds.getDataBuffers()
+         yield (currImg, currLabels)
 
 
-def loadValidationData(dataPath, dataRootDir, dataSz, linearCS=False):
+def loadValidationData(dataPath, dataRootDir, dataSz, linearCS):
 
    im = np.zeros((dataSz[0], dataSz[1], dataSz[2], 3))
-   depth = np.full((dataSz[0], dataSz[1], dataSz[2], 1), 0.5)
+   labels = np.zeros((dataSz[0], dataSz[1], dataSz[2], 1))
 
    n = 0
 
@@ -68,68 +66,30 @@ def loadValidationData(dataPath, dataRootDir, dataSz, linearCS=False):
                                            data[0], [dataSz[1], dataSz[2]], linearCS)
          n = n + 1
 
-   return im, depth
-
-#-----------------------------------------------------------------------------------------------------
-# UNIT TESTS
-#-----------------------------------------------------------------------------------------------------
-
-
-def testDataset(imgRootDir, trainPath):
-
-   rseed = int(time.time())
-   imgSz = [240, 320]
-
-   tf.set_random_seed(rseed)
-
-   batchSz = 16
-
-   trDs = DatasetTF(trainPath, imgRootDir, batchSz, imgSz, False, rseed)
-
-   dsIt = tf.data.Iterator.from_structure(
-       trDs.data.output_types, trDs.data.output_shapes)
-   dsView = dsIt.get_next()
-
-   trInit = dsIt.make_initializer(trDs.data)
-
-   with tf.Session() as sess:
-
-      sess.run(trInit)
-
-      for step in range(100):
-
-         currImg, currDepth = sess.run(dsView)
-
-         idx = random.randint(0, batchSz-1)
-
-         cv.imshow('currImg', cv.cvtColor(currImg[idx], cv.COLOR_RGB2BGR))
-         cv.imshow('currDepth', cv.applyColorMap(
-             (currDepth[idx] * 255.0).astype(np.uint8), cv.COLORMAP_JET))
-
-         cv.waitKey(700)
+   return im, labels
 
 #-----------------------------------------------------------------------------------------------------
 # PARAMETERS
 #-----------------------------------------------------------------------------------------------------
 
 
-class DepthPredictionModelParams(Pix2PixParams):
+class SemSegModelParams(Pix2PixParams):
 
    def __init__(self, modelPath, data_format, seed=int(time.time())):
 
       #
-      # model 0 : scale / resize / pix2pix_gen / no bn
-      # model 1 : scale / strided / pix2pix_ires / no bn
-      # model 2 : scale / resize / pix2pix_gen / bn
-      # model 3 : scale / resize / pix2pix_ires / bn
-      # model 4 : scale / resize / pix2pix_gen_p / bn
-      # model 5 : noscale / resize / pix2pix_gen_p / bn
-      # model 6 : scale / strided / pix2pix_gen_p / bn
+      # model 0 : resize / pix2pix_gen_p / bn / mapping#-1
+      # model 1 : resize / pix2pix_gen_p / bn / mapping#0
+      # model 2 : stided / pix2pix_gen_p / bn / mapping#-1
       #
-      # exp00007 : 32x240x320x32 / strided / pix2pix_gen_p, bn / charb + reg
-      # exp00008 : 32x240x320x32 / strided-s / pix2pix_gen_p, bn / l2 + reg-l2
-
-      # seed = 0
+      # exp0003 : 296x296x24x32 / resize / pix2pix_gen_p / bn / mapping#1
+      #
+      # exp0005 : 320x240x16x32 / pix2pix_hglass, bn / mapping#0
+      #
+      # exp0006 : 320x240x32x32 / pix2pix_gen_p, bn / mapping#0
+      #
+      # exp0007 : 32x240x320x32 / pix2pix_gen_p, bn / mapping#2 / classout_loss_with_unlabeled
+      # exp0007 : 32x240x320x32 / pix2pix_gen_p, bn / mapping#2 / classout_loss_reg_with_unlabeled
 
       Pix2PixParams.__init__(self, modelPath, data_format, seed)
 
@@ -147,7 +107,7 @@ class DepthPredictionModelParams(Pix2PixParams):
       self.useBatchNorm = True
       self.nbChannels = 32
       self.nbInChannels = 3
-      self.nbOutputChannels = 1
+      self.nbOutputChannels = 3
       self.kernelSz = 5
       self.stridedEncoder = True
       # strided vs resize
@@ -158,41 +118,80 @@ class DepthPredictionModelParams(Pix2PixParams):
       self.alphaReg = 0.125
       self.alphaDisc = 0.0
       self.linearImg = False
+      self.dsRescale = True
+      # Mapping
+      self.dsMapping = 2
 
-      # network arch function
       self.minimizeMemory = False
       self.model = pix2pix_gen_p
 
+      # loss
+      self.doClassOut = True
+      self.loss = self.classout_loss_reg_with_unlabeled
+
       self.update()
 
-   def loss(self, batchOutput, batchTargets):
+   def labels_from_targets(self, targets):
+      return tf.maximum(tf.subtract(targets, 1), 0)
 
-      return tf.square(charbonnier_loss(batchOutput, batchTargets)), self.loss_reg(batchOutput, batchTargets)
+   def classout_loss_reg_with_unlabeled(self, outputs, targets):
 
-   def loss_reg(self, batchOutput, batchTargets):
+      target_unlabeled_mask = tf.to_float(tf.minimum(targets, 1))
+      target_labels = tf.maximum(tf.subtract(targets, 1), 0)
+
+      cel = tf.nn.sparse_softmax_cross_entropy_with_logits(
+          labels=tf.squeeze(target_labels), logits=outputs)
+
+      loss = tf.divide(tf.reduce_sum(tf.multiply(cel, tf.squeeze(target_unlabeled_mask))),
+                       tf.reduce_sum(target_unlabeled_mask))
 
       lossGrad = tf.constant(0.0)
 
-      axisH = 1 if self.data_format == 'NHWC' else 2
+      axisD = 3 if self.data_format == 'NHWC' else 1
 
-      batchOutputResized = batchOutput
-      batchTargetResized = batchTargets
+      batchOutputResized = outputs
 
-      for i in range(4):
+      batchTargetResized = tf.to_float(targets)
+      bts = []
+      for j in range(self.nbOutputChannels):
+         bts.append(tf.abs(tf.sign(tf.subtract(batchTargetResized, j+1))))
+      batchTargetResized = tf.concat(bts, axis=axisD)
 
-         lossGradX = l2_loss(filterGradX_3x3(batchOutputResized, self.nbOutputChannels, self.data_format),
-                             filterGradX_3x3(batchTargetResized, self.nbOutputChannels, self.data_format))
-         lossGradY = l2_loss(filterGradY_3x3(batchOutputResized, self.nbOutputChannels, self.data_format),
-                             filterGradY_3x3(batchTargetResized,  self.nbOutputChannels, self.data_format))
+      batchMaskResized = target_unlabeled_mask
 
-         lossGrad = tf.add(lossGrad, tf.add(lossGradX, lossGradY))
+      n = 4
+      for i in range(n):
 
-         batchOutputResized = reduceSize2x(
-             batchOutputResized, self.nbOutputChannels, self.data_format)
-         batchTargetResized = reduceSize2x(
-             batchTargetResized, self.nbOutputChannels, self.data_format)
+         batchErrGradX = l2(filterGradX_3x3(batchOutputResized, self.nbOutputChannels, self.data_format),
+                            filterGradX_3x3(batchTargetResized, self.nbOutputChannels, self.data_format))
+         batchErrGradY = l2(filterGradY_3x3(batchOutputResized, self.nbOutputChannels, self.data_format),
+                            filterGradY_3x3(batchTargetResized,  self.nbOutputChannels, self.data_format))
 
-      return lossGrad
+         valid = tf.reduce_sum(batchMaskResized)
+         lossGrad += tf.divide(tf.reduce_sum(tf.multiply(batchErrGradX, batchMaskResized)), valid)
+         lossGrad += tf.divide(tf.reduce_sum(tf.multiply(batchErrGradY, batchMaskResized)), valid)
+
+         if i < n-1:
+            batchOutputResized = reduceSize2x(
+                batchOutputResized, self.nbOutputChannels, self.data_format)
+            batchTargetResized = reduceSize2xNN(
+                batchTargetResized, self.nbOutputChannels, self.data_format)
+            batchMaskResized = reduceSize2xNN(
+                batchMaskResized, 1, self.data_format)
+
+      return loss, lossGrad
+
+   def classout_loss(self, outputs, targets):
+
+      return tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(
+          labels=tf.squeeze(targets), logits=outputs))
+
+   def classout_loss_binary(self, outputs, targets):
+
+      outputs_pos = tf.sigmoid(outputs)
+      targets_f = tf.to_float(targets)
+
+      return tf.reduce_mean(-1.0*targets_f*tf.log(outputs_pos) + (targets_f-1.0)*tf.log(1.0-outputs_pos))
 
    def optimizer(self, batchInput, batchTargets):
 
@@ -203,6 +202,8 @@ class DepthPredictionModelParams(Pix2PixParams):
          with tf.variable_scope(self.getModelName() + "_loss"):
             loss_data, loss_reg = self.loss(batchOutput, batchTargets)
             loss = self.alphaData * loss_data + self.alphaReg * loss_reg
+
+      with tf.device('/gpu:*'):
 
          # dependencies for the batch normalization
          depends = tf.get_collection(
@@ -215,45 +216,93 @@ class DepthPredictionModelParams(Pix2PixParams):
       # put summary on CPU to free some VRAM
       with tf.device('/cpu:*'):
 
+         batchTargetSple = tf.multiply(
+             tf.subtract(tf.to_float(self.labels_from_targets(batchTargets))/self.nbOutputChannels, 0.5), 2.0)
+         if self.nbOutputChannels > 1:
+            argmax_axis = 3 if self.data_format == 'NHWC' else 1
+            batchOutputSple = tf.multiply(
+                tf.subtract(tf.to_float(tf.argmax(batchOutput,
+                                                  axis=argmax_axis))/self.nbOutputChannels, 0.5), 2.0)
+            batchOutputSple = tf.expand_dims(
+                batchOutputSple, axis=argmax_axis)
+         else:
+            batchOutputSple = batchOutput
+
          trSum = []
          addSummaryParams(trSum, self, tvars, grads_and_vars)
          trSum = tf.summary.merge(trSum, "Train")
 
          tsSum = []
          addSummaryScalar(tsSum, loss, "loss", "loss")
-         addSummaryScalar(tsSum, loss_data, "loss", "data")
-         addSummaryScalar(tsSum, loss_reg, "loss", "reg")
+         addSummaryScalar(tsSum, loss, "loss", "loss_data")
+         addSummaryScalar(tsSum, loss, "loss", "loss_reg")
 
          addSummaryImages(tsSum, "Images", self,
-                          [batchInput, batchTargets, batchOutput],
+                          [batchInput, batchTargetSple, batchOutputSple],
                           [[0, 1, 2], [0, 0, 0], [0, 0, 0]])
          tsSum = tf.summary.merge(tsSum, "Test")
 
          valSum = []
          addSummaryImages(valSum, "Images", self,
-                          [batchInput, batchOutput],
+                          [batchInput, batchOutputSple],
                           [[0, 1, 2], [0, 0, 0]])
          valSum = tf.summary.merge(valSum, "Val")
 
       return [opt, loss, trSum, tsSum, valSum]
 
 #-----------------------------------------------------------------------------------------------------
+# UNIT TESTS
+#-----------------------------------------------------------------------------------------------------
+
+
+def testDataset(imgRootDir, trainPath):
+
+   lp = SemSegModelParams("", "NHWC")
+
+   trDs = DatasetTF(trainPath, imgRootDir, lp.batchSz,
+                    lp.imgSzTr, lp.linearImg, lp.dsRescale, lp.dsMapping, lp.rseed)
+
+   dsIt = tf.data.Iterator.from_structure(
+       trDs.data.output_types, trDs.data.output_shapes)
+   dsView = dsIt.get_next()
+
+   trInit = dsIt.make_initializer(trDs.data)
+
+   with tf.Session() as sess:
+
+      sess.run(trInit)
+
+      for step in range(100):
+
+         currImg, currLabels = sess.run(dsView)
+
+         idx = random.randint(0, lp.batchSz-1)
+
+         cv.imshow('currImg', cv.cvtColor(currImg[idx], cv.COLOR_RGB2BGR))
+         cv.imshow('currLabelsGL', currLabels[idx])
+         cv.imshow('currLabels', cv.applyColorMap(
+             ((255.0 / (lp.nbOutputChannels+1)) * currLabels[idx]).astype(np.uint8), cv.COLORMAP_JET))
+
+         cv.waitKey(0)
+
+#-----------------------------------------------------------------------------------------------------
 # VALIDATION
 #-----------------------------------------------------------------------------------------------------
 
 
-def evalModel(modelPath, imgRootDir, imgLst, forceTrainingSize=True, maxSz=-1):
+def evalModel(modelPath, imgRootDir, imgLst):
 
-   lp = DepthPredictionModelParams(modelPath)
+   lp = SemSegModelParams(modelPath, data_format)
    lp.isTraining = False
 
-   evalSz = [1, lp.imgSzTr[0], lp.imgSzTr[1], 3]
+   evalSz = [1, 620, 480, 3]
 
-   inputsi = tf.placeholder(tf.float32, name="input")
-   inputs = preprocess(inputsi)
+   inputsi = tf.placeholder(tf.float32, shape=evalSz, name="input")
+   inputs = preprocess(inputsi, True, data_format)
 
    with tf.variable_scope("generator"):
-      outputs = lp.model(inputs, lp)
+      outputs = pix2pix_gen(inputs, lp)
+      outputs = postprocess(outputs, False, data_format)
 
    # Persistency
    persistency = tf.train.Saver(filename=lp.modelFilename)
@@ -261,7 +310,10 @@ def evalModel(modelPath, imgRootDir, imgLst, forceTrainingSize=True, maxSz=-1):
    # Params Initializer
    varInit = tf.global_variables_initializer()
 
-   with tf.Session() as sess:
+   sess_config = tf.ConfigProto(device_count={'GPU': 0})
+   # sess_config.gpu_options.allow_growth = True
+
+   with tf.Session(config=sess_config) as sess:
 
       # initialize params
       sess.run(varInit)
@@ -272,49 +324,18 @@ def evalModel(modelPath, imgRootDir, imgLst, forceTrainingSize=True, maxSz=-1):
       # input
       with open(imgLst, 'r') as img_names_file:
 
-         videoId = 0
          for data in img_names_file:
 
-            imgName = imgRootDir + "/" + data.rstrip('\n')
-            if forceTrainingSize:
-               img = [loadResizeImgPIL(
-                   imgName, [evalSz[1], evalSz[2]], lp.linearImg)]
-            else:
-               img = [loadImgPIL(imgName, lp.linearImg)]
+            img = [loadResizeImgPIL(imgRootDir + "/" +
+                                    data.rstrip('\n'), [evalSz[1], evalSz[2]], lp.linearImg)]
 
-            if maxSz > 0:
-               ds = min(
-                   1.0, min(float(maxSz)/img[0].shape[0], float(maxSz)/img[0].shape[1]))
-               img[0] = cv.resize(img[0], dsize=(
-                   0, 0), fx=ds, fy=ds, interpolation=cv.INTER_AREA)
-
-            depth = sess.run(outputs, feed_dict={inputsi: img})
-            cv.normalize(depth[0], depth[0], 0, 1.0, cv.NORM_MINMAX)
-
-            inputImg = (cv.cvtColor(
-                img[0], cv.COLOR_RGB2BGR)*255.0).astype(np.uint8)
-            coloredDepth = cv.applyColorMap(
-                (depth[0] * 255.0).astype(np.uint8), cv.COLORMAP_JET)
+            labels = sess.run(outputs, feed_dict={inputsi: img})
 
             # show the sample
-            cv.imshow('Input', inputImg)
-            cv.imshow('Output', coloredDepth)
-
-            outDName = imgRootDir + \
-                '/evalOutput/{:06d}_d.exr'.format(videoId)
-            cv.imwrite(outDName, depth[0])
-
-            outCDName = imgRootDir + \
-                '/evalOutput/{:06d}_cd.png'.format(videoId)
-            cv.imwrite(outCDName, coloredDepth)
-
-            outRGBName = imgRootDir + \
-                '/evalOutput/{:06d}_rgb.png'.format(videoId)
-            cv.imwrite(outRGBName, inputImg)
-
-            cv.waitKey(500)
-
-            videoId += 1
+            cv.imshow('Input', cv.cvtColor(img[0], cv.COLOR_RGB2BGR))
+            cv.imshow('Output', cv.applyColorMap(
+                labels.astype(np.uint8), cv.COLORMAP_JETdepth[0]))
+            cv.waitKey(0)
 
 #-----------------------------------------------------------------------------------------------------
 # EXPORT
@@ -323,7 +344,7 @@ def evalModel(modelPath, imgRootDir, imgLst, forceTrainingSize=True, maxSz=-1):
 
 def saveModel(modelPath, asText, data_format, convert_df):
 
-   lp = DepthPredictionModelParams(modelPath, data_format)
+   lp = SemSegModelParams(modelPath, data_format)
    lp.isTraining = False
 
    mdSuff = '-last.pb.txt' if asText else '-last.pb'
@@ -348,8 +369,7 @@ def saveModel(modelPath, asText, data_format, convert_df):
    inputNames = inputNames[:inputNames.find(":")]
 
    print "-------------------------<<<<<<<<<<<<<<<<<<<<<<<<<<<<<"
-   print "Exporting graph input : " + inputNames
-   print "Exporting graph output : " + outputNames + "  (" + outputs.name + ")"
+   print "Exporting graph : " + inputNames + " -> " + outputNames + "  ( " + outputs.name + " )"
    print "------------------------->>>>>>>>>>>>>>>>>>>>>>>>>>>>>>"
 
    # Persistency
@@ -387,13 +407,13 @@ def saveModel(modelPath, asText, data_format, convert_df):
 
 def trainModel(modelPath, imgRootDir, trainPath, testPath, valPath, data_format):
 
-   lp = DepthPredictionModelParams(modelPath, data_format)
+   lp = SemSegModelParams(modelPath, data_format)
 
    # Datasets / Iterators
    trDs = DatasetTF(trainPath, imgRootDir, lp.batchSz,
-                    lp.imgSzTr, lp.linearImg, lp.rseed)
+                    lp.imgSzTr, lp.linearImg, lp.dsRescale, lp.dsMapping, lp.rseed)
    tsDs = DatasetTF(testPath, imgRootDir, lp.batchSz,
-                    lp.imgSzTr, lp.linearImg, lp.rseed)
+                    lp.imgSzTr, lp.linearImg, lp.dsRescale, lp.dsMapping, lp.rseed)
 
    dsIt = tf.data.Iterator.from_structure(
        trDs.data.output_types, trDs.data.output_shapes)
@@ -406,20 +426,20 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath, valPath, data_format)
    inImgi = tf.placeholder(tf.float32, shape=[
        lp.batchSz, lp.imgSzTr[0], lp.imgSzTr[1], 3], name="input_img")
    inImg = preprocess(inImgi, True, data_format)
-   inDepthi = tf.placeholder(tf.float32, shape=[
+   inLabelsi = tf.placeholder(tf.float32, shape=[
        lp.batchSz, lp.imgSzTr[0], lp.imgSzTr[1], 1], name="input_depth")
-   inDepth = preprocess(inDepthi, True, data_format)
+   inLabels = tf.to_int32(preprocess(inLabelsi, False, data_format))
 
    # Optimizers
-   [opts, loss, trSum, tsSum, valSum] = lp.optimizer(inImg, inDepth)
+   [opts, loss, trSum, tsSum, valSum] = lp.optimizer(inImg, inLabels)
 
    # Validation
-   valImg, valDepth = loadValidationData(
+   valImg, valLabels = loadValidationData(
        valPath, imgRootDir, [lp.batchSz, lp.imgSzTr[0], lp.imgSzTr[1]], lp.linearImg)
 
    # Persistency
    persistency = tf.train.Saver(
-       pad_step_number=True, max_to_keep=lp.modelNbToKeep, filename=lp.modelFilename)
+       pad_step_number=True, max_to_keep=3, filename=lp.modelFilename)
 
    # Logger
    merged_summary_op = tf.summary.merge_all()
@@ -428,8 +448,8 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath, valPath, data_format)
    varInit = tf.global_variables_initializer()
 
    # Session configuration
-   sess_config = tf.ConfigProto()  # device_count={'GPU': 2})
-   # sess_config.gpu_options.per_process_gpu_memory_fraction = 0.4
+   sess_config = tf.ConfigProto()
+   # sess_config = tf.ConfigProto(device_count={'GPU': 1})
    sess_config.gpu_options.allow_growth = True
 
    with tf.Session(config=sess_config) as sess:
@@ -460,11 +480,11 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath, valPath, data_format)
       while lp.globalStep.eval(sess) < lp.numSteps:
 
          # Get the next training batch
-         currImg, currDepth = sess.run(dsView)
+         currImg, currLabels = sess.run(dsView)
 
          trFeed = {lp.isTraining: True,
                    inImgi: currImg,
-                   inDepthi: currDepth}
+                   inLabelsi: currLabels}
 
          step = lp.globalStep.eval(sess) + 1
 
@@ -488,16 +508,16 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath, valPath, data_format)
          if step % lp.trlogStep == 0:
             summary = sess.run(tsSum, feed_dict={lp.isTraining: False,
                                                  inImgi: currImg,
-                                                 inDepthi: currDepth})
+                                                 inLabelsi: currLabels})
             train_summary_writer.add_summary(summary, step)
 
          if step % lp.tslogStep == 0:
 
             sess.run(tsInit)
-            currImg, currDepth = sess.run(dsView)
+            currImg, currLabels = sess.run(dsView)
             tsLoss, summary = sess.run([loss, tsSum], feed_dict={lp.isTraining: False,
                                                                  inImgi: currImg,
-                                                                 inDepthi: currDepth})
+                                                                 inLabelsi: currLabels})
 
             test_summary_writer.add_summary(summary, step)
 
@@ -513,7 +533,7 @@ def trainModel(modelPath, imgRootDir, trainPath, testPath, valPath, data_format)
 
             summary = sess.run(valSum, feed_dict={lp.isTraining: False,
                                                   inImgi: valImg,
-                                                  inDepthi: valDepth})
+                                                  inLabelsi: valLabels})
 
             val_summary_writer.add_summary(summary, step)
 

@@ -332,189 +332,185 @@ static const std::vector<unsigned char> om0001_mit_151_002 = {
 
 // MAPPING #2
 //
-// COCO SCENE PARSING DATASET 181 categories --> 8 categories
+// COCO SCENE PARSING DATASET 181 categories --> 3 categories
 // {
 //   0 : unlabeled
-//   1 : background artificial
-//   2 : sky
-//   3 : background natural
-//   4 : person
-//   5 : vehicles
-//   6 : animals
-//   7 : stuff   
+//   1 : background + stuff
+//   2 : person
+//   3 : sky
 // }
-static const std::vector<unsigned char> om0000_coco_183_007 = {
-    0,  // unlabeled
-    4,  // person
-    5,  // bicycle
-    5,  // car
-    5,  // motorcycle
-    5,  // airplane
-    5,  // bus
-    5,  // train
-    5,  // truck
-    5,  // boat
-    7,  // traffic light
-    7,  // fire hydrant
-    7,  // street sign
-    7,  // stop sign
-    7,  // parking meter
-    7,  // bench
-    6,  // bird
-    6,  // cat
-    6,  // dog
-    6,  // horse
-    6,  // sheep
-    6,  // cow
-    6,  // elephant
-    6,  // bear
-    6,  // zebra
-    6,  // giraffe
-    0,  // hat
-    7,  // backpack
-    7,  // umbrella
+static const std::vector<unsigned char> om0000_coco_183_003 = {
+    //0,  // unlabeled
+    2,  // person
+    1,  // bicycle
+    1,  // car
+    1,  // motorcycle
+    1,  // airplane
+    1,  // bus
+    1,  // train
+    1,  // truck
+    1,  // boat
+    1,  // traffic light
+    1,  // fire hydrant
+    1,  // street sign
+    1,  // stop sign
+    1,  // parking meter
+    1,  // bench
+    1,  // bird
+    1,  // cat
+    1,  // dog
+    1,  // horse
+    1,  // sheep
+    1,  // cow
+    1,  // elephant
+    1,  // bear
+    1,  // zebra
+    1,  // giraffe
+    1,  // hat
+    1,  // backpack
+    1,  // umbrella
     0,  // shoe
     0,  // eye glasses
-    7,  // handbag
+    0,  // handbag
     0,  // tie
-    7,  // suitcase
-    7,  // frisbee
-    7,  // skis
-    7,  // snowboard
-    7,  // sports ball
-    7,  // kite
-    7,  // baseball bat
-    7,  // baseball glove
-    7,  // skateboard
-    7,  // surfboard
-    7,  // tennis racket
-    7,  // bottle
-    7,  // plate
-    7,  // wine glass
-    7,  // cup
-    7,  // fork
-    7,  // knife
-    7,  // spoon
-    7,  // bowl
-    7,  // banana
-    7,  // apple
-    7,  // sandwich
-    7,  // orange
-    7,  // broccoli
-    7,  // carrot
-    7,  // hot dog
-    7,  // pizza
-    7,  // donut
-    7,  // cake
-    7,  // chair
-    7,  // couch
-    7,  // potted plant
-    7,  // bed
-    7,  // mirror
-    7,  // dining table
+    1,  // suitcase
+    1,  // frisbee
+    1,  // skis
+    1,  // snowboard
+    1,  // sports ball
+    1,  // kite
+    1,  // baseball bat
+    1,  // baseball glove
+    1,  // skateboard
+    1,  // surfboard
+    1,  // tennis racket
+    1,  // bottle
+    1,  // plate
+    1,  // wine glass
+    1,  // cup
+    1,  // fork
+    1,  // knife
+    1,  // spoon
+    1,  // bowl
+    1,  // banana
+    1,  // apple
+    1,  // sandwich
+    1,  // orange
+    1,  // broccoli
+    1,  // carrot
+    1,  // hot dog
+    1,  // pizza
+    1,  // donut
+    1,  // cake
+    1,  // chair
+    1,  // couch
+    1,  // potted plant
+    1,  // bed
+    1,  // mirror
+    1,  // dining table
     1,  // window
-    7,  // desk
-    7,  // toilet
+    1,  // desk
+    1,  // toilet
     1,  // door
-    7,  // tv
-    7,  // laptop
-    7,  // mouse
-    7,  // remote
-    7,  // keyboard
-    7,  // cell phone
-    7,  // microwave
-    7,  // oven
-    7,  // toaster
-    7,  // sink
-    7,  // refrigerator
-    7,  // blender
-    7,  // book
-    7,  // clock
-    7,  // vase
-    7,  // scissors
-    7,  // teddy bear
-    7,  // hair drier
-    7,  // toothbrush
-    7,  // hair brush
-    7,  // banner
-    7,  // blanket
-    3,  // branch
+    1,  // tv
+    1,  // laptop
+    1,  // mouse
+    1,  // remote
+    1,  // keyboard
+    1,  // cell phone
+    1,  // microwave
+    1,  // oven
+    1,  // toaster
+    1,  // sink
+    1,  // refrigerator
+    1,  // blender
+    1,  // book
+    1,  // clock
+    1,  // vase
+    1,  // scissors
+    1,  // teddy bear
+    1,  // hair drier
+    1,  // toothbrush
+    1,  // hair brush
+    1,  // banner
+    1,  // blanket
+    1,  // branch
     1,  // bridge
     1,  // building-other
-    3,  // bush
-    7,  // cabinet
-    7,  // cage
-    7,  // cardboard
-    7,  // carpet
+    1,  // bush
+    1,  // cabinet
+    1,  // cage
+    1,  // cardboard
+    1,  // carpet
     1,  // ceiling-other
     1,  // ceiling-tile
     0,  // cloth
     0,  // clothes
-    2,  // clouds
-    7,  // counter
-    7,  // cupboard
+    3,  // clouds
+    1,  // counter
+    1,  // cupboard
     1,  // curtain
-    7,  // desk-stuff
-    7,  // dirt
-    0,  // door-stuff
-    0,  // fence
+    1,  // desk-stuff
+    1,  // dirt
+    1,  // door-stuff
+    1,  // fence
     1,  // floor-marble
     1,  // floor-other
     1,  // floor-stone
     1,  // floor-tile
     1,  // floor-wood
-    3,  // flower
+    1,  // flower
     3,  // fog
-    7,  // food-other
-    7,  // fruit
-    7,  // furniture-other
-    3,  // grass
-    3,  // gravel
-    3,  // ground-other
-    3,  // hill
+    1,  // food-other
+    1,  // fruit
+    1,  // furniture-other
+    1,  // grass
+    1,  // gravel
+    1,  // ground-other
+    1,  // hill
     1,  // house
-    3,  // leaves
-    0,  // light
-    7,  // mat
-    0,  // metal
-    0,  // mirror-stuff
-    3,  // moss
-    3,  // mountain
-    3,  // mud
-    7,  // napkin
-    7,  // net
-    7,  // paper
+    1,  // leaves
+    1,  // light
+    1,  // mat
+    1,  // metal
+    1,  // mirror-stuff
+    1,  // moss
+    1,  // mountain
+    1,  // mud
+    1,  // napkin
+    1,  // net
+    1,  // paper
     1,  // pavement
-    7,  // pillow
-    3,  // plant-other
-    7,  // plastic
+    1,  // pillow
+    1,  // plant-other
+    1,  // plastic
     1,  // platform
-    0,  // playingfield
-    0,  // railing
+    1,  // playingfield
+    1,  // railing
     1,  // railroad
-    3,  // river
+    1,  // river
     1,  // road
-    3,  // rock
+    1,  // rock
     1,  // roof
-    0,  // rug
-    7,  // salad
-    3,  // sand
-    3,  // sea
-    7,  // shelf
-    2,  // sky-other
+    1,  // rug
+    1,  // salad
+    1,  // sand
+    1,  // sea
+    1,  // shelf
+    3,  // sky-other
     1,  // skyscraper
-    3,  // snow
-    0,  // solid-other
+    1,  // snow
+    1,  // solid-other
     1,  // stairs
-    3,  // stone
-    3,  // straw
+    1,  // stone
+    1,  // straw
     1,  // structural-other
-    7,  // table
-    7,  // tent
-    0,  // textile-other
-    0,  // towel
-    3,  // tree
-    7,  // vegetable
+    1,  // table
+    1,  // tent
+    1,  // textile-other
+    1,  // towel
+    1,  // tree
+    1,  // vegetable
     1,  // wall-brick
     1,  // wall-concrete
     1,  // wall-other
@@ -522,15 +518,15 @@ static const std::vector<unsigned char> om0000_coco_183_007 = {
     1,  // wall-stone
     1,  // wall-tile
     1,  // wall-wood
-    3,  // water-other
-    0,  // waterdrops
-    0,  // window-blind
+    1,  // water-other
+    1,  // waterdrops
+    1,  // window-blind
     1,  // window-other
-    3,  // wood
+    1,  // wood
 };
 
 // return the mapping given its ID
-static const std::vector<unsigned char> getObjectsMapping( int id )
+inline const std::vector<unsigned char>& getObjectsMapping( int id )
 {
-   return id == 0 ? om0000_mit_151_007 : ( id == 1 ? om0001_mit_151_002 : om0000_coco_183_007 );
+   return id == 0 ? om0000_mit_151_007 : ( id == 1 ? om0001_mit_151_002 : om0000_coco_183_003 );
 }

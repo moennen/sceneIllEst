@@ -130,7 +130,7 @@ struct RenderProgram final
    void reset();
 
    bool activate();
-   bool deactivate() { glUseProgram( 0 ); }
+   void deactivate() { glUseProgram( 0 ); }
    GLint getUniform( const char* );
 
    GLuint _id;

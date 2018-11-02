@@ -349,7 +349,7 @@ def increaseSize2xWithRef(inputs, ref, i_n, data_format):
    return x
 
 
-def filter_kernel(inputs, i_n, data_format, kernel, ks):
+def filter_kernel(inputs, i_n, data_format, kernel, ks, strides=[1, 1, 1, 1]):
 
    w = tf.expand_dims(tf.concat([kernel for i in range(i_n)], axis=2), axis=3)
    pad_size = ks//2
@@ -361,7 +361,7 @@ def filter_kernel(inputs, i_n, data_format, kernel, ks):
           [[0, 0], [0, 0], [pad_size, pad_size], [pad_size, pad_size]])
    x = tf.pad(inputs, pad_mat)
    x = tf.nn.depthwise_conv2d(
-       x, w, strides=[1, 1, 1, 1], padding='VALID', data_format=data_format)
+       x, w, strides=strides, padding='VALID', data_format=data_format)
 
    return x
 
@@ -371,7 +371,15 @@ def reduceSize2x(inputs, i_n, data_format):
    kernel = [[[0.125], [0.25], [0.125]], [
        [0.25], [0.5], [0.25]], [[0.125], [0.25], [0.125]]]
    kernel = tf.divide(tf.constant(kernel), 2.0)
-   return filter_kernel(inputs, i_n, data_format, kernel, 3)
+   strides = [1, 2, 2, 1] if data_format == 'NHWC' else [1, 1, 2, 2]
+   return filter_kernel(inputs, i_n, data_format, kernel, 3, strides)
+
+
+def reduceSize2xNN(inputs, i_n, data_format):
+
+   kernel = [[[1.0]]]
+   strides = [1, 2, 2, 1] if data_format == 'NHWC' else [1, 1, 2, 2]
+   return filter_kernel(inputs, i_n, data_format, kernel, 1, strides)
 
 
 def filterLoG_5x5(inputs, i_n, data_format):
@@ -876,7 +884,7 @@ def pix2pix_disc_f(inputs, nIn, params, reuse):
 
    # S x I --> S x N
    encoder_0 = pix2pix_encoder_bn(
-       imgs, nIn, n, ks, 1, True, False, "encoder_0", train, data_format)
+       inputs, nIn, n, ks, 1, True, False, "encoder_0", train, data_format)
    # S x N --> S/2 x 2*N
    encoder_1 = pix2pix_encoder_bn(
        encoder_0, n, n*2, ks, 2, ess, bn, "encoder_1", train, data_format)
@@ -903,7 +911,7 @@ def pix2pix_disc_f(inputs, nIn, params, reuse):
    layer = tf.layers.dense(tf.layers.flatten(encoder_7), 1,
                            kernel_initializer=tf.contrib.layers.xavier_initializer(),
                            bias_initializer=tf.contrib.layers.xavier_initializer(),
-                           activation=reuse)
+                           reuse=reuse)
    layer = tf.sigmoid(layer)
 
    return layer
@@ -1000,8 +1008,8 @@ def getOptimizerData(loss, depends, params, name):
          gen_tvars = [var for var in tf.trainable_variables(
          ) if var.name.startswith(name)]
 
-         gen_optim = tf.contrib.opt.AdamWOptimizer(params.learningRate)
-         # gen_optim = tf.train.AdamOptimizer(params.learningRate, 0.5, 0.999)
+         #gen_optim = tf.contrib.opt.AdamWOptimizer(params.learningRate)
+         gen_optim = tf.train.AdamOptimizer(params.learningRate, 0.5, 0.999)
 
          if params.minimizeMemory:
             gen_grads = memory_saving_gradients.gradients(

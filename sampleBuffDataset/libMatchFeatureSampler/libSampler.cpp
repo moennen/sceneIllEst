@@ -24,46 +24,17 @@ using namespace glm;
 
 namespace
 {
-#include "sampleBuffDataset/libSemSegSampler/datasetObjectsMapping.cpp"
 
-// apply a map to transform the input labels to the output labels
-// label mapping corresponds to the id of the maps contained in datasetObjectsMapping.h
-// -1 means identity
-void applyObjectMapping( const Mat& inLabels, Mat& outLabels, Mat& mask, const int labelMapping )
-{
-   if ( labelMapping < 0 )
-   {
-      inLabels.copyTo( outLabels );
-   }
-   else
-   {
-      const vector<unsigned char>& map = getObjectsMapping( labelMapping );
-
-#pragma omp parallel for
-      for ( unsigned y = 0; y < outLabels.rows; y++ )
-      {
-         const float* iLb = inLabels.ptr<float>( y );
-         float* oLb = outLabels.ptr<float>( y );
-         for ( unsigned x = 0; x < outLabels.cols; x++ )
-         {
-            const unsigned char lb = static_cast<unsigned char>( iLb[x] );
-            oLb[x] = static_cast<float>( lb >= map.size() ? 0 : map[lb] );
-         }
-      }
-   }
-
-/*#pragma omp parallel for
-   for ( unsigned y = 0; y < outLabels.rows; y++ )
-   {
-      const float* oLb = outLabels.ptr<float>( y );
-      float* msk = mask.ptr<float>( y );
-      for ( unsigned x = 0; x < outLabels.cols; x++ )
-      {
-         const unsigned char lb = static_cast<unsigned char>( oLb[x] );
-         msk[x] = ( ( ( lb == 0 ) || ( lb == 255 ) ) ? 0.0f : 1.0f );
-      }
-   }*/
-}
+/*
+ * The sampler takes as input 3 buffers 
+ * 2 RGB images buffers : I_0 and I_1
+ * 1 UV matching buffer : UV_M = UV([0:1]) st one search to minimize || I_1[ UV_M ] - I_0 || 
+ *                        UV_N = UV([2:3]) st one search to maximize || I_1[ UV_N ] - I_0 || 
+ * --> NB : the UV buffer should not be considered in == (0,0)
+ * 
+ * it return all 3 buffers : 
+ * 
+ **/
 
 struct Sampler final
 {
@@ -75,21 +46,20 @@ struct Sampler final
    const ivec3 _sampleSz;
    const bool _toLinear;
    const bool _doRescale;
-   const int _objectMapping;
-
+   
    const unsigned _fullBuffSz;
    future<bool> _asyncSample;
    vector<float> _asyncBuff;
 
    enum
    {
-      nInBuffers = 2,
+      nInBuffers = 3,
       nOutBuffers = 3,
-      nOutPlanes = 5  // RGB : 3 / Seg : 1 / Mask : 1
+      nOutPlanes = 10  // I_0 = 3 + I_1 = 3 + UV = 4
    };
    ImgNFileLst _data;
 
-   inline static unsigned getBufferDepth( const unsigned buffId ) { return buffId == 0 ? 3 : 1; }
+   inline static unsigned getBufferDepth( const unsigned buffId ) { return buffId > 1 ? 4 : 3; }
 
    Sampler(
        const char* dataSetPath,
@@ -97,7 +67,6 @@ struct Sampler final
        const ivec3 sampleSz,
        const bool toLinear,
        const bool doRescale,
-       const int objectMapping,
        const bool doAsync,
        const int seed )
        : _rng( seed ),
@@ -105,7 +74,6 @@ struct Sampler final
          _sampleSz( sampleSz ),
          _toLinear( toLinear ),
          _doRescale( doRescale ),
-         _objectMapping( objectMapping ),
          _fullBuffSz( _sampleSz.y * _sampleSz.z * nOutPlanes ),
          _data( nInBuffers )
    {
@@ -156,10 +124,10 @@ struct Sampler final
       HOP_PROF_FUNC();
 
       const size_t szBuffC3 = _sampleSz.y * _sampleSz.z * 3;
-      const size_t szBuffC1 = _sampleSz.y * _sampleSz.z ;
+      const size_t szBuffC2 = _sampleSz.y * _sampleSz.z * 2 ;
 
-      const size_t szBuffOffLabels = _sampleSz.x * szBuffC3;
-      const size_t szBuffOffMask = szBuffOffLabels + _sampleSz.x * szBuffC1;
+      const size_t szBuffOffI_1 = _sampleSz.x * szBuffC3;
+      const size_t szBuffOffUV = szBuffOffI_1 + _sampleSz.x * szBuffC3;
       
       std::vector<char> sampled( _sampleSz.x, 0 );
       std::vector<size_t> v_si( _sampleSz.x );
@@ -173,7 +141,9 @@ struct Sampler final
 
             const size_t si = v_si[s];
 
-            Mat currImg = cv_utils::imread32FC3( _data.filePath( si, 0 ), _toLinear, true /*toRGB*/ );
+            Mat Img_0 = cv_utils::imread32FC3( _data.filePath( si, 0 ), _toLinear, true /*toRGB*/ );
+            Mat Img_1 = cv_utils::imread32FC3( _data.filePath( si, 1 ), _toLinear, true /*toRGB*/ );
+            Mat UV_M = cv_utils::imread32FC3( _data.filePath( si, 2 ), _toLinear, false /*toRGB*/ );
             Mat currLabels =
                cv_utils::imread32FC1( _data.filePath( si, 1 ), 1.0 /*Keep the labels as is*/ );
 

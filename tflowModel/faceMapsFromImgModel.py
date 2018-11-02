@@ -194,21 +194,19 @@ class FaceMapsModelParams(Pix2PixParams):
       # bn vs no bn
       self.useBatchNorm = True
       self.nbChannels = 32
-      self.nbInChannels = 5
-      self.nbOutputChannels = 8
+      self.nbInChannels = 3
+      self.nbOutputChannels = 4
       self.kernelSz = 5
       self.stridedEncoder = True
       # strided vs resize
       self.stridedDecoder = True
-      self.inDispRange = np.array([[0, 1, 2], [3, 4, 4]])
-      self.outDispRange = np.array([[0, 1, 2], [3, 4, 5], [6, 7, 7]])
       self.alphaData = 1.0
       self.alphaReg = 0.125
-      self.alphaDisc = 0.5
+      self.alphaDisc = 0.001
       self.linearImg = False
 
       # model
-      self.minimizeMemory = True
+      self.minimizeMemory = False
       self.model = pix2pix_gen_p
       self.modelDisc = pix2pix_disc_f
       # loss
@@ -227,10 +225,10 @@ class FaceMapsModelParams(Pix2PixParams):
       batchErrUV, batchErrD, batchErrNorm, batchErrId = tf.split(
           batchErr, [2, 1, 3, 2], axis=3 if self.data_format == 'NHWC' else 1)
 
-      return [tf.reduce_mean(batchErrUV),
-              tf.reduce_mean(batchErrD),
-              tf.reduce_mean(batchErrNorm),
-              tf.reduce_mean(batchErrId)]
+      return [tf.square(tf.reduce_mean(batchErrUV)),
+              tf.square(tf.reduce_mean(batchErrD)),
+              tf.square(tf.reduce_mean(batchErrNorm)),
+              tf.square(tf.reduce_mean(batchErrId))]
 
    def loss_reg(self, batchOutput, batchTargets):
 
@@ -257,6 +255,51 @@ class FaceMapsModelParams(Pix2PixParams):
          lossGradY = tf.split(lossGradY, [2, 1, 3, 2], axis=0)
 
          for c in range(4):
+            lossGrad[c] = tf.add(lossGrad[c], tf.add(
+                tf.reduce_mean(lossGradX[c]), tf.reduce_mean(lossGradY[c])))
+
+         batchOutputResized = reduceSize2x(
+             batchOutputResized, self.nbOutputChannels, self.data_format)
+         batchTargetResized = reduceSize2x(
+             batchTargetResized, self.nbOutputChannels, self.data_format)
+
+      return lossGrad
+
+   def loss_maps_dnorm(self, batchOutput, batchTargets):
+
+      batchErr = charbonnier(batchOutput, batchTargets)
+
+      batchErrD, batchErrNorm = tf.split(
+          batchErr, [1, 3], axis=3 if self.data_format == 'NHWC' else 1)
+
+      return [tf.square(tf.reduce_mean(batchErrD)),
+              tf.square(tf.reduce_mean(batchErrNorm))]
+
+   def loss_reg_dnorm(self, batchOutput, batchTargets):
+
+      lossGrad = [tf.constant(0.0) for i in range(2)]
+
+      axisH = 1 if self.data_format == 'NHWC' else 2
+
+      batchOutputResized = batchOutput
+      batchTargetResized = batchTargets
+
+      for i in range(2):
+
+         batchErrGradX = l2(filterGradX_3x3(batchOutputResized, self.nbOutputChannels, self.data_format),
+                            filterGradX_3x3(batchTargetResized, self.nbOutputChannels, self.data_format))
+         batchErrGradY = l2(filterGradY_3x3(batchOutputResized, self.nbOutputChannels, self.data_format),
+                            filterGradY_3x3(batchTargetResized,  self.nbOutputChannels, self.data_format))
+
+         lossGradX = tf.reduce_mean(tf.reduce_mean(
+             tf.reduce_mean(batchErrGradX, axis=axisH), axis=axisH), axis=0)
+         lossGradX = tf.split(lossGradX, [1, 3], axis=0)
+
+         lossGradY = tf.reduce_mean(tf.reduce_mean(
+             tf.reduce_mean(batchErrGradY, axis=axisH), axis=axisH), axis=0)
+         lossGradY = tf.split(lossGradY, [1, 3], axis=0)
+
+         for c in range(2):
             lossGrad[c] = tf.add(lossGrad[c], tf.add(
                 tf.reduce_mean(lossGradX[c]), tf.reduce_mean(lossGradY[c])))
 
@@ -295,8 +338,10 @@ class FaceMapsModelParams(Pix2PixParams):
 
       # Synthetic image disc loss
       loss_disc_output = l2_loss(batchOutputDisc, 0.0)
+      test_disc_output = tf.reduce_mean(batchOutputDisc)
       # Real image disc loss
       loss_disc_real = l2_loss(batchRealOutputDisc, 1.0)
+      test_disc_real = tf.reduce_mean(batchRealOutputDisc)
       # total disc loss
       loss_disc = 0.5 * (loss_disc_output + loss_disc_real)
 
@@ -327,6 +372,14 @@ class FaceMapsModelParams(Pix2PixParams):
 
          trSum = []
          addSummaryParams(trSum, self, tvars, grads_and_vars)
+
+         addSummaryScalar(trSum, loss_disc, "gan", "loss_disc")
+         addSummaryScalar(trSum, loss_disc_output, "gan", "loss_disc_output")
+         addSummaryScalar(trSum, loss_disc_real, "gan", "loss_disc_real")
+         addSummaryScalar(trSum, loss_gen, "gan", "loss_gen")
+         addSummaryScalar(trSum, test_disc_output, "gan", "mean_output")
+         addSummaryScalar(trSum, test_disc_real, "gan", "mean_real")
+
          trSum = tf.summary.merge(trSum, "Train")
 
          tsSum = []
@@ -346,6 +399,8 @@ class FaceMapsModelParams(Pix2PixParams):
          addSummaryScalar(tsSum, loss_disc, "loss_disc", "disc")
          addSummaryScalar(tsSum, loss_disc_output, "loss_disc", "output")
          addSummaryScalar(tsSum, loss_disc_real, "loss_disc", "real")
+         addSummaryScalar(tsSum, test_disc_output, "loss_disc", "mean_output")
+         addSummaryScalar(tsSum, test_disc_real, "loss_disc", "mean_real")
 
          addSummaryImages(tsSum, "Images", self,
                           [batchInput, batchInput, batchTargets, batchTargets,
@@ -360,6 +415,65 @@ class FaceMapsModelParams(Pix2PixParams):
                           [batchInput, batchInput, batchOutput,
                               batchOutput, batchOutput],
                           [[0, 1, 2], [3, 4, 4], [0, 1, 2], [3, 4, 5], [6, 7, 7]])
+         valSum = tf.summary.merge(valSum, "Val")
+
+      return [opt, loss, trSum, tsSum, valSum]
+
+   def optimizer_dnorm(self, batchInput, batchTargets, batchRealImg):
+
+      with tf.variable_scope(self.getModelName()) as modelVs:
+         batchOutput = self.model(batchInput, self)
+
+      with tf.variable_scope(self.getModelName() + "_loss"):
+         loss_d, loss_norm = self.loss_maps_dnorm(batchOutput, batchTargets)
+         loss_reg_d, loss_reg_norm = self.loss_reg_dnorm(batchOutput, batchTargets)
+
+      loss_data = 0.5 * (loss_d + loss_norm)
+      loss_reg = 0.5 * (loss_reg_d + loss_reg_norm)
+
+      with tf.variable_scope(modelVs, reuse=True):
+         batchRealOutput = self.model(batchRealImg, self)
+
+      # total loss : data / regularizer / generator
+      loss = self.alphaData * loss_data + self.alphaReg * loss_reg
+
+      # dependencies for the batch normalization
+      depends = tf.get_collection(
+          tf.GraphKeys.UPDATE_OPS) if self.useBatchNorm else []
+
+      # optimizer
+      opt, tvars, grads_and_vars = getOptimizerData(
+          loss, depends, self, self.getModelName())
+
+      # put summary on CPU to free some VRAM
+      with tf.device('/cpu:*'):
+
+         trSum = []
+         addSummaryParams(trSum, self, tvars, grads_and_vars)
+         trSum = tf.summary.merge(trSum, "Train")
+
+         tsSum = []
+         addSummaryScalar(tsSum, loss, "loss", "loss")
+         addSummaryScalar(tsSum, loss_data, "loss", "data")
+         addSummaryScalar(tsSum, loss_reg, "loss", "reg")
+         addSummaryScalar(tsSum, loss_d, "loss_data", "d")
+         addSummaryScalar(tsSum, loss_norm, "loss_data", "norm")
+         addSummaryScalar(tsSum, loss_reg_d, "loss_reg", "d")
+         addSummaryScalar(tsSum, loss_reg_norm,
+                          "loss_reg", "norm")
+
+         addSummaryImages(tsSum, "Images", self,
+                          [batchInput, batchTargets, batchTargets,
+                              batchOutput, batchOutput, batchRealImg,
+                              batchRealOutput, batchRealOutput],
+                          [[0, 1, 2], [0, 0, 0], [1, 2, 3], [0, 0, 0], [1, 2, 3],
+                           [0, 1, 2], [0, 0, 0], [1, 2, 3]])
+         tsSum = tf.summary.merge(tsSum, "Test")
+
+         valSum = []
+         addSummaryImages(valSum, "Images", self,
+                          [batchInput, batchOutput, batchOutput],
+                          [[0, 1, 2], [0, 0, 0], [1, 2, 3]])
          valSum = tf.summary.merge(valSum, "Val")
 
       return [opt, loss, trSum, tsSum, valSum]
@@ -555,13 +669,18 @@ def trainModel(modelPath, imgRootDir, trainPath, trainGanPath, testPath, testGan
    batchPosRaw = tf.placeholder(tf.float32, shape=[
        lp.batchSz, lp.imgSzTr[0], lp.imgSzTr[1], 2], name="input_pos")
    batchPos = preprocess(batchPosRaw, False, data_format)
-   batchInput = tf.concat([batchIm, batchPos],
-                          axis=3 if data_format == 'NHWC' else 1)
+   # batchInput = tf.concat([batchIm, batchPos],
+   #                       axis=3 if data_format == 'NHWC' else 1)
+   batchInput = batchIm
 
    batchUVDRaw = tf.placeholder(
        tf.float32, shape=[
            lp.batchSz, lp.imgSzTr[0], lp.imgSzTr[1], 3], name="input_uvd")
    batchUVD = preprocess(batchUVDRaw, True, data_format)
+
+   batchUV, batchD = tf.split(
+       batchUVD, [2, 1], axis=3 if data_format == 'NHWC' else 1)
+
    batchNormRaw = tf.placeholder(tf.float32, shape=[
        lp.batchSz, lp.imgSzTr[0], lp.imgSzTr[1], 3], name="input_normals")
    batchNorm = preprocess(batchNormRaw, False, data_format)
@@ -569,17 +688,20 @@ def trainModel(modelPath, imgRootDir, trainPath, trainGanPath, testPath, testGan
        lp.batchSz, lp.imgSzTr[0], lp.imgSzTr[1], 2], name="input_id")
    batchId = preprocess(batchIdRaw, False, data_format)
 
-   batchTargets = tf.concat([batchUVD, batchNorm, batchId],
-                            axis=3 if data_format == 'NHWC' else 1)
+   # batchTargets = tf.concat([batchUVD, batchNorm, batchId],
+   #                         axis=3 if data_format == 'NHWC' else 1)
+   batchTargets = tf.concat([batchD, batchNorm], axis=3 if data_format == 'NHWC' else 1)
 
    batchImRealRaw = tf.placeholder(tf.float32, shape=[
        lp.batchSz, lp.imgSzTr[0], lp.imgSzTr[1], 3], name="gan_img")
    batchImReal = preprocess(batchImRealRaw, True, data_format)
-   batchImReal = tf.concat([batchImReal, batchPos],
-                           axis=3 if data_format == 'NHWC' else 1)
+   # batchImReal = tf.concat([batchImReal, batchPos],
+   #                        axis=3 if data_format == 'NHWC' else 1)
 
    # Optimizers
-   [opts, loss, trSum, tsSum, valSum] = lp.optimizer(
+   #[opts, loss, trSum, tsSum, valSum] = lp.optimizer(
+   #    batchInput, batchTargets, batchImReal)
+   [opts, loss, trSum, tsSum, valSum] = lp.optimizer_dnorm(
        batchInput, batchTargets, batchImReal)
 
    # Validation
