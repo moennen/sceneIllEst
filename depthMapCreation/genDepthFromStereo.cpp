@@ -9,8 +9,8 @@
 #include "utils/imgFileLst.h"
 #include "utils/cv_utils.h"
 
+#include <opencv2/features2d/features2d.hpp>
 #include "opencv2/calib3d/calib3d.hpp"
-//#include "opencv2/ximgproc/disparity_filter.hpp"
 
 #include <libopticalFlow/oclVarOpticalFlow.h>
 
@@ -19,6 +19,7 @@
 #include <boost/filesystem.hpp>
 
 #include <iostream>
+#include <algorithm>
 
 using namespace std;
 using namespace cv;
@@ -119,42 +120,83 @@ Mat flowToErr( const Mat& flow, const Mat& imgFrom, const Mat& imgTo )
 
 //------------------------------------------------------------------------------
 //
-bool rectifyStereoPair(
-    Mat& matRight,
-    Mat& matLeft
-)
+bool rectifyStereoPair( Mat& matRight, Mat& matLeft )
 {
-  // Points detection
-  const int minHessian = 400;
-  Ptr<ORB> detector = ORB::create(1500, 1.2f, 12, 31,0,2, ORB::HARRIS_SCORE, 31, 1);
-  vector<KeyPoint> arrKPtsRight, arrKPtsLeft;
-  Mat matDescRigth, matDescLeft;
-  detector->detect( matRight, arrKPtsRight, matDescRigth );
-  detector->detect( matLeft, arrKPtsLeft, matDescLeft );
-  
-  Ptr<DescriptorMatcher> matcher = DescriptorMatcher::create("BruteForce-Hamming");
-  vector< DMatch > matches;
-  matcher->match( matDescRigth, matDescLeft, matches );
+   cvtColor( matRight, matRight, COLOR_RGB2BGR );
+   cvtColor( matLeft, matLeft, COLOR_RGB2BGR );
 
-  matcher->knnMatch(first_desc, desc, matches, 2);
-    for(unsigned i = 0; i < matches.size(); i++) {
-        if(matches[i][0].distance < nn_match_ratio * matches[i][1].distance) {
-            matched1.push_back(first_kp[matches[i][0].queryIdx]);
-            matched2.push_back(      kp[matches[i][0].trainIdx]);
-        }
-    }
-  
-  //cv::Mat F = cv::findFundamentalMat(points1, points2, cv::FM_RANSAC, 3, 0.99);
-  Mat F = findFundamentalMat(arrPtsRight, arrPtsLeft, CV_FM_8POINT);
-  
-  Mat HRight(4,4, CV_32F);
-  Mat HLeft(4,4, CV_32F);
-  stereoRectifyUncalibrated(arrPtsRight, arrPtsLeft, F, matRight.size(), HRight, HLeft);
-  
-  warpPerspective(matRight, matRight, HRight, matRight.size());
-  warpPerspective(matLeft, matLeft, HLeft, matLeft.size());
+   // Points detection
+   const int minHessian = 400;
+   vector<KeyPoint> arrKPtsRight, arrKPtsLeft;
+   Mat matDescRight, matDescLeft;
+   Ptr<ORB> detector = ORB::create( 1750, 1.2f, 4, 31, 0, 2, ORB::HARRIS_SCORE, 31, 10 );
+   detector->detectAndCompute( matRight, noArray(), arrKPtsRight, matDescRight );
+   detector->detectAndCompute( matLeft, noArray(), arrKPtsLeft, matDescLeft );
 
-  return true;
+   Ptr<DescriptorMatcher> matcher = DescriptorMatcher::create( "BruteForce-Hamming" );
+   vector<vector<DMatch>> matchess;
+   matcher->radiusMatch( matDescRight, matDescLeft, matchess, 50.0f );
+
+   std::cout << arrKPtsRight.size() << " / " << arrKPtsLeft.size() << " --> " << matchess.size()
+             << " " << matchess[0].size() << endl;
+
+
+   vector<DMatch> matches; matches.reserve(matchess.size());
+   for (const auto m : matchess)
+   {
+      if (!m.empty()) matches.push_back(m.front());
+   }
+   
+   const size_t best_k = std::min( (size_t)75u, matches.size() );
+   if ( matches.size() > best_k )
+   {
+      sort( matches.begin(), matches.end(), []( const DMatch& a, const DMatch& b ) {
+         return a.distance < b.distance;
+      } );
+   }
+
+   vector<Point2f> arrPtsRight( best_k );
+   vector<Point2f> arrPtsLeft( best_k );
+   for ( size_t k = 0; k < best_k; ++k )
+   {
+      arrPtsRight[k] = arrKPtsRight[matches[k].queryIdx].pt;
+      arrPtsLeft[k] = arrKPtsLeft[matches[k].trainIdx].pt;
+   }
+
+   //-- Draw matches
+   matches.resize( best_k );
+   Mat img_matches;
+   drawMatches( matRight, arrKPtsRight, matLeft, arrKPtsLeft, matches, img_matches );
+   imshow( "Matches", img_matches );
+
+   waitKey( 0 );
+
+   // Mat F = findFundamentalMat(arrPtsRight, arrPtsLeft, FM_RANSAC, 2.5, 0.99);
+   Mat F = findFundamentalMat( arrPtsRight, arrPtsLeft, CV_FM_8POINT );
+
+   cout << "Fundamental : " << endl;
+   cout << F << endl;
+
+   Mat HRight( 4, 4, CV_64F );
+   Mat HLeft( 4, 4, CV_64F );
+   stereoRectifyUncalibrated( arrPtsRight, arrPtsLeft, F, matRight.size(), HRight, HLeft );
+
+   HLeft = HRight.inv() * HLeft;
+   HRight = Mat::eye( HRight.rows, HRight.cols, CV_64F );
+
+   cout << "Homo : " << endl;
+   cout << HLeft << endl;
+
+   warpPerspective( matRight, matRight, HRight, matRight.size() );
+   warpPerspective( matLeft, matLeft, HLeft, matLeft.size() );
+
+   imshow( "MatRight", matRight );
+   imshow( "MatLeft", matLeft );
+
+   cvtColor( matRight, matRight, COLOR_BGR2RGB );
+   cvtColor( matLeft, matLeft, COLOR_BGR2RGB );
+
+   return true;
 }
 
 //------------------------------------------------------------------------------
@@ -194,7 +236,7 @@ bool flowToDisp(
          const bool undef = ( abs( mtR.y ) > 1.0 ) || ( abs( mtRL.y ) > 1.0 ) ||
                             ( err_data[x] > 0.5 ) || ( distance( mtR, mtRL ) > 1.0 );
 
-         u_row_data[x] = undef ? 0 : 255;
+         u_row_data[x] = 255;  // undef ? 0 : 255;
          d_row_data[x] = ( isInverted ? 1.0 : -1.0 ) * dispReg;
       }
    }
@@ -203,46 +245,8 @@ bool flowToDisp(
 
    const float masked = ( 1.0f - ( cv::mean( mask )[0] / 255.0f ) );
 
-   return masked < 0.65;
+   return true;  // masked < 0.65;
 }
-
-//------------------------------------------------------------------------------
-//
-/*bool flowToDispOCV(
-    const Mat&,
-    const Mat&,
-    const Mat& imgFrom,
-    const Mat& imgTo,
-    Mat& disp,
-    Mat& mask,
-    const bool isInverted )
-{
-   auto left_matcher = StereoBM::create( 16, 13 );
-   auto right_matcher = ximgproc::createRightMatcher( left_matcher );
-   
-   auto wls_filter = createDisparityWLSFilter( left_matcher );
-
-   Mat matRight = 255.0 * imgTo;
-   matRight = matRight.convertTo(CV_8UC3);
-   Mat matRightGray;
-   cvtColor( matRight, matRightGray, COLOR_BGR2GRAY );
-   Mat matLeft = 255.0 * imgFrom;
-   matLeft = matLeft.convertTo(CV_8UC3);
-   Mat matLeftGray;
-   cvtColor( imgFrom, matLeft, COLOR_BGR2GRAY );
-
-   Mat matDispLeft(matLeftGray.rows, matLeftGray.cols, CV_16S);
-   left_matcher->compute( matLeftGray, matRightGray, matDispLeft );
-   Mat matDispRight(matRightGray.rows, matRightGray.cols, CV_16S)
-   right_matcher->compute( matRightGray, matLeftGray, matDispRight );
-
-   wls_filter->setLambda( lambda );
-   wls_filter->setSigmaColor( sigma );
-   wls_filter->filter( matDispLeft, matLeft, disp, matDispRight );
-
-   disp = disp.convertTo(CV_32FC1);
-   mask = Mat( flowR.rows, flowR.cols, CV_8UC1, 1 );
-}*/
 }
 
 //------------------------------------------------------------------------------
@@ -296,6 +300,8 @@ int main( int argc, char* argv[] )
    ofParams.lambda = 0.1;
    ofParams.gamma = 75;
 
+   // NB : need to disable OpenCV/OpenCL by setting the envvar :
+   // setenv OPENCV_OPENCL_RUNTIME 0
    OclVarOpticalFlow ofEstimator( minSz.x, minSz.y, false, ofParams );
 
    for ( size_t i = 0; i < imgLst.size(); ++i )
@@ -307,8 +313,10 @@ int main( int argc, char* argv[] )
       Mat matLeft = cv_utils::imread32FC3( imgLst.filePath( i, 1 ), toLinear, true );
       if ( matRight.empty() || matLeft.empty() ) continue;
 
-      resizeToMax( matRight, minSz );
-      resizeToMax( matLeft, minSz );
+      /*resizeToMax( matRight, minSz );
+      resizeToMax( matLeft, minSz );*/
+
+      rectifyStereoPair( matRight, matLeft );
 
       // compute the right to left optical flow
       ofEstimator.setImgSize( matRight.cols, matRight.rows );
