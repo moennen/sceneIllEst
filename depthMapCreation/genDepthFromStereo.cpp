@@ -140,13 +140,13 @@ bool rectifyStereoPair( Mat& matRight, Mat& matLeft )
    std::cout << arrKPtsRight.size() << " / " << arrKPtsLeft.size() << " --> " << matchess.size()
              << " " << matchess[0].size() << endl;
 
-
-   vector<DMatch> matches; matches.reserve(matchess.size());
-   for (const auto m : matchess)
+   vector<DMatch> matches;
+   matches.reserve( matchess.size() );
+   for ( const auto m : matchess )
    {
-      if (!m.empty()) matches.push_back(m.front());
+      if ( !m.empty() ) matches.push_back( m.front() );
    }
-   
+
    const size_t best_k = std::min( (size_t)75u, matches.size() );
    if ( matches.size() > best_k )
    {
@@ -201,6 +201,94 @@ bool rectifyStereoPair( Mat& matRight, Mat& matLeft )
 
 //------------------------------------------------------------------------------
 //
+bool rectifyStereoPairOf( Mat& matRight, Mat& matLeft, OclVarOpticalFlow& ofEst )
+{
+   // compute the left to right optical flow
+   Mat matOfL2R( matLeft.rows, matLeft.cols, CV_32FC2 );
+   ofEst.compute(
+       reinterpret_cast<const float*>( matRight.ptr() ),
+       reinterpret_cast<const float*>( matLeft.ptr() ),
+       matLeft.cols,
+       matLeft.rows,
+       reinterpret_cast<float*>( matOfL2R.ptr() ) );
+
+   // create matches
+
+   const ivec2 grid_res = {matRight.cols / 33, matRight.rows / 33};
+   const vec2 delta = {matRight.cols / ( grid_res.x + 1 ), matRight.rows / ( grid_res.y + 1 )};
+
+   vector<DMatch> matches;
+   matches.reserve( grid_res.x * grid_res.y );
+   vector<KeyPoint> arrKPtsRight;
+   arrKPtsRight.reserve( grid_res.x * grid_res.y );
+   vector<KeyPoint> arrKPtsLeft;
+   arrKPtsLeft.reserve( grid_res.x * grid_res.y );
+
+   for ( int j = 0; j < grid_res.y; ++j )
+   {
+      const float y = (j+1) * delta.y;
+      for ( int i = 0; i < grid_res.x; ++i )
+      {
+         const size_t idx = j * grid_res.x + i;
+         const float x = (i+1) * delta.x;
+         const vec2 pos = {x, y};
+         const vec2 uv = cv_utils::imsample32F<vec2>( matLeft, pos );
+
+         const vec3 rgb_l = cv_utils::imsample32F<vec3>( matLeft, pos );
+         const vec3 rgb_r = cv_utils::imsample32F<vec3>( matRight, pos + uv );
+
+         matches.emplace_back( arrKPtsRight.size(), arrKPtsLeft.size(), distance( rgb_l, rgb_r ) );
+         arrKPtsRight.emplace_back( Point2f( pos.x + uv.x, pos.y + uv.y ), 3.0 );
+         arrKPtsLeft.emplace_back( Point2f( pos.x, pos.y ), 3.0f );
+      }
+   }
+
+
+   cvtColor( matRight, matRight, COLOR_BGR2RGB );
+   cvtColor( matLeft, matLeft, COLOR_BGR2RGB );
+
+   //-- Draw matches
+   Mat img_matches;
+   drawMatches( matRight, arrKPtsRight, matLeft, arrKPtsLeft, matches, img_matches );
+   imshow( "Matches", img_matches );
+
+   vector<Point2f> arrPtsRight( arrKPtsRight.size() );
+   for ( size_t k = 0; k < arrKPtsRight.size(); ++k )  arrPtsRight[k] = arrKPtsRight[k].pt;
+   vector<Point2f> arrPtsLeft( arrKPtsLeft.size() );
+   for ( size_t k = 0; k < arrKPtsLeft.size(); ++k )  arrPtsLeft[k] = arrKPtsLeft[k].pt;
+
+   // Mat F = findFundamentalMat(arrPtsRight, arrPtsLeft, FM_RANSAC, 2.5, 0.99);
+   Mat F = findFundamentalMat( arrPtsRight, arrPtsLeft, CV_FM_8POINT );
+
+   cout << "Fundamental : " << endl;
+   cout << F << endl;
+
+   Mat HRight( 4, 4, CV_64F );
+   Mat HLeft( 4, 4, CV_64F );
+   stereoRectifyUncalibrated( arrPtsRight, arrPtsLeft, F, matRight.size(), HRight, HLeft );
+
+   HLeft = HRight.inv() * HLeft;
+   HRight = Mat::eye( HRight.rows, HRight.cols, CV_64F );
+
+   cout << "Homo : " << endl;
+   cout << HLeft << endl;
+
+   //warpPerspective( matRight, matRight, HRight, matRight.size() );
+   warpPerspective( matLeft, matLeft, HLeft, matLeft.size() );
+
+   imshow( "MatRight", matRight );
+   imshow( "MatLeft", matLeft );
+
+   waitKey( 0 );
+
+   cvtColor( matRight, matRight, COLOR_BGR2RGB );
+   cvtColor( matLeft, matLeft, COLOR_BGR2RGB );
+
+   return true;
+}
+
+//------------------------------------------------------------------------------
+//
 bool flowToDisp(
     const Mat& flowR,
     const Mat& flowL,
@@ -236,7 +324,7 @@ bool flowToDisp(
          const bool undef = ( abs( mtR.y ) > 1.0 ) || ( abs( mtRL.y ) > 1.0 ) ||
                             ( err_data[x] > 0.5 ) || ( distance( mtR, mtRL ) > 1.0 );
 
-         u_row_data[x] = 255;  // undef ? 0 : 255;
+         u_row_data[x] = undef ? 0 : 255;
          d_row_data[x] = ( isInverted ? 1.0 : -1.0 ) * dispReg;
       }
    }
@@ -313,13 +401,13 @@ int main( int argc, char* argv[] )
       Mat matLeft = cv_utils::imread32FC3( imgLst.filePath( i, 1 ), toLinear, true );
       if ( matRight.empty() || matLeft.empty() ) continue;
 
-      /*resizeToMax( matRight, minSz );
-      resizeToMax( matLeft, minSz );*/
-
-      rectifyStereoPair( matRight, matLeft );
+      resizeToMax( matRight, minSz );
+      resizeToMax( matLeft, minSz );
 
       // compute the right to left optical flow
       ofEstimator.setImgSize( matRight.cols, matRight.rows );
+
+      rectifyStereoPairOf( matRight, matLeft, ofEstimator );
 
       Mat matOfR2L( matRight.rows, matRight.cols, CV_32FC2 );
       ofEstimator.compute(
@@ -380,6 +468,7 @@ int main( int argc, char* argv[] )
          imshow( "FlowR2L", flowToImg( matOfR2L, true ) );
          imshow( "FlowL2R", flowToImg( matOfL2R, true ) );
          imshow( "Disp", depthToImg( matDepth ) );
+         imshow( "Depth", matDepth );
          imshow( "Mask", matMask );
          waitKey( 0 );
       }
